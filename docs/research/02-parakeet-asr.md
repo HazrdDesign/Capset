@@ -376,7 +376,7 @@ ffmpeg -i input.mp3 -acodec pcm_s16le -ar 16000 -ac 1 output.wav
 | **NeMo (Full Stack)** | 3-4 GB | ✓ Yes, native | ✓ Yes (slow) | CC-BY-4.0 | ⚠ Complex DLL setup | Research; dev machines |
 | **onnx-asr** | 0.9-2.2 GB (depends on quantization) | ✓ Yes — token-level via `.with_timestamps()`, merge to words | ✓ Yes | CC-BY-4.0 (Parakeet) + Apache 2.0 (onnxruntime) | ✓ Yes | Python .exe via PyInstaller; balance of size & accuracy |
 | **sherpa-onnx** | 0.65-0.75 GB | ✓ Yes — `OfflineRecognizerResult.timestamps` (token-level) | ✓ Yes | Apache 2.0 (sherpa-onnx) + CC-BY-4.0 (Parakeet) | ✓ Yes, prebuilt binaries | **Smallest installer; minimal dependencies** |
-| **parakeet-mlx** | 2.5+ GB | ⚠ Not implemented | ✓ Yes | CC-BY-4.0 | ❌ No (macOS only) | Apple Silicon apps only |
+| **parakeet-mlx** | 2.5+ GB | ✓ **Yes** — word-level, `AlignedToken` (corrected) | ✓ Yes | CC-BY-4.0 | ❌ No (macOS only) | Apple Silicon apps only |
 | **parakeet-rs** | 2.5+ GB | ❌ No | ✓ Yes | CC-BY-4.0 | ⚠ Possible, not primary | Future; Rust ecosystem |
 | **whisper.cpp** | 0.1-3 GB (model-dependent) | ⚠ Poor accuracy | ✓ Yes | MIT | ✓ Yes, excellent | Smaller bundle; good for low-resource Windows |
 | **faster-whisper** | 1.8-2.0 GB | ⚠ Poor accuracy | ✓ Yes | MIT (faster-whisper) + others | ✓ Yes | Python apps; 4x faster than Whisper |

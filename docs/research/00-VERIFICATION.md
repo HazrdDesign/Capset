@@ -66,6 +66,28 @@ accuracy and wastes days. Now documented in doc 02.
 - Doc 04's ".ffx cannot be generated programmatically" is consistent with the
   format being opaque binary, but is an absence-of-evidence claim.
 
+### 4. parakeet-mlx timestamps — docs 02 vs 06 conflicted (RESOLVED)
+
+Doc 02's table said parakeet-mlx timestamps were "⚠ Not implemented"; doc 06
+said "✅ Yes". Checked the primary source
+(`raw.githubusercontent.com/senstella/parakeet-mlx/master/README.md` — note
+the default branch is `master`, not `main`):
+
+> "Enable word-level timestamps in SRT/VTT outputs"
+> "`AlignedToken`: Word/token-level alignments with precise timestamps"
+
+**Doc 06 is right; doc 02 was wrong.** Corrected.
+
+### Caveats on doc 06
+
+- **Speed figures are internally inconsistent.** Its summary table says
+  parakeet-mlx is "20–30x" RTF, its benchmark table says "~68x" on M3, and
+  the agent's own summary said 68x. Treat all as order-of-magnitude only.
+- **"$99/year ... one-time cost"** — the agent wrote both. Apple Developer
+  Program is **$99/year, recurring**.
+- **`com.adobe.CSXS.11`** is CEP-version-specific. Supporting AE 2020–2026
+  spans several CSXS versions, so debug mode may need a key per version.
+
 ## Still open
 
 - Audio-only render from the AE render queue: both docs mark the exact output

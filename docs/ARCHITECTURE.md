@@ -204,10 +204,41 @@ real, recurring cost line, not a build flag.
 **6.3 — CEP install paths differ**, so the installer needs per-platform target
 directories.
 
-**OPEN — pending `docs/research/06-macos-deployment.md`:** which Parakeet
-runtime to use on Apple Silicon (ONNX Runtime + CoreML EP, `parakeet-mlx`, or
-sherpa-onnx), measured speed there, exact CEP paths, and whether arm64-only is
-acceptable or a universal binary is required.
+**6.4 — macOS engine: `onnx-asr` + CoreML EP. Same engine as Windows.**
+
+Parakeet runs well on Apple Silicon three ways:
+
+| Option | RTF | Cross-platform? |
+|---|---|---|
+| `onnx-asr` + CoreML EP | ~24–32x | **Yes — same code as Windows** |
+| `parakeet-mlx` | ~20–68x (sources disagree) | No — macOS only |
+| `sherpa-onnx` | ~16x | Yes |
+
+`parakeet-mlx` is likely fastest and does support word-level timestamps
+(`AlignedToken`). It is still **not** the right choice: it is macOS-only, so
+adopting it means a second ASR implementation, second set of bugs, second test
+matrix — for speed we do not need.
+
+At 24x RTF a 10-minute video transcribes in ~25 seconds, well under the AE
+audio render that precedes it. **ASR is not the bottleneck**, so a second
+codebase buys nothing. `parakeet-mlx` stays behind the `AsrEngine` interface
+as a later optimization if Mac users ever ask for it.
+
+**6.5 — Confirmed macOS facts**
+
+- After Effects 24.0+ runs natively on Apple Silicon, and **CEP extensions are
+  fully supported natively** — no Rosetta.
+- CEP paths: `/Library/Application Support/Adobe/CEP/extensions` (system) and
+  `~/Library/Application Support/Adobe/CEP/extensions` (user).
+- Debug mode: `defaults write com.adobe.CSXS.<n> PlayerDebugMode 1` — `<n>` is
+  CEP-version-specific, so supporting AE 2020–2026 may need several keys.
+- Notarization is **mandatory**; there is no exemption for free software.
+  Sign → `xcrun notarytool` → staple. Apple Developer Program is **$99/year,
+  recurring**.
+- No single tool builds both installers. Two pipelines: Inno Setup (Windows),
+  `pkgbuild`/`productbuild` (macOS).
+- Ship universal (arm64 + x86_64) for now; arm64-only becomes reasonable once
+  Intel Mac support ends.
 
 ---
 
@@ -232,7 +263,8 @@ available from VAD chunk counts.
 1. **CPU transcription speed** — measure before the CPU path is promised. (§2)
 2. ~~Repository layout~~ — **done.** Flattened to `backend/`, `panel/`,
    `installer/`, `docs/`.
-3. **macOS ASR runtime and notarization cost** — pending research (§6).
+3. ~~macOS ASR runtime~~ — **decided:** `onnx-asr` + CoreML EP, shared with
+   Windows (§6.4). Notarization cost confirmed at $99/yr recurring.
 4. **Model download vs. bundle** — bundling gives a ~400 MB installer and
    offline install; downloading on first run gives a small installer but needs
    network and progress UI. Captioneer appears to bundle.
