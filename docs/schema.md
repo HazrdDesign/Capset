@@ -1,53 +1,107 @@
-# Transcription Response Schema
+# Backend API contract
 
-This is the contract between the backend and the future UXP panel. Keep this
-stable — the panel's segmentation logic (word/sentence/smart grouping) will
-be built against this shape.
+The contract between the local transcription service and the Capset CEP
+panel. Keep it stable: the panel's segmentation logic (word / phrase / smart)
+is built against this shape.
 
-## `POST /transcribe` response
+Base URL: `http://127.0.0.1:8756` (see the port caveat in `backend/app/config.py`).
 
-```json
-{
-  "duration_sec": 12.34,
-  "words": [
-    {
-      "text": "hello",
-      "start": 0.12,
-      "end": 0.48,
-      "confidence": 0.98
-    },
-    {
-      "text": "world",
-      "start": 0.52,
-      "end": 0.91,
-      "confidence": 0.95
-    }
-  ],
-  "full_text": "hello world"
-}
-```
+## Why jobs rather than one call
 
-- `words`: flat list, in order, word-level only. Sentence/line/smart grouping
-  is NOT done here — that's the panel's job, since segmentation preference is
-  a user setting (word-by-word / sentence / smart), not a transcription
-  concern.
-- `start` / `end`: seconds, float, relative to the start of the submitted
-  audio file (i.e. relative to the AE work area that was rendered out, not
-  absolute comp time — the panel is responsible for offsetting these against
-  wherever the work area actually starts in the comp).
-- `confidence`: per-word confidence score if the model provides it. Useful
-  later for flagging low-confidence words in the panel UI (e.g. highlighting
-  words the user should double check) — not used in Phase 1.
+Transcription of real footage takes long enough that a synchronous
+`POST /transcribe` would hang the panel with no progress and no way to
+cancel. Work is submitted, then polled.
 
-## `GET /health` response
+---
+
+## `GET /health`
 
 ```json
 {
   "status": "ok",
-  "model_loaded": true
+  "model_loaded": true,
+  "engine": {
+    "engine": "onnx-asr",
+    "model": "nemo-parakeet-tdt-0.6b-v3",
+    "quantization": "int8",
+    "providers": ["CoreMLExecutionProvider", "CPUExecutionProvider"],
+    "loaded": true
+  }
 }
 ```
 
-Panel should poll this before attempting a transcription request, and can use
-`model_loaded: false` to show a "starting up" state if the backend is still
-loading the model after launch.
+If the model fails to load the service still answers, with
+`"status": "degraded"`, `"model_loaded": false`, and an `"error"` string. The
+panel should show that message rather than a generic failure — a silent
+"not ready" forever is the worst outcome.
+
+Poll this before submitting. `model_loaded: false` with `status: "ok"` means
+the model is still loading; show a starting-up state.
+
+---
+
+## `POST /jobs`
+
+Multipart upload, field name `file`. Returns **202**:
+
+```json
+{ "id": "3f1a...", "state": "queued" }
+```
+
+**503** if the model is not loaded; `detail` carries the reason.
+
+---
+
+## `GET /jobs/{id}`
+
+```json
+{
+  "id": "3f1a...",
+  "state": "running",
+  "progress": 0.42,
+  "stage": "transcribing 4/9",
+  "created_at": 1756612345.12,
+  "finished_at": null
+}
+```
+
+`state` is one of `queued`, `running`, `done`, `error`, `cancelled`.
+`progress` is 0.0–1.0 and never decreases. `stage` is display text.
+
+On `done`, a `result` field is present:
+
+```json
+{
+  "duration_sec": 12.34,
+  "full_text": "hello world",
+  "words": [
+    { "text": "hello", "start": 0.12, "end": 0.48, "confidence": 0.98 },
+    { "text": "world", "start": 0.52, "end": 0.91, "confidence": 0.95 }
+  ]
+}
+```
+
+On `error`, an `error` field carries the message.
+
+**404** for an unknown id. Finished jobs are retained for one hour, then
+dropped.
+
+### About `words`
+
+- Flat, ordered, word-level. Sentence/line/smart grouping is **not** done
+  here — segmentation is a user setting, not a transcription concern, so it
+  belongs to the panel.
+- `start` / `end` are seconds, float, **absolute within the submitted file**.
+  The engine returns chunk-relative times; the backend shifts them back
+  before they reach this API. The panel still has to offset against wherever
+  the work area starts in the comp.
+- `confidence` is per word, averaged over its tokens, or `null` if the engine
+  reports none. Useful later for flagging words worth double-checking.
+
+---
+
+## `DELETE /jobs/{id}`
+
+Requests cancellation. Returns **202** with `{"id": ..., "cancelled": true}`.
+Cancellation is cooperative — it takes effect at the next chunk boundary.
+**404** for an unknown id.

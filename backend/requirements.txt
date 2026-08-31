@@ -1,18 +1,29 @@
-# Core ASR
-# NOTE: check current recommended install method/checkpoint name at time of
-# building — NeMo and Parakeet checkpoints update; pin versions once a known
-# working combination is confirmed.
-nemo_toolkit[asr]
-torch
+# --- ASR -------------------------------------------------------------------
+# Parakeet via ONNX Runtime. No PyTorch, no NeMo, no CUDA toolkit: that stack
+# bundles to 3-4 GB and was the scaffold's highest-risk item. See
+# docs/ARCHITECTURE.md section 2.
+onnx-asr>=0.11.0
 
-# API server
-fastapi
-uvicorn[standard]
-python-multipart
+# Execution providers. onnxruntime is the CPU/CoreML build and works
+# everywhere. For an NVIDIA GPU on Windows/Linux install onnxruntime-gpu
+# INSTEAD (they conflict). CUDA does not exist on macOS.
+onnxruntime>=1.20.0
+# onnxruntime-gpu>=1.20.0   ; Windows/Linux + NVIDIA only
 
-# Audio handling
-ffmpeg-python
-soundfile
+# Voice activity detection, used to place chunk boundaries inside silence.
+# Optional: app/vad.py degrades to an energy gate, then to whole-file.
+silero-vad>=5.1
 
-# Bundling (dev-time only, not a runtime dependency)
-pyinstaller
+# --- API -------------------------------------------------------------------
+fastapi>=0.115
+uvicorn[standard]>=0.32
+python-multipart>=0.0.9
+
+numpy>=1.24
+
+# --- dev only --------------------------------------------------------------
+# pytest>=8.0
+# pyinstaller>=6.0
+
+# ffmpeg is NOT a pip dependency -- the binary ships with the installer
+# (LGPL, attribution required). See app/audio.py.

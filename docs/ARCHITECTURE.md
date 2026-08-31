@@ -266,7 +266,8 @@ available from VAD chunk counts.
 
 ## Open questions
 
-1. **CPU transcription speed** — measure before the CPU path is promised. (§2)
+1. **CPU transcription speed** — still unmeasured. `backend/bench.py` exists
+   to answer it; run it on real hardware before the CPU path is promised. (§2)
 2. ~~Repository layout~~ — **done.** Flattened to `backend/`, `panel/`,
    `installer/`, `docs/`.
 3. ~~macOS ASR runtime~~ — **decided:** `onnx-asr` + CoreML EP, shared with

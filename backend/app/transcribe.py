@@ -1,93 +1,85 @@
-"""
-Core Parakeet transcription logic.
+"""Orchestration: audio file in, absolute-timed words out.
 
-This module is deliberately independent of FastAPI — it should be fully
-testable/runnable as a plain script before any API wrapping happens
-(Phase 1, step 1 in backend/README.md).
-
-TODO(phase1-step1): This is scaffolding, not working code yet. Needs:
-  - Confirm correct NeMo API calls for loading a Parakeet checkpoint
-  - Confirm how to request word-level timestamps from the decoder
-    (not on by default for all NeMo ASR configs — verify against current
-    NeMo docs/examples for the specific Parakeet variant used)
-  - Handle audio preprocessing (sample rate conversion, mono downmix, etc.)
-    NeMo models typically expect 16kHz mono WAV
+Deliberately thin. The parts that are easy to get wrong -- token merging and
+chunk stitching -- live in `tokens.py` and `chunking.py`, are pure, and are
+covered by tests that need no model.
 """
 
-from dataclasses import dataclass
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Callable
+
+from . import config
+from .audio import load_audio, slice_audio
+from .chunking import merge_chunks, plan_chunks
+from .models import TranscriptionResult, Word
+from .tokens import merge_tokens_to_words, words_to_text
+from .vad import detect_speech
+
+log = logging.getLogger(__name__)
+
+ProgressFn = Callable[[float, str], None]
 
 
-@dataclass
-class Word:
-    text: str
-    start: float
-    end: float
-    confidence: float | None = None
+def _noop(progress: float, stage: str) -> None:
+    return None
 
 
-@dataclass
-class TranscriptionResult:
-    duration_sec: float
-    words: list[Word]
-    full_text: str
-
-
-class ParakeetTranscriber:
-    """
-    Wraps model loading + inference. Instantiate once at server startup
-    (model load is expensive) and reuse across requests.
-    """
-
-    def __init__(self, model_name: str, cache_dir: str):
-        self.model_name = model_name
-        self.cache_dir = cache_dir
-        self._model = None
+class Transcriber:
+    def __init__(self, engine):
+        self.engine = engine
 
     def load(self) -> None:
-        """
-        Load the Parakeet model into memory. Called once at startup.
-
-        TODO: actual NeMo model loading, e.g. something along the lines of
-        `nemo_asr.models.ASRModel.from_pretrained(model_name=...)` —
-        confirm exact API against current NeMo version and Parakeet
-        checkpoint requirements before relying on this shape.
-        """
-        raise NotImplementedError("Phase 1 step 1: implement model loading")
+        self.engine.load()
 
     def is_loaded(self) -> bool:
-        return self._model is not None
+        return self.engine.is_loaded()
 
-    def transcribe(self, audio_path: str) -> TranscriptionResult:
-        """
-        Run inference on a local audio file path, return word-level
-        timestamps.
+    def transcribe(
+        self,
+        audio_path: str | Path,
+        on_progress: ProgressFn | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> TranscriptionResult:
+        progress = on_progress or _noop
+        cancelled = should_cancel or (lambda: False)
 
-        TODO: implement. Must ensure:
-          - audio is resampled/converted to whatever format the model
-            expects (verify — commonly 16kHz mono WAV for NeMo ASR models)
-          - word-level timestamps are explicitly requested from the decoder
-          - confidence scores extracted if the model/decoder exposes them
-        """
-        raise NotImplementedError("Phase 1 step 1: implement transcription")
+        progress(0.02, "decoding audio")
+        audio = load_audio(audio_path, config.SAMPLE_RATE)
+        duration = len(audio) / config.SAMPLE_RATE
+        log.info("decoded %.2fs of audio", duration)
 
+        progress(0.06, "detecting speech")
+        spans = detect_speech(audio, config.SAMPLE_RATE)
 
-if __name__ == "__main__":
-    # Manual smoke test entry point for Phase 1 step 1.
-    # Usage once implemented: python -m app.transcribe path/to/test.wav
-    import sys
+        chunks = plan_chunks(spans, config.MAX_CHUNK_S, config.OVERLAP_S)
+        log.info("planned %d chunk(s) from %d speech span(s)", len(chunks), len(spans))
+        if not chunks:
+            return TranscriptionResult(duration_sec=duration, words=[], full_text="")
 
-    from app.config import MODEL_CACHE_DIR, MODEL_NAME
+        results: list[tuple] = []
+        for index, chunk in enumerate(chunks):
+            if cancelled():
+                log.info("cancelled after %d/%d chunks", index, len(chunks))
+                break
+            samples = slice_audio(audio, chunk.start, chunk.end, config.SAMPLE_RATE)
+            if samples.size == 0:
+                continue
+            tokens = self.engine.transcribe_chunk(samples, config.SAMPLE_RATE)
+            results.append((chunk, merge_tokens_to_words(tokens)))
+            # 0.10 -> 0.98 across chunks, leaving room either side for the
+            # decode/VAD prologue and the stitching epilogue.
+            progress(
+                0.10 + 0.88 * ((index + 1) / len(chunks)),
+                f"transcribing {index + 1}/{len(chunks)}",
+            )
 
-    if len(sys.argv) != 2:
-        print("Usage: python -m app.transcribe <audio_file>")
-        sys.exit(1)
-
-    transcriber = ParakeetTranscriber(MODEL_NAME, MODEL_CACHE_DIR)
-    transcriber.load()
-    result = transcriber.transcribe(sys.argv[1])
-
-    print(f"Duration: {result.duration_sec}s")
-    print(f"Full text: {result.full_text}")
-    print("Words:")
-    for w in result.words:
-        print(f"  {w.start:.2f}-{w.end:.2f}  {w.text}  (conf={w.confidence})")
+        progress(0.99, "stitching")
+        words: list[Word] = merge_chunks(results)
+        return TranscriptionResult(
+            duration_sec=duration,
+            words=words,
+            full_text=words_to_text(words),
+        )

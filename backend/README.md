@@ -1,73 +1,98 @@
-# Backend — Parakeet Transcription Service
+# backend/ — local transcription service
 
-Standalone local service. Input: audio/video file. Output: word-level
-timestamps as JSON. No cloud calls, no external API keys — everything runs
-on the user's machine (GPU required; NVIDIA Parakeet models are CUDA-based).
+Audio or video in, word-level timestamps out. Fully local: no cloud calls,
+no API keys. Parakeet via ONNX Runtime — no PyTorch, no NeMo, no CUDA
+toolkit.
 
-## Phase 1 goals (build order)
+API contract: [`docs/schema.md`](../docs/schema.md).
+Design rationale: [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) §2.
 
-1. **Get Parakeet running in a plain script first** — no server, no bundling,
-   just confirm the model loads locally and produces word-level (not just
-   sentence-level) timestamps from an audio file. This is the highest-risk
-   step; everything else depends on it working correctly.
-   - Use NVIDIA NeMo's ASR toolkit (`nemo_toolkit[asr]`) with a Parakeet
-     checkpoint (e.g. `nvidia/parakeet-tdt-1.1b` or similar — check NGC/
-     HuggingFace for the current recommended checkpoint, model names change).
-   - Confirm output includes per-word start/end timestamps and confidence
-     scores, not just full-transcript text. NeMo's RNNT/TDT decoders support
-     timestamp output — this needs to be explicitly enabled, it's not always
-     on by default.
-   - Test with a short local audio clip (extract a WAV from any test video
-     with ffmpeg) before worrying about video input at all.
+## Layout
 
-2. **Wrap in FastAPI** once step 1 produces correct word timestamps.
-   - Single endpoint: `POST /transcribe` — accepts an uploaded file, returns
-     JSON matching `docs/schema.md`.
-   - Add a `GET /health` endpoint for the UXP panel to check the backend is
-     up before attempting a transcription request.
-   - Model should load once at server startup, not per-request (Parakeet
-     model load time is nontrivial — don't repeat it per call).
+```
+app/
+  config.py      Settings (model, providers, chunk sizes, port).
+  models.py      Token / Word / Chunk / TranscriptionResult.
+  tokens.py      BPE subword tokens -> whole words.        [pure, tested]
+  chunking.py    Chunk planning + absolute-time stitching. [pure, tested]
+  vad.py         Speech detection for chunk boundaries.
+  audio.py       ffmpeg decode -> 16 kHz mono float32.
+  engines/       The swappable ASR seam.
+  transcribe.py  Orchestration.
+  jobs.py        Job store + worker thread.
+  main.py        FastAPI service.
+bench.py         Speed measurement.
+```
 
-3. **PyInstaller bundling** — do this early, don't leave it to the end.
-   - CUDA + PyTorch + NeMo bundling with PyInstaller is the highest-risk part
-     of the whole project: large file sizes, driver/runtime version
-     mismatches, hidden imports NeMo needs that PyInstaller won't
-     auto-detect.
-   - Test on a clean-ish environment (different venv at minimum, ideally a
-     different machine or VM) before assuming it works.
-   - If full bundling proves too fragile, fallback options to consider later:
-     ONNX-exported Parakeet (lighter runtime, no NeMo/PyTorch dependency at
-     inference time) — bigger upfront conversion effort but a much lighter
-     and more reliable final installer.
+## The two things that are easy to get wrong
 
-4. **Confirm standalone .exe serves requests** end to end: run the .exe with
-   no dev environment active, hit `/health`, then `/transcribe` with a real
-   file, confirm correct JSON comes back.
+**1. Parakeet caps out at ~20–30s of audio per call.** Longer input must be
+split. `vad.py` finds speech spans so cuts land in silence; `chunking.py`
+enforces the length limit and overlaps the pieces when a single speech run
+is too long.
 
-## Non-goals for Phase 1
+**2. Engines return chunk-relative timings.** Every chunk's words start again
+near zero. `chunking.merge_chunks` shifts them into absolute time. Forget it
+and every caption after the first chunk drifts, with the error growing per
+chunk — which reads as the model degrading rather than as arithmetic. There
+is a regression test named for this.
 
-- No AE integration yet (that's Phase 2/panel).
-- No segmentation logic (word/sentence/smart grouping) — that happens on the
-  panel side once this returns raw word timestamps. This service's only job
-  is: audio in, word timestamps out.
-- No controller/expression/animation logic — irrelevant to this piece.
+Both modules are pure — no ASR library, no audio I/O — so they are fully
+tested without a model present.
 
-## Setup (local dev)
+## Setup
 
 ```bash
-python -m venv venv
-source venv/bin/activate  # or venv\Scripts\activate on Windows
+python -m venv .venv
+source .venv/bin/activate       # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Requires an NVIDIA GPU with CUDA available for any real Parakeet inference —
-this cannot be meaningfully developed/tested on CPU-only hardware beyond
-checking that imports resolve.
+For an NVIDIA GPU on Windows/Linux, swap `onnxruntime` for
+`onnxruntime-gpu` (they conflict — do not install both). On macOS the
+accelerated path is CoreML; CUDA does not exist there.
 
-## Run (dev)
+`ffmpeg` must be on PATH for a dev checkout. The shipped installer bundles it
+(LGPL — attribution required in the EULA).
+
+## Run
 
 ```bash
-python -m app.main
+python -m app.main          # http://127.0.0.1:8756
 ```
 
-Server starts on `http://localhost:8756` (see `app/config.py` to change).
+`GET /health` answers even when the model failed to load, reporting
+`degraded` plus the reason.
+
+## Test
+
+```bash
+pytest tests -q
+```
+
+47 tests, no model or ffmpeg needed — the engine and audio layers are faked.
+They cover token merging, chunk planning, absolute-time stitching, the
+orchestrator, and the HTTP contract.
+
+## Benchmark
+
+```bash
+python bench.py path/to/clip.wav
+python bench.py path/to/clip.wav --providers CPUExecutionProvider
+```
+
+Reports RTFx and extrapolates to a 10-minute video. **Run this before
+promising CPU-only support** — it is the number that decides whether Capset
+can honestly ship to users without an NVIDIA GPU, which includes every Mac.
+
+## Status
+
+Implemented and tested against fakes. **Not yet run against the real
+model** — that needs a machine with the weights present. Open items:
+
+- Measure real speed on CPU, CUDA, and CoreML (`bench.py`).
+- Confirm the `onnx-asr` timestamp result shape. `engines/onnx_asr_engine.py`
+  normalizes the shapes seen in the wild and raises loudly rather than
+  silently returning nothing.
+- Port collision handling (see the TODO in `config.py`).
+- PyInstaller packaging.

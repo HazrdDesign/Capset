@@ -1,0 +1,142 @@
+"""Parakeet via `onnx-asr` -- the shared Windows/macOS engine.
+
+Chosen over parakeet-mlx (faster, but macOS-only, so it would mean a second
+implementation and test matrix) and sherpa-onnx (smaller, but long-form VAD
+would be hand-rolled). At ~24x real time a 10-minute video transcribes in
+well under a minute, which is already far below the After Effects audio
+render that precedes it -- ASR is not the bottleneck, so a second codebase
+buys nothing. See docs/ARCHITECTURE.md section 6.4.
+
+NOTE: this module cannot be exercised without the model present. The timing
+logic it feeds (tokens.py, chunking.py) is pure and is covered by tests.
+"""
+
+from __future__ import annotations
+
+import logging
+
+import numpy as np
+
+from .. import config
+from ..models import Token
+from .base import EngineUnavailable
+
+log = logging.getLogger(__name__)
+
+
+def _resolve_providers(setting: str) -> list[str] | None:
+    """Pick ONNX Runtime execution providers.
+
+    "auto" asks onnxruntime what this machine actually has and orders them
+    best-first. CUDA is Windows/Linux + NVIDIA only; CoreML is the Apple
+    Silicon path. CPU is always the floor.
+    """
+    if setting and setting != "auto":
+        return [p.strip() for p in setting.split(",") if p.strip()]
+
+    try:
+        import onnxruntime as ort
+    except ImportError:
+        return None
+
+    available = set(ort.get_available_providers())
+    preferred = ["CUDAExecutionProvider", "CoreMLExecutionProvider", "CPUExecutionProvider"]
+    ordered = [p for p in preferred if p in available]
+    return ordered or None
+
+
+class OnnxAsrEngine:
+    name = "onnx-asr"
+
+    def __init__(
+        self,
+        model_name: str | None = None,
+        quantization: str | None = None,
+        providers: str | None = None,
+    ):
+        self.model_name = model_name or config.MODEL_NAME
+        self.quantization = quantization or config.MODEL_QUANTIZATION
+        self._providers = _resolve_providers(
+            providers if providers is not None else config.PROVIDERS
+        )
+        self._model = None
+
+    def load(self) -> None:
+        try:
+            import onnx_asr
+        except ImportError as exc:  # pragma: no cover - needs the real package
+            raise EngineUnavailable(
+                "onnx-asr is not installed. pip install onnx-asr onnxruntime"
+            ) from exc
+
+        log.info(
+            "loading %s (quantization=%s, providers=%s)",
+            self.model_name,
+            self.quantization,
+            self._providers or "default",
+        )
+        try:
+            kwargs = {}
+            if self.quantization:
+                kwargs["quantization"] = self.quantization
+            if self._providers:
+                kwargs["providers"] = self._providers
+            model = onnx_asr.load_model(self.model_name, **kwargs)
+            # Token-level timestamps are opt-in; without this the engine
+            # returns text only and there is nothing to time captions from.
+            self._model = model.with_timestamps()
+        except Exception as exc:  # pragma: no cover - needs the real package
+            raise EngineUnavailable(f"failed to load {self.model_name}: {exc}") from exc
+
+    def is_loaded(self) -> bool:
+        return self._model is not None
+
+    def transcribe_chunk(self, audio: np.ndarray, sample_rate: int) -> list[Token]:
+        if self._model is None:
+            raise EngineUnavailable("engine not loaded")
+        result = self._model.recognize(audio, sample_rate=sample_rate)
+        return _tokens_from_result(result)
+
+    def describe(self) -> dict:
+        return {
+            "engine": self.name,
+            "model": self.model_name,
+            "quantization": self.quantization,
+            "providers": self._providers or "default",
+            "loaded": self.is_loaded(),
+        }
+
+
+def _tokens_from_result(result) -> list[Token]:
+    """Normalize an onnx-asr result into our Token list.
+
+    The library's result shape has moved between versions, so this accepts
+    the shapes seen in the wild rather than assuming one. If none match we
+    raise loudly: silently returning no tokens would surface much later as
+    "captions are empty" with no clue why.
+    """
+    timestamps = getattr(result, "timestamps", None)
+    if timestamps is None:
+        timestamps = getattr(result, "tokens", None)
+    if timestamps is None and isinstance(result, (list, tuple)):
+        timestamps = result
+
+    if timestamps is None:
+        raise EngineUnavailable(
+            "onnx-asr result exposed no timestamps -- was the model loaded "
+            "with .with_timestamps()?"
+        )
+
+    tokens: list[Token] = []
+    for item in timestamps:
+        if isinstance(item, (list, tuple)):
+            text, start, end = item[0], float(item[1]), float(item[2])
+            conf = float(item[3]) if len(item) > 3 and item[3] is not None else None
+        else:
+            text = getattr(item, "token", None) or getattr(item, "text", "")
+            start = float(getattr(item, "start", 0.0))
+            end = float(getattr(item, "end", start))
+            raw_conf = getattr(item, "confidence", None)
+            conf = float(raw_conf) if raw_conf is not None else None
+        tokens.append(Token(text=text, start=start, end=end, confidence=conf))
+    return tokens

@@ -1,58 +1,87 @@
-"""
-FastAPI service exposing the Parakeet transcriber over localhost HTTP.
+"""FastAPI service the Capset CEP panel talks to over localhost.
 
-This is the layer the future UXP panel talks to. Do not build this out
-until app/transcribe.py works correctly as a standalone script first —
-see backend/README.md, Phase 1 build order.
+Contract lives in docs/schema.md. Transcription is submitted as a job and
+polled, because a synchronous call would hang the panel on real footage.
 """
 
+from __future__ import annotations
+
+import logging
+import os
 import shutil
 import tempfile
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import HOST, MODEL_CACHE_DIR, MODEL_NAME, PORT
-from app.transcribe import ParakeetTranscriber
+from . import config
+from .engines.base import EngineUnavailable
+from .engines.onnx_asr_engine import OnnxAsrEngine
+from .jobs import JobStore
+from .models import TranscriptionResult
+from .transcribe import Transcriber
 
-app = FastAPI(title="AE Parakeet Captions — Transcription Service")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger("capset")
 
-transcriber = ParakeetTranscriber(MODEL_NAME, MODEL_CACHE_DIR)
+transcriber = Transcriber(OnnxAsrEngine())
+
+# The job store owns a thread pool, so it is created per-app in `lifespan`
+# and kept on `app.state` rather than as a module global. A module-level
+# store would be shut down by the first app shutdown and could never be
+# restarted in the same process.
+
+# Set when model load fails, so /health can explain itself instead of the
+# panel seeing a silent "not ready" forever.
+load_error: str | None = None
 
 
-@app.on_event("startup")
-def load_model() -> None:
-    # Model load happens once here, not per-request — Parakeet load time
-    # is nontrivial and the panel should treat "server up" and "model
-    # ready" as separate states (see /health).
-    transcriber.load()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global load_error
+    try:
+        transcriber.load()
+        log.info("model ready")
+    except EngineUnavailable as exc:
+        # Do not take the process down: the panel polls /health and can show
+        # a useful message, which beats a connection refused.
+        load_error = str(exc)
+        log.error("model load failed: %s", exc)
+    app.state.jobs = JobStore(retention_s=config.JOB_RETENTION_S)
+    try:
+        yield
+    finally:
+        app.state.jobs.shutdown()
+
+
+app = FastAPI(title="Capset transcription service", lifespan=lifespan)
+
+# The panel is a CEP page, which is not a normal web origin. Bound to
+# localhost only, so this stays a local IPC channel rather than a service.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health")
 def health() -> dict:
-    return {
+    payload = {
         "status": "ok",
         "model_loaded": transcriber.is_loaded(),
+        "engine": transcriber.engine.describe(),
     }
+    if load_error:
+        payload["status"] = "degraded"
+        payload["error"] = load_error
+    return payload
 
 
-@app.post("/transcribe")
-async def transcribe(file: UploadFile = File(...)) -> dict:
-    if not transcriber.is_loaded():
-        raise HTTPException(status_code=503, detail="Model still loading")
-
-    # Write upload to a temp file — NeMo/most ASR pipelines expect a file
-    # path, not an in-memory stream.
-    suffix = Path(file.filename).suffix or ".wav"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        shutil.copyfileobj(file.file, tmp)
-        tmp_path = tmp.name
-
-    try:
-        result = transcriber.transcribe(tmp_path)
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
-
+def _result_to_dict(result: TranscriptionResult) -> dict:
     return {
         "duration_sec": result.duration_sec,
         "full_text": result.full_text,
@@ -68,7 +97,61 @@ async def transcribe(file: UploadFile = File(...)) -> dict:
     }
 
 
-if __name__ == "__main__":
+@app.post("/jobs", status_code=202)
+async def create_job(request: Request, file: UploadFile = File(...)) -> dict:
+    if not transcriber.is_loaded():
+        raise HTTPException(
+            status_code=503,
+            detail=load_error or "model still loading",
+        )
+
+    suffix = Path(file.filename or "").suffix or ".wav"
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="capset-")
+    with os.fdopen(fd, "wb") as handle:
+        shutil.copyfileobj(file.file, handle)
+
+    def work(job):
+        try:
+            result = transcriber.transcribe(
+                tmp_path,
+                on_progress=lambda p, stage: _update(job, p, stage),
+                should_cancel=job._cancel.is_set,
+            )
+            return _result_to_dict(result)
+        finally:
+            # The upload is scratch; never leave it behind, even on failure.
+            Path(tmp_path).unlink(missing_ok=True)
+
+    job = request.app.state.jobs.submit(work)
+    return {"id": job.id, "state": job.state.value}
+
+
+def _update(job, progress: float, stage: str) -> None:
+    job.progress = progress
+    job.stage = stage
+
+
+@app.get("/jobs/{job_id}")
+def get_job(request: Request, job_id: str) -> dict:
+    job = request.app.state.jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="no such job")
+    return job.to_dict()
+
+
+@app.delete("/jobs/{job_id}", status_code=202)
+def cancel_job(request: Request, job_id: str) -> dict:
+    store = request.app.state.jobs
+    if store.get(job_id) is None:
+        raise HTTPException(status_code=404, detail="no such job")
+    return {"id": job_id, "cancelled": store.cancel(job_id)}
+
+
+def main() -> None:
     import uvicorn
 
-    uvicorn.run(app, host=HOST, port=PORT)
+    uvicorn.run(app, host=config.HOST, port=config.PORT, log_level="info")
+
+
+if __name__ == "__main__":
+    main()
