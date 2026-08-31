@@ -1,0 +1,33 @@
+Capset — End User Licence Agreement
+Copyright (c) 2026 HAZRD. All rights reserved.
+
+This software is licensed, not sold. You may install and use Capset on
+machines you own or control, subject to the terms of your purchase.
+
+You may not redistribute, resell, or sublicense the software, nor attempt to
+circumvent any licensing mechanism it contains.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+OTHER LIABILITY ARISING FROM THE USE OF THE SOFTWARE.
+
+--------------------------------------------------------------------------
+THIRD-PARTY COMPONENTS
+--------------------------------------------------------------------------
+
+NVIDIA Parakeet speech recognition model
+  Licensed under Creative Commons Attribution 4.0 International (CC BY 4.0).
+  https://creativecommons.org/licenses/by/4.0/
+  Copyright (c) NVIDIA Corporation.
+
+FFmpeg
+  Licensed under the GNU Lesser General Public License version 2.1 or later.
+  https://www.gnu.org/licenses/lgpl-2.1.html
+  Source: https://ffmpeg.org/
+
+ONNX Runtime — MIT Licence. Copyright (c) Microsoft Corporation.
+onnx-asr — MIT Licence.
+FastAPI, Starlette, uvicorn — BSD 3-Clause / MIT.
+CSInterface.js — Copyright (c) Adobe Systems Incorporated, used under the
+  terms accompanying Adobe's CEP-Resources distribution.
+json2.js — Public Domain (Douglas Crockford).

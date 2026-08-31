@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 HOST = os.environ.get("CAPSET_HOST", "127.0.0.1")
@@ -27,9 +28,20 @@ MODEL_NAME = os.environ.get("CAPSET_MODEL", "nemo-parakeet-tdt-0.6b-v3")
 # cost, which matters because the installer ships the weights.
 MODEL_QUANTIZATION = os.environ.get("CAPSET_QUANTIZATION", "int8")
 
-MODEL_CACHE_DIR = Path(
-    os.environ.get("CAPSET_MODEL_DIR", Path(__file__).resolve().parent.parent / "models")
-)
+def _default_model_dir() -> Path:
+    """Where to look for model weights.
+
+    Frozen by PyInstaller, `__file__` points inside the extraction directory,
+    not next to the executable. The installer lays the model down beside the
+    binary so it can be updated without rebuilding, so resolve relative to the
+    executable when frozen and relative to the source tree otherwise.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / "models"
+    return Path(__file__).resolve().parent.parent / "models"
+
+
+MODEL_CACHE_DIR = Path(os.environ.get("CAPSET_MODEL_DIR", _default_model_dir()))
 
 # ONNX Runtime execution providers, in priority order. CUDA on Windows/Linux
 # with an NVIDIA GPU, CoreML on Apple Silicon, CPU everywhere as the floor.
