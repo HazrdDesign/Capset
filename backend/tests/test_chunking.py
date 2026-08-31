@@ -1,0 +1,189 @@
+"""Tests for chunk planning and absolute-time stitching."""
+
+import pytest
+
+from app.chunking import (
+    DEFAULT_MAX_CHUNK_S,
+    merge_chunks,
+    offset_words,
+    plan_chunks,
+)
+from app.models import Chunk, Word
+
+
+def word(text, start, end):
+    return Word(text=text, start=start, end=end)
+
+
+# --- plan_chunks -----------------------------------------------------------
+
+
+def test_short_span_passes_through_untouched():
+    """Boundaries already in silence are the cleanest cut, so do not re-cut."""
+    assert plan_chunks([(0.0, 5.0)], max_chunk_s=20.0) == [Chunk(0.0, 5.0)]
+
+
+def test_span_at_exactly_the_limit_is_not_split():
+    assert plan_chunks([(0.0, 20.0)], max_chunk_s=20.0) == [Chunk(0.0, 20.0)]
+
+
+def test_long_span_is_split_with_overlap():
+    chunks = plan_chunks([(0.0, 50.0)], max_chunk_s=20.0, overlap_s=2.0)
+    assert all(c.duration <= 20.0 + 1e-9 for c in chunks)
+    # Consecutive chunks must overlap so a word on the cut is not lost.
+    for earlier, later in zip(chunks, chunks[1:]):
+        assert later.start < earlier.end
+    assert chunks[0].start == 0.0
+    assert chunks[-1].end == 50.0
+
+
+def test_long_span_chunks_cover_the_whole_span():
+    chunks = plan_chunks([(3.0, 70.0)], max_chunk_s=20.0, overlap_s=2.0)
+    covered_start = min(c.start for c in chunks)
+    covered_end = max(c.end for c in chunks)
+    assert covered_start == 3.0
+    assert covered_end == 70.0
+    # No gaps between consecutive chunks.
+    for earlier, later in zip(chunks, chunks[1:]):
+        assert later.start <= earlier.end
+
+
+def test_no_chunk_ever_exceeds_the_model_limit():
+    """The whole reason this module exists -- Parakeet rejects long audio."""
+    spans = [(0.0, 3.0), (5.0, 130.0), (140.0, 141.5)]
+    for chunk in plan_chunks(spans, max_chunk_s=DEFAULT_MAX_CHUNK_S):
+        assert chunk.duration <= DEFAULT_MAX_CHUNK_S + 1e-9
+
+
+def test_multiple_spans_are_kept_separate():
+    chunks = plan_chunks([(0.0, 4.0), (10.0, 13.0)], max_chunk_s=20.0)
+    assert chunks == [Chunk(0.0, 4.0), Chunk(10.0, 13.0)]
+
+
+def test_empty_and_degenerate_spans_are_dropped():
+    assert plan_chunks([]) == []
+    assert plan_chunks([(5.0, 5.0), (9.0, 8.0)]) == []
+
+
+def test_invalid_parameters_raise():
+    with pytest.raises(ValueError):
+        plan_chunks([(0.0, 5.0)], max_chunk_s=0)
+    with pytest.raises(ValueError):
+        plan_chunks([(0.0, 5.0)], max_chunk_s=10.0, overlap_s=10.0)
+
+
+# --- offset_words ----------------------------------------------------------
+
+
+def test_offset_shifts_all_timings():
+    shifted = offset_words([word("a", 0.0, 0.5), word("b", 0.5, 1.0)], 10.0)
+    assert [(w.start, w.end) for w in shifted] == [(10.0, 10.5), (10.5, 11.0)]
+
+
+def test_offset_preserves_text_and_confidence():
+    original = [Word(text="x", start=1.0, end=2.0, confidence=0.9)]
+    shifted = offset_words(original, 5.0)
+    assert shifted[0].text == "x"
+    assert shifted[0].confidence == 0.9
+
+
+# --- merge_chunks ----------------------------------------------------------
+
+
+def test_merge_empty():
+    assert merge_chunks([]) == []
+
+
+def test_single_chunk_is_offset_into_absolute_time():
+    merged = merge_chunks([(Chunk(30.0, 45.0), [word("hello", 0.5, 1.0)])])
+    assert (merged[0].start, merged[0].end) == (30.5, 31.0)
+
+
+def test_captions_do_not_drift_across_chunks():
+    """Regression test for the highest-consequence bug in the pipeline.
+
+    Engines return timings relative to each chunk. If the chunk's own start is
+    not added back, every word after the first chunk is early by the chunk
+    offset -- and the drift grows with each chunk, so it reads as the model
+    getting worse over time rather than as an arithmetic error.
+    """
+    results = [
+        (Chunk(0.0, 20.0), [word("first", 1.0, 1.5)]),
+        (Chunk(20.0, 40.0), [word("second", 1.0, 1.5)]),
+        (Chunk(40.0, 60.0), [word("third", 1.0, 1.5)]),
+    ]
+    merged = merge_chunks(results)
+    assert [(w.text, w.start) for w in merged] == [
+        ("first", 1.0),
+        ("second", 21.0),
+        ("third", 41.0),
+    ]
+
+
+def test_overlapping_chunks_do_not_duplicate_words():
+    """A word in the shared region must appear exactly once."""
+    results = [
+        (Chunk(0.0, 20.0), [word("alpha", 5.0, 5.4), word("shared", 19.0, 19.4)]),
+        (Chunk(18.0, 38.0), [word("shared", 1.0, 1.4), word("omega", 10.0, 10.4)]),
+    ]
+    merged = merge_chunks(results)
+    assert [w.text for w in merged] == ["alpha", "shared", "omega"]
+    # Kept from the earlier chunk: 0.0 + 19.0, not 18.0 + 1.0.
+    assert merged[1].start == pytest.approx(19.0)
+
+
+def test_overlap_boundary_keeps_words_on_both_sides():
+    """Words either side of the midpoint survive; nothing is swallowed."""
+    results = [
+        (Chunk(0.0, 20.0), [word("before", 18.4, 18.6)]),
+        (Chunk(18.0, 38.0), [word("after", 1.6, 1.8)]),
+    ]
+    merged = merge_chunks(results)
+    # Midpoint of the 18.0-20.0 overlap is 19.0.
+    assert [w.text for w in merged] == ["before", "after"]
+    assert merged[0].start == pytest.approx(18.4)
+    assert merged[1].start == pytest.approx(19.6)
+
+
+def test_merge_sorts_out_of_order_input():
+    results = [
+        (Chunk(40.0, 60.0), [word("third", 1.0, 1.5)]),
+        (Chunk(0.0, 20.0), [word("first", 1.0, 1.5)]),
+        (Chunk(20.0, 40.0), [word("second", 1.0, 1.5)]),
+    ]
+    assert [w.text for w in merge_chunks(results)] == ["first", "second", "third"]
+
+
+def test_output_is_monotonic():
+    results = [
+        (Chunk(0.0, 20.0), [word("a", 1.0, 1.4), word("b", 12.0, 12.4)]),
+        (Chunk(18.0, 38.0), [word("c", 5.0, 5.4), word("d", 15.0, 15.4)]),
+    ]
+    merged = merge_chunks(results)
+    for earlier, later in zip(merged, merged[1:]):
+        assert earlier.start <= later.start
+
+
+def test_non_overlapping_chunks_keep_everything():
+    results = [
+        (Chunk(0.0, 4.0), [word("a", 0.1, 0.5)]),
+        (Chunk(10.0, 14.0), [word("b", 0.1, 0.5)]),
+    ]
+    merged = merge_chunks(results)
+    assert [(w.text, w.start) for w in merged] == [("a", 0.1), ("b", 10.1)]
+
+
+def test_end_to_end_plan_then_merge_covers_a_long_file():
+    """Plan chunks for a 90s span, then confirm stitched output is ordered."""
+    chunks = plan_chunks([(0.0, 90.0)], max_chunk_s=20.0, overlap_s=2.0)
+    # One word per second of each chunk, timed relative to that chunk.
+    results = [
+        (c, [word(f"w{i}", float(i), float(i) + 0.3) for i in range(int(c.duration))])
+        for c in chunks
+    ]
+    merged = merge_chunks(results)
+    assert merged, "expected words"
+    for earlier, later in zip(merged, merged[1:]):
+        assert earlier.start <= later.start
+    assert 0.0 <= merged[0].start < 1.0
+    assert merged[-1].start <= 90.0

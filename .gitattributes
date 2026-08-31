@@ -1,0 +1,39 @@
+# Normalize to LF in the repo; check out native on Windows.
+* text=auto
+
+# Adobe scripting + panel sources — keep LF in repo.
+*.jsx      text eol=lf
+*.jsxinc   text eol=lf
+*.js       text eol=lf
+*.mjs      text eol=lf
+*.ts       text eol=lf
+*.json     text eol=lf
+*.html     text eol=lf
+*.css      text eol=lf
+*.xml      text eol=lf
+*.py       text eol=lf
+*.md       text eol=lf
+
+# Windows-only shell scripts must keep CRLF or cmd.exe misparses them.
+*.bat      text eol=crlf
+*.cmd      text eol=crlf
+*.ps1      text eol=crlf
+
+# Opaque binaries — never diff, never munge line endings.
+*.ffx      binary
+*.aep      binary
+*.aet      binary
+*.mogrt    binary
+*.zxp      binary
+*.ccx      binary
+*.jsxbin   binary
+*.nemo     binary
+*.onnx     binary
+*.png      binary
+*.jpg      binary
+*.gif      binary
+*.mp4      binary
+*.webm     binary
+*.wav      binary
+*.ttf      binary
+*.otf      binary

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Capset</title>
+  <link rel="stylesheet" href="css/panel.css">
+</head>
+<body>
+
+  <section id="status" class="warn">
+    <span class="dot"></span>
+    <span class="msg">Checking transcription service…</span>
+    <button id="retry" title="Re-check">↻</button>
+  </section>
+
+  <section>
+    <h2>Source</h2>
+    <div class="file">
+      <span class="name" id="file-name">No file selected</span>
+      <button id="pick">Browse…</button>
+    </div>
+    <p class="hint">Pick the audio or video to transcribe. Anything ffmpeg reads.</p>
+  </section>
+
+  <section>
+    <h2>Captions</h2>
+    <div class="field">
+      <label for="mode">Segmentation</label>
+      <select id="mode">
+        <option value="smart">Smart — match the comp shape</option>
+        <option value="word">Word by word</option>
+        <option value="phrase">Phrase (broadcast style)</option>
+      </select>
+      <p class="hint" id="mode-hint">Reads the comp's aspect ratio and picks a layout.</p>
+    </div>
+    <div class="row field">
+      <div>
+        <label for="font-size">Font size</label>
+        <input type="number" id="font-size" value="72" min="8" max="400">
+      </div>
+      <div>
+        <label for="position-y">Baseline (% down)</label>
+        <input type="number" id="position-y" value="82" min="0" max="100">
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Animation</h2>
+    <div id="animations"></div>
+    <div class="field" style="margin-top:8px">
+      <label for="resolve">Resolve animation within <span id="resolve-value">50</span>% of each caption</label>
+      <input type="range" id="resolve" min="20" max="50" value="50" style="width:100%">
+      <p class="hint">
+        Animations scale to each caption's length, so short words finish early
+        instead of still moving when the word disappears.
+      </p>
+    </div>
+    <div class="row">
+      <button id="replace-selected">Replace on selected</button>
+      <button id="replace-all">Replace on all</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Global style</h2>
+    <button id="build-controller" style="width:100%">Create / relink controller</button>
+    <p class="hint">
+      Adds one control layer every caption is expression-linked to, so font
+      size, colour and baseline update everywhere at once — while each layer
+      stays individually editable.
+    </p>
+  </section>
+
+  <section id="progress">
+    <div class="bar"><div id="bar-fill"></div></div>
+    <div class="hint" id="progress-text">Working…</div>
+  </section>
+
+  <button class="primary" id="build" disabled>Transcribe &amp; build captions</button>
+
+  <section style="margin-top:8px">
+    <h2>Log</h2>
+    <div id="log"></div>
+  </section>
+
+  <script src="js/vendor/CSInterface.js"></script>
+  <script src="js/lib/timing.js"></script>
+  <script src="js/lib/segmentation.js"></script>
+  <script src="js/lib/backend.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

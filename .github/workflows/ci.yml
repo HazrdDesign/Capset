@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        # Not requirements.txt: onnx-asr and onnxruntime pull ~200 MB and the
+        # suite deliberately fakes the engine, so they buy nothing here.
+        run: pip install pytest fastapi "uvicorn[standard]" python-multipart httpx numpy
+      - name: Run tests
+        working-directory: backend
+        run: python -m pytest tests -q
+
+  panel:
+    name: Panel tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run tests
+        working-directory: panel
+        run: npm test
+
+  payload:
+    name: Payload staging
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Stage installer payload
+        run: python installer/build_payload.py
+      - name: Verify no development files leaked
+        run: |
+          for f in tests package.json node_modules; do
+            if [ -e "build/payload/panel/$f" ]; then
+              echo "development file leaked into payload: $f" >&2
+              exit 1
+            fi
+          done
+          echo "payload is clean"
