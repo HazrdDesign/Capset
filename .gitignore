@@ -1,0 +1,76 @@
+# ---------- Python / backend ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---------- PyInstaller ----------
+build/
+dist/
+*.spec.bak
+
+# ---------- Model weights (NEVER commit — multi-GB) ----------
+*.nemo
+*.onnx
+*.onnx_data
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.safetensors
+models/
+!models/README.md
+!models/**/*.json
+!models/**/manifest.yaml
+
+# ---------- Bundled third-party binaries ----------
+vendor/ffmpeg/
+*.exe
+!installer/**/*.exe.manifest
+
+# ---------- Node / panel ----------
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# ---------- Extension build output ----------
+*.zxp
+*.ccx
+*.p12
+*.pfx
+certs/
+signing/
+
+# ---------- After Effects ----------
+*.aep.lock
+Adobe After Effects Auto-Save/
+*.aet~
+
+# ---------- Media scratch / test fixtures ----------
+scratch/
+tmp/
+*.wav
+*.mp3
+*.mp4
+*.mov
+!tests/fixtures/**/*.wav
+
+# ---------- Secrets / local config ----------
+.env
+.env.*
+!.env.example
+*.local.json
+
+# ---------- OS / editor ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/*
+!.vscode/extensions.json
