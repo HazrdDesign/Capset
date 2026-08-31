@@ -85,11 +85,20 @@ Filename: "{app}\backend\capset-backend.exe"; \
     Description: "Start the Capset transcription service"; \
     Flags: nowait postinstall skipifsilent
 
-[UninstallRun]
-Filename: "{sys}\reg.exe"; Parameters: "delete ""HKCU\Software\Adobe\CSXS.9"" /v PlayerDebugMode /f";  Flags: runhidden runasoriginaluser; RunOnceId: "CapsetDebug9"
-Filename: "{sys}\reg.exe"; Parameters: "delete ""HKCU\Software\Adobe\CSXS.10"" /v PlayerDebugMode /f"; Flags: runhidden runasoriginaluser; RunOnceId: "CapsetDebug10"
-Filename: "{sys}\reg.exe"; Parameters: "delete ""HKCU\Software\Adobe\CSXS.11"" /v PlayerDebugMode /f"; Flags: runhidden runasoriginaluser; RunOnceId: "CapsetDebug11"
-Filename: "{sys}\reg.exe"; Parameters: "delete ""HKCU\Software\Adobe\CSXS.12"" /v PlayerDebugMode /f"; Flags: runhidden runasoriginaluser; RunOnceId: "CapsetDebug12"
+; No [UninstallRun] cleanup of PlayerDebugMode, for two reasons.
+;
+; 1. `runasoriginaluser` is a [Run]-only flag; Inno Setup rejects it in
+;    [UninstallRun] ("Flags includes a flag that is not supported in this
+;    section"). Without it the delete would target the administrator's hive,
+;    which is not where the key was written — so it would do nothing.
+;
+; 2. Removing it would be wrong even if it worked. PlayerDebugMode is a
+;    machine-wide developer switch shared by every CEP extension. Other
+;    unsigned extensions the user has installed may depend on it, so
+;    uninstalling Capset must not turn them off.
+;
+; Leaving the key set is harmless: it only permits unsigned extensions to
+; load, which is the state the user was already in.
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{commoncf32}\Adobe\CEP\extensions\{#ExtensionId}"

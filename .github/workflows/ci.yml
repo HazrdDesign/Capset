@@ -80,4 +80,10 @@ jobs:
           for v in 9 10 11 12; do
             grep -q "CSXS.$v" "$iss" || { echo "::error::missing CSXS.$v key" >&2; exit 1; }
           done
+          # runasoriginaluser is a [Run]-only flag. Inno Setup rejects it in
+          # [UninstallRun] and aborts the compile, which cost a build.
+          if awk '/^\[UninstallRun\]/{f=1;next} /^\[/{f=0} f' "$iss" | grep -q 'runasoriginaluser'; then
+            echo "::error::runasoriginaluser is not valid in [UninstallRun]" >&2
+            exit 1
+          fi
           echo "installer script OK"
