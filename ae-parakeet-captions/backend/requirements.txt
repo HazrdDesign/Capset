@@ -1,0 +1,18 @@
+# Core ASR
+# NOTE: check current recommended install method/checkpoint name at time of
+# building — NeMo and Parakeet checkpoints update; pin versions once a known
+# working combination is confirmed.
+nemo_toolkit[asr]
+torch
+
+# API server
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Audio handling
+ffmpeg-python
+soundfile
+
+# Bundling (dev-time only, not a runtime dependency)
+pyinstaller
