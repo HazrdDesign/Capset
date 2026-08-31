@@ -232,7 +232,13 @@ as a later optimization if Mac users ever ask for it.
   `~/Library/Application Support/Adobe/CEP/extensions` (user).
 - Debug mode: `defaults write com.adobe.CSXS.<n> PlayerDebugMode 1` — `<n>` is
   CEP-version-specific, so supporting AE 2020–2026 may need several keys.
-- Notarization is **mandatory**; there is no exemption for free software.
+- **Ad-hoc signing is a hard build requirement, independent of certificates.**
+  On Apple Silicon the OS refuses to execute *any* unsigned arm64 binary —
+  SIGKILL, not a warning, and it cannot be bypassed. Every native ASR binary
+  we ship must carry at least an ad-hoc signature (`codesign -s -`). This is
+  free and needs no Apple account, but skipping it means the Mac build simply
+  does not run. Distinct from notarization below.
+- Notarization is **mandatory for a warning-free install**; there is no exemption for free software.
   Sign → `xcrun notarytool` → staple. Apple Developer Program is **$99/year,
   recurring**.
 - No single tool builds both installers. Two pipelines: Inno Setup (Windows),
@@ -265,6 +271,13 @@ available from VAD chunk counts.
    `installer/`, `docs/`.
 3. ~~macOS ASR runtime~~ — **decided:** `onnx-asr` + CoreML EP, shared with
    Windows (§6.4). Notarization cost confirmed at $99/yr recurring.
-4. **Model download vs. bundle** — bundling gives a ~400 MB installer and
+4. **Ship signed or unsigned for v1?** Unsigned installs on both platforms —
+   Windows shows SmartScreen ("More info" → "Run anyway"), macOS requires
+   System Settings → Privacy & Security → Open Anyway. Both passable. The
+   real risk is Windows AV false positives, which PyInstaller binaries attract
+   and which can quarantine silently rather than prompt. Certs total roughly
+   $165–250/yr (OV + Apple). Reasonable to ship v1 unsigned and add certs once
+   revenue justifies.
+5. **Model download vs. bundle** — bundling gives a ~400 MB installer and
    offline install; downloading on first run gives a small installer but needs
    network and progress UI. Captioneer appears to bundle.
