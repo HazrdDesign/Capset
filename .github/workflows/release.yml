@@ -57,6 +57,18 @@ jobs:
             || { echo "PyInstaller produced no exe"; ls -R backend/dist; exit 1; }
           echo "backend binary present"
 
+      - name: Verify the ASR stack is actually bundled
+        shell: bash
+        # /health answers even when the engine is unusable, so "the service
+        # responded" cannot distinguish a working bundle from a broken one.
+        # v0.1.3 passed the smoke test and shipped with onnxruntime
+        # unimportable. This check fails the build instead.
+        run: |
+          if ! ./backend/dist/capset-backend/capset-backend.exe --selftest; then
+            echo "::error::the packaged bundle cannot import onnxruntime/onnx_asr"
+            exit 1
+          fi
+
       - name: Smoke-test the backend binary
         shell: bash
         # Verifying the exe EXISTS is not the same as verifying it RUNS. A

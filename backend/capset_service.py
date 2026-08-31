@@ -26,5 +26,23 @@ if str(_HERE) not in sys.path:
 
 from app.main import main  # noqa: E402  (must follow the sys.path fix above)
 
+
+def _selftest() -> int:
+    """`--selftest`: prove the ASR stack imports, without downloading a model.
+
+    The service answers /health even when the engine is unusable — that is
+    deliberate, so the panel can explain itself — which means "the binary
+    responds" is not evidence the bundle is complete. v0.1.3 shipped exactly
+    that way. This exits non-zero on a broken bundle so CI can refuse it.
+    """
+    from app.engines.onnx_asr_engine import OnnxAsrEngine
+
+    ok, message = OnnxAsrEngine.selftest()
+    print(("OK: " if ok else "FAIL: ") + message)
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        raise SystemExit(_selftest())
     main()

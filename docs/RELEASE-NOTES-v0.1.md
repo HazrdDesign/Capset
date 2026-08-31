@@ -37,6 +37,21 @@ Parakeet on your machine and generates timed, animated text layers.
 2. Restart After Effects.
 3. **Window → Extensions → Capset**.
 
+## Using it
+
+**Insert** — select the layer with the audio, choose Full Composition or In
+to Out, and hit **Add Captions**. No file dialog: Capset reads the selected
+layer's own media. Or switch to *Captions File* to import an SRT/VTT instead.
+
+**Update** — restyle one caption layer by hand, select it, **Capture style**,
+then **Sync Style** across the composition or the whole project.
+
+**Animate** — pick an animation and apply it to selected layers or all
+captions, after the captions exist.
+
+Captions inherit your current Character panel settings, so whatever you last
+used carries through.
+
 The installer places the extension in the Adobe CEP extensions folder and
 enables unsigned extensions, since this build is not code-signed.
 
@@ -54,13 +69,14 @@ enables unsigned extensions, since this build is not code-signed.
   a macOS runner and Apple signing.
 - **No animation previews.** The preview grid shows placeholders — the loops
   are generated from After Effects and have not been rendered yet.
+- **Rendering the composition audio mix is unverified.** When the selected
+  layer is not a plain audio/video file, Capset falls back to the render
+  queue, and the audio-only output template name varies by After Effects
+  version. Selecting a footage layer directly avoids that path entirely.
 - **CPU speed is unmeasured.** `backend/bench.py` exists to answer this. Until
   it has been run on real hardware, CPU-only performance is unknown.
 - **ffmpeg is not bundled** in this build; it must be on `PATH` for video
   input.
-- **The backend binary has never been executed.** The build verifies it was
-  produced, not that it starts. If the panel reports the service is
-  unreachable, that is the likely cause — tell me and I will fix it.
 - **Speech detection uses a simple energy gate**, not a neural VAD. The
   obvious package for that pulls PyTorch and would have made the installer
   several gigabytes, so proper VAD is deferred to an ONNX implementation.

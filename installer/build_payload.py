@@ -54,8 +54,11 @@ def copy_panel(dest: Path) -> list[str]:
 
     missing = [
         rel for rel in (
-            "index.html", "jsx/capset.jsx", "jsx/json2.jsx",
+            "index.html", "css/panel.css",
+            "jsx/capset.jsx", "jsx/json2.jsx",
             "js/vendor/CSInterface.js", "js/main.js",
+            "js/lib/timing.js", "js/lib/segmentation.js",
+            "js/lib/srt.js", "js/lib/backend.js",
             "animations/animations.json",
         )
         if not (dest / rel).is_file()

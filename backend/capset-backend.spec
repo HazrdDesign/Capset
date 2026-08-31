@@ -12,7 +12,7 @@ Build:  pyinstaller capset-backend.spec --noconfirm
 """
 
 import os
-from PyInstaller.utils.hooks import collect_dynamic_libs, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs, collect_submodules
 
 block_cipher = None
 
@@ -34,17 +34,26 @@ hiddenimports = [
     "uvicorn.lifespan.on",
     "uvicorn.lifespan.off",
 ]
-hiddenimports += collect_submodules("onnx_asr")
-
 binaries = []
-# onnxruntime ships execution-provider DLLs/dylibs that are loaded lazily.
-for module in ("onnxruntime", "onnxruntime_gpu"):
-    try:
-        binaries += collect_dynamic_libs(module)
-    except Exception:
-        pass  # provider not installed on this build machine; fine
-
 datas = []
+
+# collect_all, not collect_dynamic_libs alone. v0.1.3 shipped the
+# onnxruntime DLLs but not enough of its Python package for `import
+# onnxruntime` to succeed, so onnx_asr's very first import line failed and
+# the backend ran permanently degraded. Grab submodules, data files AND
+# binaries for both packages rather than guessing which parts matter.
+for module in ("onnx_asr", "onnxruntime"):
+    mod_datas, mod_binaries, mod_hidden = collect_all(module)
+    datas += mod_datas
+    binaries += mod_binaries
+    hiddenimports += mod_hidden
+
+# Optional GPU build; absent on a CPU-only build machine.
+try:
+    binaries += collect_dynamic_libs("onnxruntime_gpu")
+    hiddenimports += collect_submodules("onnxruntime_gpu")
+except Exception:
+    pass
 
 # Model weights are laid down by the installer next to the executable rather
 # than embedded here, so a model update does not mean rebuilding the binary.

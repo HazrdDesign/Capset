@@ -74,33 +74,25 @@ function capsetGetCompInfo() {
 // ---------------------------------------------------------------------------
 
 function capsetStyleText(layer, style, comp) {
+    // Font, size and colour are NOT set here. comp.layers.addText() inherits
+    // After Effects' current Character panel settings, so whatever the user
+    // last used carries straight through. Forcing values would override the
+    // look they just dialled in, and the Update tab exists to push a chosen
+    // style everywhere afterwards.
     var prop = layer.property("Source Text");
     var doc = prop.value;
-
-    if (style.font) doc.font = style.font;
-    if (style.fontSize) doc.fontSize = style.fontSize;
     doc.justification = ParagraphJustification.CENTER_JUSTIFY;
-
-    // NOTE: TextDocument.fillColor assignment is flagged UNVERIFIED in
-    // docs/research/01-ae-extensibility.md — some AE versions ignore it from
-    // script. If it proves unreliable, fall back to an ADBE Fill effect on
-    // the layer, which is what the community recommends.
-    if (style.fillColor) {
-        doc.applyFill = true;
-        doc.fillColor = style.fillColor;
-    }
-    if (style.strokeColor && style.strokeWidth) {
-        doc.applyStroke = true;
-        doc.strokeColor = style.strokeColor;
-        doc.strokeWidth = style.strokeWidth;
-        doc.strokeOverFill = false;
-    }
     prop.setValue(doc);
 
-    // Position captions in the lower third by default, inside title-safe.
-    var y = comp.height * (style.positionY === undefined ? 0.82 : style.positionY);
-    var x = comp.width * 0.5;
-    layer.property("Transform").property("Position").setValue([x, y]);
+    // Title-safe: broadcast practice keeps captions inside the inner 80% of
+    // frame, because overscan on real displays clips the edges.
+    var baseline = style.titleSafe ? 0.80 : 0.88;
+    if (style.positionY !== undefined && style.positionY !== null) {
+        baseline = style.positionY;
+    }
+    layer.property("Transform").property("Position").setValue(
+        [comp.width * 0.5, comp.height * baseline]
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -271,6 +263,185 @@ function capsetApplyAnimation(layer, animation, timings) {
 }
 
 // ---------------------------------------------------------------------------
+// audio source
+//
+// Prefer the selected layer's own file over rendering. Reading a path is
+// instant; rendering the comp's audio mix costs a render-queue round trip.
+// Rendering is only necessary when the audio is not a single flat file --
+// a nested comp, a layer with effects, or a multi-layer mix.
+// ---------------------------------------------------------------------------
+
+function capsetLayerSourceFile(layer) {
+    if (!layer || !layer.source) return null;
+    var source = layer.source;
+    // FootageItem with a real file on disk (not solid, not placeholder).
+    if (source instanceof FootageItem && source.file) {
+        return source.file;
+    }
+    return null;
+}
+
+function capsetHasAudio(layer) {
+    try {
+        return layer.hasAudio === true;
+    } catch (e) {
+        return false;
+    }
+}
+
+/**
+ * @param payloadJson {scope: "composition"|"inout"}
+ * @returns {mode:"file", path, start, duration} when a direct file can be
+ *          used, or {mode:"render", start, duration} when the caller must
+ *          call capsetRenderAudio.
+ */
+function capsetGetAudioSource(payloadJson) {
+    try {
+        var payload = JSON.parse(payloadJson || "{}");
+        var comp = capsetActiveComp();
+        var scope = payload.scope || "composition";
+
+        var start = 0;
+        var duration = comp.duration;
+        if (scope === "inout") {
+            start = comp.workAreaStart;
+            duration = comp.workAreaDuration;
+        }
+
+        var selected = comp.selectedLayers;
+        var audioLayers = [];
+        var i;
+        for (i = 0; i < selected.length; i++) {
+            if (capsetHasAudio(selected[i])) audioLayers.push(selected[i]);
+        }
+
+        // Exactly one selected audio layer backed by a plain file: use it
+        // directly. Its own in-point is the time origin the panel must offset
+        // transcription results against.
+        if (audioLayers.length === 1) {
+            var file = capsetLayerSourceFile(audioLayers[0]);
+            if (file && file.exists) {
+                return capsetOk({
+                    mode: "file",
+                    path: file.fsName,
+                    layerName: audioLayers[0].name,
+                    // Where this layer's audio begins in comp time, and how far
+                    // into the source file that corresponds to.
+                    layerStart: audioLayers[0].startTime,
+                    layerInPoint: audioLayers[0].inPoint,
+                    start: start,
+                    duration: duration
+                });
+            }
+        }
+
+        // Nothing selected: fall back to the comp mix rather than erroring,
+        // since "caption this comp" is the common intent.
+        var reason;
+        if (audioLayers.length === 0) {
+            reason = selected.length
+                ? "The selected layer has no audio."
+                : "No layer selected.";
+        } else if (audioLayers.length > 1) {
+            reason = "Multiple audio layers selected.";
+        } else {
+            reason = "That layer's audio is not a plain file.";
+        }
+
+        var hasAnyAudio = false;
+        for (i = 1; i <= comp.numLayers; i++) {
+            if (capsetHasAudio(comp.layer(i))) { hasAnyAudio = true; break; }
+        }
+        if (!hasAnyAudio) {
+            throw new Error("This composition has no audio to transcribe.");
+        }
+
+        return capsetOk({
+            mode: "render",
+            reason: reason + " Rendering the composition's audio mix instead.",
+            start: start,
+            duration: duration
+        });
+    } catch (e) {
+        return capsetErr(e.message);
+    }
+}
+
+/**
+ * Render the comp's audio mix to a temporary WAV.
+ *
+ * UNVERIFIED against a live host: the audio-only output-module template name
+ * differs between After Effects versions and locales, so several candidates
+ * are tried and the work area is restored afterwards regardless of outcome.
+ */
+function capsetRenderAudio(payloadJson) {
+    var undoOpen = false;
+    var savedStart = null;
+    var savedDuration = null;
+    var comp = null;
+    try {
+        var payload = JSON.parse(payloadJson || "{}");
+        comp = capsetActiveComp();
+
+        var target = new File(
+            Folder.temp.fsName + "/capset_" + new Date().getTime() + ".wav"
+        );
+
+        app.beginUndoGroup("Capset: render audio");
+        undoOpen = true;
+
+        // Restrict the render to the requested range via the work area, then
+        // put it back — leaving a user's work area moved would be rude.
+        savedStart = comp.workAreaStart;
+        savedDuration = comp.workAreaDuration;
+        if (payload.scope !== "inout") {
+            comp.workAreaStart = 0;
+            comp.workAreaDuration = comp.duration;
+        }
+
+        var item = app.project.renderQueue.items.add(comp);
+        item.render = true;
+        try {
+            item.applyTemplate("Best Settings");
+        } catch (e) {}
+
+        var om = item.outputModule(1);
+        var templates = ["WAV", "AIFF 48kHz", "Audio Only", "MP3"];
+        var applied = false;
+        for (var t = 0; t < templates.length; t++) {
+            try {
+                om.applyTemplate(templates[t]);
+                applied = true;
+                break;
+            } catch (e) {}
+        }
+        if (!applied) {
+            throw new Error(
+                "No audio-only output module template found. Create one named " +
+                "\"WAV\" in the Render Queue and try again."
+            );
+        }
+        om.file = target;
+
+        app.project.renderQueue.render();
+        item.remove();
+
+        if (!target.exists) throw new Error("Audio render produced no file.");
+        return capsetOk({ path: target.fsName });
+    } catch (e) {
+        return capsetErr(e.message);
+    } finally {
+        if (comp && savedStart !== null) {
+            try {
+                comp.workAreaStart = savedStart;
+                comp.workAreaDuration = savedDuration;
+            } catch (e) {}
+        }
+        if (undoOpen) app.endUndoGroup();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // controller rig
 //
 // One null layer every caption is expression-linked to, so font size, colour
@@ -400,27 +571,271 @@ function capsetBuildController(payloadJson) {
 }
 
 // ---------------------------------------------------------------------------
+// style capture and sync
+//
+// Workflow this supports: generate captions, restyle ONE layer by hand in the
+// Character panel until it looks right, then push that look onto every other
+// caption -- in this comp or across the whole project. Effects come along
+// too, so a glow or stroke applied to the sample layer propagates as well.
+// ---------------------------------------------------------------------------
+
+function capsetTextLayers(comp, capsetOnly) {
+    var found = [];
+    for (var i = 1; i <= comp.numLayers; i++) {
+        var layer = comp.layer(i);
+        if (layer instanceof TextLayer) {
+            if (!capsetOnly || capsetIsCapsetLayer(layer)) found.push(layer);
+        }
+    }
+    return found;
+}
+
+function capsetAllComps() {
+    var comps = [];
+    for (var i = 1; i <= app.project.numItems; i++) {
+        var item = app.project.item(i);
+        if (item instanceof CompItem) comps.push(item);
+    }
+    return comps;
+}
+
+/** Snapshot the styling of the selected text layer. */
+function capsetCaptureStyle() {
+    try {
+        var comp = capsetActiveComp();
+        var selected = comp.selectedLayers;
+        var source = null;
+        for (var i = 0; i < selected.length; i++) {
+            if (selected[i] instanceof TextLayer) { source = selected[i]; break; }
+        }
+        if (!source) throw new Error("Select a styled text layer first.");
+
+        var doc = source.property("Source Text").value;
+        var style = {
+            font: doc.font,
+            fontSize: doc.fontSize,
+            tracking: doc.tracking,
+            justification: doc.justification,
+            applyFill: doc.applyFill,
+            applyStroke: doc.applyStroke,
+            strokeWidth: doc.strokeWidth,
+            strokeOverFill: doc.strokeOverFill,
+            leading: doc.leading
+        };
+        try { style.fillColor = doc.fillColor; } catch (e) {}
+        try { style.strokeColor = doc.strokeColor; } catch (e) {}
+        try { style.position = source.property("Transform").property("Position").value; } catch (e) {}
+        try { style.scale = source.property("Transform").property("Scale").value; } catch (e) {}
+
+        // Effect names only. Values are copied layer-to-layer at apply time,
+        // because serialising arbitrary effect parameters through JSON loses
+        // types AE cares about.
+        var effects = [];
+        var parade = source.property("ADBE Effect Parade");
+        for (var e2 = 1; e2 <= parade.numProperties; e2++) {
+            effects.push({
+                name: parade.property(e2).name,
+                matchName: parade.property(e2).matchName
+            });
+        }
+
+        return capsetOk({
+            sourceLayerName: source.name,
+            sourceCompName: comp.name,
+            sourceLayerIndex: source.index,
+            style: style,
+            effects: effects,
+            effectCount: effects.length
+        });
+    } catch (e) {
+        return capsetErr(e.message);
+    }
+}
+
+function capsetApplyStyleToLayer(layer, style, comp) {
+    var prop = layer.property("Source Text");
+    var doc = prop.value;
+
+    if (style.font) doc.font = style.font;
+    if (style.fontSize) doc.fontSize = style.fontSize;
+    if (style.tracking !== undefined) doc.tracking = style.tracking;
+    if (style.leading !== undefined && style.leading !== null) {
+        try { doc.leading = style.leading; } catch (e) {}
+    }
+    if (style.justification !== undefined) doc.justification = style.justification;
+    if (style.applyFill !== undefined) doc.applyFill = style.applyFill;
+    if (style.fillColor) { try { doc.fillColor = style.fillColor; } catch (e) {} }
+    if (style.applyStroke !== undefined) doc.applyStroke = style.applyStroke;
+    if (style.strokeColor) { try { doc.strokeColor = style.strokeColor; } catch (e) {} }
+    if (style.strokeWidth !== undefined) doc.strokeWidth = style.strokeWidth;
+    if (style.strokeOverFill !== undefined) doc.strokeOverFill = style.strokeOverFill;
+    prop.setValue(doc);
+
+    // Position is proportional, not absolute: the sample layer may come from a
+    // comp of a different size, and copying raw pixels would drop captions off
+    // the edge of a differently-shaped comp.
+    if (style.position && style.sourceWidth && style.sourceHeight) {
+        try {
+            layer.property("Transform").property("Position").setValue([
+                comp.width * (style.position[0] / style.sourceWidth),
+                comp.height * (style.position[1] / style.sourceHeight)
+            ]);
+        } catch (e) {}
+    }
+    if (style.scale) {
+        try { layer.property("Transform").property("Scale").setValue(style.scale); } catch (e) {}
+    }
+}
+
+/** Copy effects from a source layer onto a target, replacing any Capset added. */
+function capsetCopyEffects(sourceLayer, targetLayer) {
+    var targetParade = targetLayer.property("ADBE Effect Parade");
+    for (var i = targetParade.numProperties; i >= 1; i--) {
+        try { targetParade.property(i).remove(); } catch (e) {}
+    }
+    var sourceParade = sourceLayer.property("ADBE Effect Parade");
+    var copied = 0;
+    for (var j = 1; j <= sourceParade.numProperties; j++) {
+        var effect = sourceParade.property(j);
+        try {
+            effect.selected = true;
+            copied++;
+        } catch (e) {}
+    }
+    if (copied) {
+        try {
+            // AE has no scripting API for duplicating an effect with its
+            // values, so the copy/paste commands are the only route.
+            app.executeCommand(app.findMenuCommandId("Copy"));
+            targetLayer.selected = true;
+            app.executeCommand(app.findMenuCommandId("Paste"));
+        } catch (e) {
+            return 0;
+        }
+    }
+    return copied;
+}
+
+/**
+ * @param payloadJson {style, effects, copyEffects, scope: "comp"|"project",
+ *                     sourceLayerIndex, sourceCompName}
+ */
+function capsetSyncStyle(payloadJson) {
+    var undoOpen = false;
+    try {
+        var payload = JSON.parse(payloadJson || "{}");
+        var style = payload.style;
+        if (!style) throw new Error("No captured style to apply.");
+
+        var scope = payload.scope || "comp";
+        var comps = scope === "project" ? capsetAllComps() : [capsetActiveComp()];
+
+        app.beginUndoGroup("Capset: sync caption style");
+        undoOpen = true;
+
+        var updated = 0;
+        var compsTouched = 0;
+        for (var c = 0; c < comps.length; c++) {
+            var comp = comps[c];
+            var layers = capsetTextLayers(comp, true);
+            if (!layers.length) continue;
+            compsTouched++;
+            for (var i = 0; i < layers.length; i++) {
+                capsetApplyStyleToLayer(layers[i], style, comp);
+                updated++;
+            }
+        }
+
+        if (!updated) {
+            throw new Error(
+                scope === "project"
+                    ? "No Capset caption layers found in this project."
+                    : "No Capset caption layers in this composition."
+            );
+        }
+
+        return capsetOk({
+            updated: updated,
+            comps: compsTouched,
+            scope: scope
+        });
+    } catch (e) {
+        return capsetErr(e.message);
+    } finally {
+        if (undoOpen) app.endUndoGroup();
+    }
+}
+
+/** Remove every Capset caption layer, so a rebuild replaces rather than stacks. */
+function capsetClearCaptions(payloadJson) {
+    var undoOpen = false;
+    try {
+        var payload = JSON.parse(payloadJson || "{}");
+        var comp = capsetActiveComp();
+
+        app.beginUndoGroup("Capset: clear captions");
+        undoOpen = true;
+
+        var removed = 0;
+        for (var i = comp.numLayers; i >= 1; i--) {
+            var layer = comp.layer(i);
+            if (capsetIsCapsetLayer(layer) && layer.name !== CAPSET_CONTROLLER) {
+                layer.remove();
+                removed++;
+            }
+        }
+        if (payload.removeController !== false) {
+            var controller = capsetFindController(comp);
+            if (controller) { controller.remove(); removed++; }
+        }
+        return capsetOk({ removed: removed });
+    } catch (e) {
+        return capsetErr(e.message);
+    } finally {
+        if (undoOpen) app.endUndoGroup();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // build
 // ---------------------------------------------------------------------------
 
 function capsetBuildCaptions(payloadJson) {
     var undoOpen = false;
     try {
-        var payload = JSON.parse(payloadJson);
+        var payload = JSON.parse(payloadJson || "{}");
         var captions = payload.captions || [];
         var style = payload.style || {};
         var animation = payload.animation || null;
         var offset = payload.timeOffset || 0;
+        var options = payload.options || {};
 
         if (!captions.length) throw new Error("No captions to build.");
 
         var comp = capsetActiveComp();
 
-        app.beginUndoGroup("Capset: build captions");
+        app.beginUndoGroup("Capset: add captions");
         undoOpen = true;
 
+        // Rebuilding replaces rather than stacks: running Add Captions twice
+        // should not leave two sets of layers fighting over the same frames.
+        var replaced = 0;
+        for (var r = comp.numLayers; r >= 1; r--) {
+            var existing = comp.layer(r);
+            if (capsetIsCapsetLayer(existing) && existing.name !== CAPSET_CONTROLLER) {
+                existing.remove();
+                replaced++;
+            }
+        }
+
+        var controller = null;
+        if (options.parentToController) {
+            controller = capsetEnsureController(comp, style);
+        }
+
         var created = [];
-        for (var i = 0; i < captions.length; i++) {
+        var i;
+        for (i = 0; i < captions.length; i++) {
             var caption = captions[i];
             var text = caption.lines ? caption.lines.join("\r") : caption.text;
 
@@ -434,10 +849,31 @@ function capsetBuildCaptions(payloadJson) {
             if (animation && caption.timings) {
                 capsetApplyAnimation(layer, animation, caption.timings);
             }
-            created.push(layer.index);
+            if (controller) {
+                try { layer.parent = controller; } catch (e) {}
+            }
+            created.push(layer);
         }
 
-        return capsetOk({ created: created.length, layerIndices: created });
+        var precomposed = false;
+        if (options.precompose && created.length) {
+            var indices = [];
+            for (i = 0; i < created.length; i++) indices.push(created[i].index);
+            try {
+                var pre = comp.layers.precompose(indices, "Capset Captions", true);
+                pre.name = CAPSET_PREFIX + "captions";
+                precomposed = true;
+            } catch (e) {
+                // Not fatal: the captions exist either way.
+            }
+        }
+
+        return capsetOk({
+            created: created.length,
+            replaced: replaced,
+            precomposed: precomposed,
+            parented: controller !== null
+        });
     } catch (e) {
         return capsetErr(e.message);
     } finally {

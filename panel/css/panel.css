@@ -176,3 +176,54 @@ button.primary:hover:not(:disabled) { background: #3d5f9e; }
 }
 #log .err { color: var(--err); }
 #log .ok { color: var(--ok); }
+
+/* --- tabs --------------------------------------------------------------- */
+#tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.tab {
+  flex: 1 1 0;
+  padding: 7px 4px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--text-dim);
+  font-weight: 600;
+  letter-spacing: .02em;
+}
+.tab:hover { background: rgba(255,255,255,.04); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.panel { display: none; }
+.panel.active { display: block; }
+
+/* --- radios & checkboxes ------------------------------------------------ */
+.radio, .check {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  color: var(--text);
+}
+.radio input, .check input { margin: 2px 0 0; flex: 0 0 auto; }
+.radio em, .check em { color: var(--text-dim); font-style: normal; }
+.opts { margin: 10px 0; }
+.check { margin-bottom: 5px; }
+
+.captured {
+  margin-top: 8px;
+  padding: 7px 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--ok);
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.captured strong { color: var(--text); font-weight: 600; }

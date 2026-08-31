@@ -7,79 +7,142 @@
 </head>
 <body>
 
+  <nav id="tabs">
+    <button class="tab active" data-tab="insert">Insert</button>
+    <button class="tab" data-tab="update">Update</button>
+    <button class="tab" data-tab="animate">Animate</button>
+  </nav>
+
   <section id="status" class="warn">
     <span class="dot"></span>
     <span class="msg">Checking transcription service…</span>
     <button id="retry" title="Re-check">↻</button>
   </section>
 
-  <section>
-    <h2>Source</h2>
-    <div class="file">
-      <span class="name" id="file-name">No file selected</span>
-      <button id="pick">Browse…</button>
-    </div>
-    <p class="hint">Pick the audio or video to transcribe. Anything ffmpeg reads.</p>
-  </section>
+  <!-- ============================ INSERT ============================ -->
+  <div class="panel active" data-panel="insert">
 
-  <section>
-    <h2>Captions</h2>
-    <div class="field">
-      <label for="mode">Segmentation</label>
-      <select id="mode">
-        <option value="smart">Smart — match the comp shape</option>
-        <option value="word">Word by word</option>
-        <option value="phrase">Phrase (broadcast style)</option>
-      </select>
-      <p class="hint" id="mode-hint">Reads the comp's aspect ratio and picks a layout.</p>
-    </div>
-    <div class="row field">
-      <div>
-        <label for="font-size">Font size</label>
-        <input type="number" id="font-size" value="72" min="8" max="400">
-      </div>
-      <div>
-        <label for="position-y">Baseline (% down)</label>
-        <input type="number" id="position-y" value="82" min="0" max="100">
-      </div>
-    </div>
-  </section>
+    <section>
+      <h2>Captions</h2>
+      <label class="radio">
+        <input type="radio" name="source" value="auto" checked>
+        <span>Auto Captions <em>— transcribe the selected layer</em></span>
+      </label>
+      <label class="radio">
+        <input type="radio" name="source" value="file">
+        <span>Captions File <em>— import an SRT or VTT</em></span>
+      </label>
 
-  <section>
-    <h2>Animation</h2>
-    <div id="animations"></div>
-    <div class="field" style="margin-top:8px">
-      <label for="resolve">Resolve animation within <span id="resolve-value">50</span>% of each caption</label>
+      <div id="file-row" class="file" hidden>
+        <span class="name" id="file-name">No file chosen</span>
+        <button id="pick">Browse…</button>
+      </div>
+
+      <div class="field" style="margin-top:8px">
+        <label for="mode">Segmentation</label>
+        <select id="mode">
+          <option value="smart">Smart — match the comp shape</option>
+          <option value="word">Word by word</option>
+          <option value="phrase">Phrase (broadcast style)</option>
+        </select>
+        <p class="hint" id="mode-hint">Reads the comp's aspect ratio and picks a layout.</p>
+      </div>
+    </section>
+
+    <section>
+      <h2>Create</h2>
+      <label class="radio">
+        <input type="radio" name="duration" value="composition" checked>
+        <span>Full Composition</span>
+      </label>
+      <label class="radio">
+        <input type="radio" name="duration" value="inout">
+        <span>In to Out <em>— work area only</em></span>
+      </label>
+
+      <div class="opts">
+        <label class="check"><input type="checkbox" id="opt-precompose"> Precompose captions</label>
+        <label class="check"><input type="checkbox" id="opt-parent"> Parent to Controller</label>
+        <label class="check"><input type="checkbox" id="opt-split"> Split by words</label>
+        <label class="check"><input type="checkbox" id="opt-titlesafe" checked> Keep inside title-safe</label>
+      </div>
+
+      <button class="primary" id="build">Add Captions</button>
+      <p class="hint">
+        Uses your current Character panel settings — style one layer afterwards,
+        then push it everywhere from the Update tab.
+      </p>
+    </section>
+  </div>
+
+  <!-- ============================ UPDATE ============================ -->
+  <div class="panel" data-panel="update">
+    <section>
+      <h2>Sync style</h2>
+      <p class="hint" style="margin-top:0">
+        Restyle one caption layer however you like, select it, then capture and
+        push that look onto the rest.
+      </p>
+      <button id="capture" style="width:100%">Capture style from selected layer</button>
+      <div id="captured" class="captured" hidden></div>
+    </section>
+
+    <section>
+      <h2>Apply to</h2>
+      <label class="radio">
+        <input type="radio" name="scope" value="comp" checked>
+        <span>This composition</span>
+      </label>
+      <label class="radio">
+        <input type="radio" name="scope" value="project">
+        <span>All compositions <em>— every comp in the project</em></span>
+      </label>
+      <div class="opts">
+        <label class="check"><input type="checkbox" id="opt-effects" checked> Include effects</label>
+      </div>
+      <button class="primary" id="sync" disabled>Sync Style</button>
+    </section>
+
+    <section>
+      <h2>Danger zone</h2>
+      <button id="clear" style="width:100%">Remove all Capset captions</button>
+      <p class="hint">Deletes generated caption layers in this composition.</p>
+    </section>
+  </div>
+
+  <!-- =========================== ANIMATE ============================ -->
+  <div class="panel" data-panel="animate">
+    <section>
+      <h2>Animation</h2>
+      <div id="animations"></div>
+    </section>
+
+    <section>
+      <h2>Timing</h2>
+      <label for="resolve">Resolve within <span id="resolve-value">50</span>% of each caption</label>
       <input type="range" id="resolve" min="20" max="50" value="50" style="width:100%">
       <p class="hint">
         Animations scale to each caption's length, so short words finish early
         instead of still moving when the word disappears.
       </p>
-    </div>
-    <div class="row">
-      <button id="replace-selected">Replace on selected</button>
-      <button id="replace-all">Replace on all</button>
-    </div>
-  </section>
+    </section>
 
-  <section>
-    <h2>Global style</h2>
-    <button id="build-controller" style="width:100%">Create / relink controller</button>
-    <p class="hint">
-      Adds one control layer every caption is expression-linked to, so font
-      size, colour and baseline update everywhere at once — while each layer
-      stays individually editable.
-    </p>
-  </section>
+    <section>
+      <h2>Apply</h2>
+      <div class="row">
+        <button id="anim-selected">Selected layers</button>
+        <button id="anim-all">All captions</button>
+      </div>
+      <button id="anim-clear" style="width:100%;margin-top:6px">Remove animation</button>
+    </section>
+  </div>
 
   <section id="progress">
     <div class="bar"><div id="bar-fill"></div></div>
     <div class="hint" id="progress-text">Working…</div>
   </section>
 
-  <button class="primary" id="build" disabled>Transcribe &amp; build captions</button>
-
-  <section style="margin-top:8px">
+  <section>
     <h2>Log</h2>
     <div id="log"></div>
   </section>
@@ -87,6 +150,7 @@
   <script src="js/vendor/CSInterface.js"></script>
   <script src="js/lib/timing.js"></script>
   <script src="js/lib/segmentation.js"></script>
+  <script src="js/lib/srt.js"></script>
   <script src="js/lib/backend.js"></script>
   <script src="js/main.js"></script>
 </body>

@@ -65,8 +65,17 @@ class OnnxAsrEngine:
         try:
             import onnx_asr
         except ImportError as exc:  # pragma: no cover - needs the real package
+            # Report the ACTUAL failure. `import onnx_asr` immediately does
+            # `import onnxruntime`, and ModuleNotFoundError subclasses
+            # ImportError — so a missing onnxruntime used to surface here as
+            # "onnx-asr is not installed", sending people to reinstall the
+            # wrong package. Name what really failed.
+            missing = getattr(exc, "name", None) or "onnx_asr"
             raise EngineUnavailable(
-                "onnx-asr is not installed. pip install onnx-asr onnxruntime"
+                f"could not import the ASR engine: {type(exc).__name__}: {exc} "
+                f"(missing module: {missing}). In a packaged build this means "
+                f"the bundle is incomplete, not that you need to pip install "
+                f"anything."
             ) from exc
 
         log.info(
@@ -96,6 +105,25 @@ class OnnxAsrEngine:
             raise EngineUnavailable("engine not loaded")
         result = self._model.recognize(audio, sample_rate=sample_rate)
         return _tokens_from_result(result)
+
+    @staticmethod
+    def selftest() -> tuple[bool, str]:
+        """Can the ASR stack be imported at all? No model download.
+
+        Exists because /health answers even when the engine is unusable, so a
+        smoke test that only checks the service responds cannot tell a working
+        bundle from a broken one. v0.1.3 shipped exactly that way.
+        """
+        try:
+            import onnxruntime
+        except Exception as exc:
+            return False, f"onnxruntime import failed: {type(exc).__name__}: {exc}"
+        try:
+            import onnx_asr  # noqa: F401
+        except Exception as exc:
+            return False, f"onnx_asr import failed: {type(exc).__name__}: {exc}"
+        providers = ", ".join(onnxruntime.get_available_providers())
+        return True, f"onnxruntime {onnxruntime.__version__}; providers: {providers}"
 
     def describe(self) -> dict:
         return {
