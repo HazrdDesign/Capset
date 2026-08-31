@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import config, main as main_mod, transcribe as transcribe_mod
+from app.jobs import JobState
 from app.transcribe import Transcriber
 from tests.test_transcribe import FakeEngine
 
@@ -48,10 +49,20 @@ def test_health_reports_loaded(client):
 
 
 def test_submit_returns_202_and_job_id(client):
+    """The contract is 202 plus a pollable id -- not a particular state.
+
+    The worker starts immediately, so with a fast engine the job can already
+    be "done" by the time the response is serialized. Asserting
+    queued-or-running here was a race that failed intermittently.
+    """
     response = client.post("/jobs", files=_upload())
     assert response.status_code == 202
     body = response.json()
-    assert body["id"] and body["state"] in ("queued", "running")
+
+    assert body["id"]
+    assert body["state"] in {s.value for s in JobState}
+    # The id must actually be pollable, which is the point of the 202.
+    assert client.get(f"/jobs/{body['id']}").status_code == 200
 
 
 def test_job_completes_with_schema_shaped_result(client):
