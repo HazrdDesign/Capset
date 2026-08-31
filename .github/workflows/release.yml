@@ -65,10 +65,17 @@ jobs:
         # reach users as "the panel says the service is unreachable" with no
         # clue why. Start it and require a real HTTP answer.
         run: |
-          ./backend/dist/capset-backend/capset-backend.exe &
+          ./backend/dist/capset-backend/capset-backend.exe > backend-start.log 2>&1 &
           pid=$!
           ok=0
           for i in $(seq 1 30); do
+            # Bail the moment the process dies rather than retrying a corpse
+            # for a minute — the traceback is already in the log.
+            if ! kill -0 $pid 2>/dev/null; then
+              echo "::error::backend binary exited during startup"
+              echo "--- backend output ---"; cat backend-start.log
+              exit 1
+            fi
             if curl -fsS --max-time 3 http://127.0.0.1:8756/health -o health.json; then
               ok=1; break
             fi
@@ -77,6 +84,7 @@ jobs:
           kill $pid 2>/dev/null || true
           if [ "$ok" != "1" ]; then
             echo "::error::backend binary did not serve /health — the bundle is broken"
+            echo "--- backend output ---"; cat backend-start.log
             exit 1
           fi
           echo "backend responded:"; cat health.json

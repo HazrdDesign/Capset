@@ -54,8 +54,11 @@ if model_dir and os.path.isdir(model_dir):
     datas.append((model_dir, "models"))
 
 a = Analysis(
-    ["app/main.py"],
-    pathex=[],
+    # NOT app/main.py: PyInstaller runs the entry script as a top-level
+    # module, which breaks that file's package-relative imports at startup.
+    # capset_service.py is a thin wrapper that imports `app` absolutely.
+    ["capset_service.py"],
+    pathex=[os.path.abspath(SPECPATH)],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
