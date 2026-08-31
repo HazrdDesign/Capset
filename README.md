@@ -31,6 +31,22 @@ docs/       Architecture, API schema, research.
 Start with **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — it carries the
 current decisions and supersedes the original scaffold where they conflict.
 
+## Status
+
+| Component | State |
+|---|---|
+| Backend (Parakeet, chunking, job API) | Implemented, 59 tests |
+| Panel (UI, segmentation, timing, animations) | Implemented, 48 tests |
+| Installer (Windows + macOS scripts, CI) | Implemented, unbuilt |
+| **Verified inside After Effects** | **Not yet** |
+
+107 automated tests, green in CI. The After Effects integration has not been
+run in After Effects — the ExtendScript follows Adobe's scripting reference
+rather than a live host. That is the next thing worth doing, and it will
+shake out more than additional code will.
+
+To cut a release, see [`docs/RELEASING.md`](docs/RELEASING.md).
+
 ## Phases
 
 1. **Backend** — Parakeet via ONNX with VAD chunking; measure CPU speed.
