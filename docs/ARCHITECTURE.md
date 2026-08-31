@@ -50,6 +50,14 @@ The 1.1B model is ~4.5 GB. **parakeet-tdt-0.6b-v2** (English) or **v3**
 (multilingual) is ~2.5 GB full precision and materially smaller quantized,
 while scoring *better* on the Open ASR Leaderboard (6.05% WER for v2).
 
+**2.3a — The VAD package is a PyTorch trap.** `silero-vad` on PyPI looks like
+a small ONNX VAD, but hard-depends on `torch>=1.12` **and**
+`torchaudio>=0.12` — base requirements, not extras. Adding it drags all of
+PyTorch into the bundle and takes the installer from ~400 MB to 3–4 GB, which
+is the exact outcome this whole section exists to avoid. It is deliberately
+**not** in `requirements.txt`; `app/vad.py` imports it lazily and degrades to
+an energy gate. `tests/test_requirements.py` enforces the budget.
+
 **2.3 — Audio longer than 20–30s must be VAD-chunked.** Most Parakeet models
 cap out there. Long-form requires: VAD segment → transcribe each → **offset
 each segment's timestamps by its start time** → concatenate. Skipping the

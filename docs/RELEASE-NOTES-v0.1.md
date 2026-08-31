@@ -58,6 +58,11 @@ enables unsigned extensions, since this build is not code-signed.
   it has been run on real hardware, CPU-only performance is unknown.
 - **ffmpeg is not bundled** in this build; it must be on `PATH` for video
   input.
+- **Speech detection uses a simple energy gate**, not a neural VAD. The
+  obvious package for that pulls PyTorch and would have made the installer
+  several gigabytes, so proper VAD is deferred to an ONNX implementation.
+  Chunk boundaries are therefore less clean, but never incorrect — chunk
+  length limits and timestamp offsets are enforced regardless.
 
 ## Requirements
 

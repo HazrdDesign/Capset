@@ -4,6 +4,14 @@ Cutting inside silence keeps words whole, so VAD spans make better chunk
 edges than a fixed grid. When no VAD backend is available the whole file
 becomes one span -- `chunking.plan_chunks` still enforces the model's length
 limit, so transcription degrades in quality of cut, never in correctness.
+
+The `silero-vad` import below is LAZY AND OPTIONAL on purpose. That pip
+package hard-depends on torch and torchaudio, which would pull all of PyTorch
+into the shipped bundle and inflate the installer from ~400 MB to 3-4 GB --
+exactly what the ONNX architecture exists to avoid. It is therefore NOT in
+requirements.txt. If a developer happens to have it installed it gets used;
+otherwise the energy gate takes over. To ship real VAD, run Silero's ONNX
+model through onnxruntime directly rather than adding the package back.
 """
 
 from __future__ import annotations

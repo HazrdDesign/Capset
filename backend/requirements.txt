@@ -10,9 +10,20 @@ onnx-asr>=0.11.0
 onnxruntime>=1.20.0
 # onnxruntime-gpu>=1.20.0   ; Windows/Linux + NVIDIA only
 
-# Voice activity detection, used to place chunk boundaries inside silence.
-# Optional: app/vad.py degrades to an energy gate, then to whole-file.
-silero-vad>=5.1
+# NO VAD PACKAGE HERE, DELIBERATELY.
+#
+# The obvious choice, `silero-vad`, hard-depends on torch>=1.12 AND
+# torchaudio>=0.12 -- not as optional extras, in its base requirements. Adding
+# it drags all of PyTorch into the PyInstaller bundle and takes the installer
+# from ~400 MB to 3-4 GB, which is precisely the outcome the ONNX architecture
+# was chosen to avoid (docs/ARCHITECTURE.md section 2).
+#
+# app/vad.py imports silero lazily and degrades to an energy gate, then to
+# whole-file chunking, so it stays useful without the package. To get proper
+# VAD back, run Silero's ONNX model through onnxruntime directly (no pip
+# package), or use onnx-asr's built-in long-form VAD.
+#
+# tests/test_requirements.py enforces this.
 
 # --- API -------------------------------------------------------------------
 fastapi>=0.115
