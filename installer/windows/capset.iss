@@ -63,23 +63,33 @@ Source: "{#PayloadDir}\vendor\*"; \
 Name: "{group}\Capset Backend"; Filename: "{app}\backend\capset-backend.exe"
 Name: "{group}\Uninstall Capset"; Filename: "{uninstallexe}"
 
-[Registry]
-; CEP refuses unsigned extensions unless debug mode is on. The extension
-; folder installed above is unsigned in a v0.1 build, so without these keys
-; the panel silently never appears -- the single most common "it installed
-; but I don't see it" report.
+; --- PlayerDebugMode ------------------------------------------------------
+; NOT a [Registry] section. Setup runs elevated (it writes to Common Files),
+; so HKCU there resolves to the ADMINISTRATOR's hive, not the logged-in
+; user's. The key would land in the wrong profile, CEP would go on refusing
+; to load this unsigned extension, and the panel would simply never appear in
+; After Effects -- the classic "it installed but I don't see it" report.
+; Inno Setup warns about exactly this:
+;   "PrivilegesRequired is set to admin but per-user areas (HKCU) are used"
 ;
-; The CSXS version differs per host release, so every version in the
-; supported range gets a key. Harmless when a version is not installed.
-Root: HKCU; Subkey: "Software\Adobe\CSXS.9";  ValueType: string; ValueName: "PlayerDebugMode"; ValueData: "1"; Flags: uninsdeletevalue
-Root: HKCU; Subkey: "Software\Adobe\CSXS.10"; ValueType: string; ValueName: "PlayerDebugMode"; ValueData: "1"; Flags: uninsdeletevalue
-Root: HKCU; Subkey: "Software\Adobe\CSXS.11"; ValueType: string; ValueName: "PlayerDebugMode"; ValueData: "1"; Flags: uninsdeletevalue
-Root: HKCU; Subkey: "Software\Adobe\CSXS.12"; ValueType: string; ValueName: "PlayerDebugMode"; ValueData: "1"; Flags: uninsdeletevalue
-
+; runasoriginaluser drops back to the invoking user so the key lands in the
+; right hive. The CSXS version differs per host release, so write them all;
+; keys for versions that are not installed are harmless.
 [Run]
+Filename: "{sys}\reg.exe"; Parameters: "add ""HKCU\Software\Adobe\CSXS.9"" /v PlayerDebugMode /t REG_SZ /d 1 /f";  Flags: runhidden runasoriginaluser; StatusMsg: "Enabling extension loading..."
+Filename: "{sys}\reg.exe"; Parameters: "add ""HKCU\Software\Adobe\CSXS.10"" /v PlayerDebugMode /t REG_SZ /d 1 /f"; Flags: runhidden runasoriginaluser
+Filename: "{sys}\reg.exe"; Parameters: "add ""HKCU\Software\Adobe\CSXS.11"" /v PlayerDebugMode /t REG_SZ /d 1 /f"; Flags: runhidden runasoriginaluser
+Filename: "{sys}\reg.exe"; Parameters: "add ""HKCU\Software\Adobe\CSXS.12"" /v PlayerDebugMode /t REG_SZ /d 1 /f"; Flags: runhidden runasoriginaluser
+
 Filename: "{app}\backend\capset-backend.exe"; \
     Description: "Start the Capset transcription service"; \
     Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+Filename: "{sys}\reg.exe"; Parameters: "delete ""HKCU\Software\Adobe\CSXS.9"" /v PlayerDebugMode /f";  Flags: runhidden runasoriginaluser; RunOnceId: "CapsetDebug9"
+Filename: "{sys}\reg.exe"; Parameters: "delete ""HKCU\Software\Adobe\CSXS.10"" /v PlayerDebugMode /f"; Flags: runhidden runasoriginaluser; RunOnceId: "CapsetDebug10"
+Filename: "{sys}\reg.exe"; Parameters: "delete ""HKCU\Software\Adobe\CSXS.11"" /v PlayerDebugMode /f"; Flags: runhidden runasoriginaluser; RunOnceId: "CapsetDebug11"
+Filename: "{sys}\reg.exe"; Parameters: "delete ""HKCU\Software\Adobe\CSXS.12"" /v PlayerDebugMode /f"; Flags: runhidden runasoriginaluser; RunOnceId: "CapsetDebug12"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{commoncf32}\Adobe\CEP\extensions\{#ExtensionId}"

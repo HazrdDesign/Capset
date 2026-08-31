@@ -54,3 +54,30 @@ jobs:
             fi
           done
           echo "payload is clean"
+
+  installer:
+    name: Installer script lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Guard against HKCU writes under elevation
+        # Setup runs elevated to write Common Files, so a [Registry] entry
+        # targeting HKCU lands in the ADMINISTRATOR's hive rather than the
+        # logged-in user's. PlayerDebugMode would end up in the wrong profile,
+        # CEP would keep refusing the unsigned extension, and the panel would
+        # never appear in After Effects. Inno Setup only warns; CI fails.
+        run: |
+          iss=installer/windows/capset.iss
+          if grep -qiE '^\s*Root:\s*HKCU' "$iss"; then
+            echo "::error::$iss writes HKCU from a [Registry] section while running elevated." >&2
+            echo "Use [Run] with reg.exe and Flags: runasoriginaluser instead." >&2
+            exit 1
+          fi
+          if ! grep -q 'runasoriginaluser' "$iss"; then
+            echo "::error::PlayerDebugMode must be set via runasoriginaluser." >&2
+            exit 1
+          fi
+          for v in 9 10 11 12; do
+            grep -q "CSXS.$v" "$iss" || { echo "::error::missing CSXS.$v key" >&2; exit 1; }
+          done
+          echo "installer script OK"
