@@ -1,0 +1,101 @@
+{
+  "$comment": "Animation library. Definitions are data, not .ffx binaries: .ffx cannot be generated programmatically, bakes fixed keyframes that cannot adapt to caption duration, and is near-impossible to cleanly remove when swapping. Every animation here is generated procedurally by jsx/animators.jsx under the Capset__ prefix, so replacing one is a clean teardown and rebuild. See docs/ARCHITECTURE.md section 3.",
+  "version": 1,
+  "animations": [
+    {
+      "id": "fade",
+      "name": "Fade",
+      "description": "Simple opacity fade. The safe default.",
+      "preview": "previews/fade.mp4",
+      "basedOn": "characters",
+      "in": { "fraction": 0.25, "min": 0.10, "max": 0.40,
+              "properties": [{ "type": "opacity", "from": 0, "to": 100 }],
+              "ease": { "in": 33, "out": 66 } },
+      "out": { "fraction": 0.20, "min": 0.08, "max": 0.30,
+               "properties": [{ "type": "opacity", "from": 100, "to": 0 }],
+               "ease": { "in": 66, "out": 33 } }
+    },
+    {
+      "id": "pop-in",
+      "name": "Pop In",
+      "description": "Scales up past 100% and settles. The CapCut staple.",
+      "preview": "previews/pop-in.mp4",
+      "basedOn": "characters",
+      "in": { "fraction": 0.25, "min": 0.12, "max": 0.45,
+              "properties": [
+                { "type": "scale", "from": [40, 40], "to": [100, 100], "overshoot": 1.12 },
+                { "type": "opacity", "from": 0, "to": 100 }
+              ],
+              "ease": { "in": 20, "out": 80 } },
+      "out": { "fraction": 0.18, "min": 0.08, "max": 0.28,
+               "properties": [{ "type": "opacity", "from": 100, "to": 0 }],
+               "ease": { "in": 70, "out": 30 } }
+    },
+    {
+      "id": "rise",
+      "name": "Rise",
+      "description": "Words lift into place from below with a soft fade.",
+      "preview": "previews/rise.mp4",
+      "basedOn": "words",
+      "in": { "fraction": 0.28, "min": 0.12, "max": 0.45,
+              "properties": [
+                { "type": "position", "from": [0, 60], "to": [0, 0] },
+                { "type": "opacity", "from": 0, "to": 100 }
+              ],
+              "ease": { "in": 15, "out": 85 } },
+      "out": { "fraction": 0.18, "min": 0.08, "max": 0.28,
+               "properties": [
+                 { "type": "position", "from": [0, 0], "to": [0, -40] },
+                 { "type": "opacity", "from": 100, "to": 0 }
+               ],
+               "ease": { "in": 80, "out": 20 } }
+    },
+    {
+      "id": "typewriter",
+      "name": "Typewriter",
+      "description": "Characters appear one at a time.",
+      "preview": "previews/typewriter.mp4",
+      "basedOn": "characters",
+      "selector": "range",
+      "in": { "fraction": 0.45, "min": 0.20, "max": 0.80,
+              "properties": [{ "type": "opacity", "from": 0, "to": 100 }],
+              "ease": { "in": 0, "out": 0 } },
+      "out": { "fraction": 0.15, "min": 0.06, "max": 0.25,
+               "properties": [{ "type": "opacity", "from": 100, "to": 0 }],
+               "ease": { "in": 50, "out": 50 } }
+    },
+    {
+      "id": "slide-left",
+      "name": "Slide In",
+      "description": "Slides in horizontally with a blur trail.",
+      "preview": "previews/slide-left.mp4",
+      "basedOn": "words",
+      "in": { "fraction": 0.26, "min": 0.12, "max": 0.42,
+              "properties": [
+                { "type": "position", "from": [-120, 0], "to": [0, 0] },
+                { "type": "blur", "from": [40, 0], "to": [0, 0] },
+                { "type": "opacity", "from": 0, "to": 100 }
+              ],
+              "ease": { "in": 10, "out": 90 } },
+      "out": { "fraction": 0.18, "min": 0.08, "max": 0.28,
+               "properties": [{ "type": "opacity", "from": 100, "to": 0 }],
+               "ease": { "in": 70, "out": 30 } }
+    },
+    {
+      "id": "bounce",
+      "name": "Bounce",
+      "description": "Drops in and overshoots. Energetic; good for shorts.",
+      "preview": "previews/bounce.mp4",
+      "basedOn": "words",
+      "in": { "fraction": 0.30, "min": 0.14, "max": 0.48,
+              "properties": [
+                { "type": "position", "from": [0, -80], "to": [0, 0], "overshoot": 1.25 },
+                { "type": "opacity", "from": 0, "to": 100 }
+              ],
+              "ease": { "in": 5, "out": 95 } },
+      "out": { "fraction": 0.16, "min": 0.07, "max": 0.26,
+               "properties": [{ "type": "opacity", "from": 100, "to": 0 }],
+               "ease": { "in": 70, "out": 30 } }
+    }
+  ]
+}

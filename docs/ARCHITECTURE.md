@@ -4,7 +4,8 @@ Supersedes the original `ae-parakeet-captions/` scaffold where they conflict.
 Decisions here are backed by `docs/research/` (see `00-VERIFICATION.md` for
 what was independently confirmed vs. agent-reported).
 
-Status: proposed, 2026-08-31. Open questions marked **OPEN**.
+Status: backend and panel implemented (not yet run inside After Effects).
+Open questions marked **OPEN**. Last updated 2026-08-31.
 
 ---
 

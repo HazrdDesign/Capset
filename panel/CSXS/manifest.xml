@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CEP manifest. After Effects has no UXP panel API, so CEP is the only path;
+  see docs/ARCHITECTURE.md section 1.
+
+  Host range covers AE 2020 (17.0) through current. Only AEFT is declared
+  today. Adding Premiere later is one more <Host Name="PPRO"> entry plus a
+  host check in the JSX, with no repackaging. That is how Captioneer serves
+  both apps from a single install.
+-->
+<ExtensionManifest Version="9.0"
+                   ExtensionBundleId="design.hazrd.capset"
+                   ExtensionBundleVersion="0.1.0"
+                   ExtensionBundleName="Capset"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <ExtensionList>
+    <Extension Id="design.hazrd.capset.panel" Version="0.1.0"/>
+  </ExtensionList>
+
+  <ExecutionEnvironment>
+    <HostList>
+      <Host Name="AEFT" Version="[17.0,99.9]"/>
+    </HostList>
+    <LocaleList>
+      <Locale Code="All"/>
+    </LocaleList>
+    <RequiredRuntimeList>
+      <RequiredRuntime Name="CSXS" Version="9.0"/>
+    </RequiredRuntimeList>
+  </ExecutionEnvironment>
+
+  <DispatchInfoList>
+    <Extension Id="design.hazrd.capset.panel">
+      <DispatchInfo>
+        <Resources>
+          <MainPath>./index.html</MainPath>
+          <ScriptPath>./jsx/capset.jsx</ScriptPath>
+          <CEFCommandLine>
+            <Parameter>--allow-file-access-from-files</Parameter>
+            <Parameter>--allow-file-access</Parameter>
+          </CEFCommandLine>
+        </Resources>
+        <Lifecycle>
+          <AutoVisible>true</AutoVisible>
+        </Lifecycle>
+        <UI>
+          <Type>Panel</Type>
+          <Menu>Capset</Menu>
+          <!-- Geometry is mandatory; a panel without a declared size can
+               fail to load rather than defaulting. -->
+          <Geometry>
+            <Size><Height>560</Height><Width>340</Width></Size>
+            <MinSize><Height>360</Height><Width>300</Width></MinSize>
+            <MaxSize><Height>2400</Height><Width>800</Width></MaxSize>
+          </Geometry>
+        </UI>
+      </DispatchInfo>
+    </Extension>
+  </DispatchInfoList>
+</ExtensionManifest>
