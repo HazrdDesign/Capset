@@ -27,10 +27,18 @@ Every segment of that path is informative:
 
 ### Corrections to prior assumptions
 
-**1. Captioneer does not use Parakeet.** The original scaffold README states
-"Captioneer (existing AE plugin) already does Parakeet-based captioning."
-The install tree says `whisper`. Everything downstream of that assumption
-needs re-examining.
+**1. Captioneer ships Whisper — and also Parakeet.**
+
+> **Correction, 2026-08-31.** An earlier version of this document concluded
+> "Captioneer does not use Parakeet." That was an overreach. The screenshot is
+> a single frame of a file-by-file extraction dialog; it proves a `whisper/`
+> directory **exists**, and proves nothing about what else is in the bundle.
+> Per the project owner, Captioneer **recently added Parakeet** for faster,
+> more accurate transcription. Both engines are present.
+
+So Captioneer offers a choice of engines. The useful conclusion is unchanged
+and arguably stronger: whichever engine runs, it runs as a **native binary
+under `js/assets/lib/`**, not as a bundled Python stack.
 
 **2. Captioneer does not bundle NeMo or PyTorch.** Native DLLs under
 `js/assets/lib/` is the signature of a C++ library called from a JS panel —
@@ -39,9 +47,13 @@ dependency match whisper.cpp's CUDA build exactly). A Python runtime would
 not live in a `js/assets` directory.
 
 **3. This is why the installer is only ~400 MB.** No Python, no PyTorch, no
-NeMo. Native binary plus a quantized GGML/GGUF model. The multi-GB
-PyInstaller problem the scaffold treats as its highest-risk item is a problem
-**Captioneer never had**, because it never took that route.
+NeMo. Native binaries plus quantized models. The multi-GB PyInstaller problem
+the scaffold treats as its highest-risk item is a problem **Captioneer never
+had**, because it never took that route.
+
+This is the key data point: Captioneer runs **Parakeet** — reportedly very
+fast — inside a ~400 MB installer with no Python runtime. That is an existence
+proof that Parakeet-in-a-native-runtime is the correct target, not a gamble.
 
 ### Other screenshots
 
@@ -63,11 +75,11 @@ PyInstaller problem the scaffold treats as its highest-risk item is a problem
 2. **The native-runtime route is proven viable at ~400 MB.** Skip the
    NeMo/PyTorch/PyInstaller path entirely rather than treating ONNX as a
    fallback.
-3. **Accuracy is an opening.** A 400 MB installer implies a small/quantized
-   Whisper model (base or small), which sits well below Parakeet TDT 0.6B on
-   the Open ASR Leaderboard. Shipping Parakeet at a comparable installer size
-   is a genuine, defensible differentiator — *provided* CPU-side speed is
-   measured and acceptable.
+3. **Parakeet in a native runtime is proven, not speculative.** Captioneer
+   ships it in ~400 MB with no Python. Build Capset Parakeet-first; Whisper is
+   not needed as a fallback on the accuracy axis. Reported real-world speed:
+   a 1-minute clip transcribed *and* text layers built in about a minute
+   end-to-end (owner's own test — anecdotal, not a benchmark).
 4. **Ship a GPU path and a CPU path.** Captioneer's `windows\gpu\` split is
    the model to copy. The scaffold's "GPU required" stance would exclude a
    large share of AE users; Captioneer evidently does not require one.

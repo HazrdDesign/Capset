@@ -29,8 +29,13 @@ PyTorch, no CUDA toolkit dependency.**
 
 The scaffold treats PyInstaller + NeMo + PyTorch + CUDA as the main route and
 ONNX as a contingency, while also (correctly) flagging that route as the
-project's highest risk. The teardown shows Captioneer ships a ~400 MB
-installer precisely because it never took that route.
+project's highest risk. Captioneer ships **Parakeet** in a ~400 MB installer
+with no Python runtime — an existence proof that Parakeet in a native runtime
+is the right target rather than a gamble.
+
+**Capset is Parakeet-first.** Whisper is not planned as a fallback: Parakeet
+beats it on both accuracy and speed. The engine interface below keeps a second
+engine possible without designing for one now.
 
 Three corrections to the scaffold:
 
@@ -151,13 +156,13 @@ is not an in-AE reusable animation library and does not help here.
 **Decision: Inno Setup `.exe`, mirroring Captioneer's proven shape.**
 
 ```
-capset-setup.exe  (Inno Setup)
-├── CEP extension  → C:\Program Files (x86)\Common Files\Adobe\CEP\extensions\design.hazrd.capset\
+capset-setup.exe (Inno Setup, Windows) / Capset.pkg (macOS, signed + notarized)
+├── CEP extension  → <platform CEP extensions dir>\design.hazrd.capset\
 │   ├── CSXS/manifest.xml
 │   ├── index.html + panel JS
 │   ├── jsx/            (ExtendScript: layer generation, animators, rig)
 │   ├── animations/     (JSON definitions + preview .mp4 loops)
-│   └── assets/lib/asr/windows/{cpu,gpu}/   ← Captioneer's layout
+│   └── assets/lib/asr/{windows,macos}/{cpu,gpu}/   ← Captioneer's layout
 ├── model weights     (Parakeet ONNX, quantized)
 └── ffmpeg.exe        (audio extraction from video; LGPL — attribute)
 ```
@@ -175,18 +180,49 @@ Notes:
 
 ---
 
-## 6. Backend API changes
+## 6. Cross-platform: Windows and macOS
+
+**Decision: both. The panel is portable; the ASR runtime and installer are
+not.**
+
+CEP itself is cross-platform, so the panel, ExtendScript, and animation engine
+are write-once. Three things do not carry over:
+
+**6.1 — The GPU path is entirely different.** `cublas64_12.dll` is CUDA, which
+is NVIDIA-only, and a `.dll` is Windows-only by definition. Apple Silicon has
+no CUDA at all. macOS acceleration means CoreML / Metal / the Neural Engine
+instead, which is a different execution provider and a different binary.
+
+This likely explains Captioneer's `windows\gpu\` namespace: the directory is
+platform-scoped because the accelerated builds *must* be.
+
+**6.2 — Two installers.** Inno Setup is Windows-only. macOS needs a signed
+`.pkg` or `.dmg`, plus **notarization** — without it Gatekeeper blocks a
+downloaded installer. That requires a paid Apple Developer account and is a
+real, recurring cost line, not a build flag.
+
+**6.3 — CEP install paths differ**, so the installer needs per-platform target
+directories.
+
+**OPEN — pending `docs/research/06-macos-deployment.md`:** which Parakeet
+runtime to use on Apple Silicon (ONNX Runtime + CoreML EP, `parakeet-mlx`, or
+sherpa-onnx), measured speed there, exact CEP paths, and whether arm64-only is
+acceptable or a universal binary is required.
+
+---
+
+## 7. Backend API changes
 
 The existing `docs/schema.md` word-list contract is **good** and should be
 kept — flat words out, segmentation on the panel side, is the right split.
 Two gaps:
 
-**6.1 — Synchronous `POST /transcribe` will hang the panel.** A 10-minute
+**7.1 — Synchronous `POST /transcribe` will hang the panel.** A 10-minute
 video may take minutes. Needs a job model: `POST /jobs` → `202` + job id;
 `GET /jobs/{id}` → `{state, progress, result}`. Progress is naturally
 available from VAD chunk counts.
 
-**6.2 — `@app.on_event("startup")` is deprecated** in current FastAPI; use a
+**7.2 — `@app.on_event("startup")` is deprecated** in current FastAPI; use a
 `lifespan` context manager.
 
 ---
@@ -194,9 +230,9 @@ available from VAD chunk counts.
 ## Open questions
 
 1. **CPU transcription speed** — measure before the CPU path is promised. (§2)
-2. **Repository layout** — `ae-parakeet-captions/` predates the Capset name
-   and the CEP decision. Proposed: flatten to `backend/`, `panel/`,
-   `installer/`, `docs/`. Not done unilaterally.
-3. **Model download vs. bundle** — bundling gives a ~400 MB installer and
+2. ~~Repository layout~~ — **done.** Flattened to `backend/`, `panel/`,
+   `installer/`, `docs/`.
+3. **macOS ASR runtime and notarization cost** — pending research (§6).
+4. **Model download vs. bundle** — bundling gives a ~400 MB installer and
    offline install; downloading on first run gives a small installer but needs
    network and progress UI. Captioneer appears to bundle.
