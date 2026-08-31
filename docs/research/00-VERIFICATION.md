@@ -88,6 +88,31 @@ the default branch is `master`, not `main`):
 - **`com.adobe.CSXS.11`** is CEP-version-specific. Supporting AE 2020–2026
   spans several CSXS versions, so debug mode may need a key per version.
 
+### 5. EV vs OV code signing — CONFIRMED (doc 07)
+
+Doc 07 claims EV certificates no longer grant instant SmartScreen bypass, and
+recommends the cheaper OV cert. This is the single most expensive decision in
+that document (~$250/yr difference), so it was checked independently.
+
+**Confirmed.** Microsoft removed EV's instant-reputation behavior in 2024;
+EV-signed files now build SmartScreen reputation per file hash exactly as
+OV-signed files do. The change was made because malware operators were
+acquiring EV certs through shell companies specifically to inherit that
+instant trust. EV retains verified-publisher display and remains required for
+kernel-mode drivers — neither relevant to a CEP plugin.
+
+**Buy OV.** EV is not worth the premium here.
+
+### Caveats on doc 07
+
+- **"~15,000 downloads to build reputation" is not credible as stated.**
+  Microsoft does not publish a threshold, and reputation accrues per file hash
+  with no public formula. Treat as folklore, not a number to plan against.
+- The document ends with "UNVERIFIED items: None", which is itself an
+  overconfidence signal — every prior agent found things it could not source.
+  Its Gumroad fee and file-size figures are agent-reported from Gumroad's help
+  pages; re-check at launch, since store terms change.
+
 ## Still open
 
 - Audio-only render from the AE render queue: both docs mark the exact output
