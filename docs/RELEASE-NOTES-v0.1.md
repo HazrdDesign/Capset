@@ -33,7 +33,7 @@ Parakeet on your machine and generates timed, animated text layers.
 
 ## Install
 
-1. Run `Capset-Setup-0.1.0.exe`.
+1. Run `Capset-Setup-0.1.exe`.
 2. Restart After Effects.
 3. **Window → Extensions → Capset**.
 
