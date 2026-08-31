@@ -69,6 +69,27 @@ proof that Parakeet-in-a-native-runtime is the correct target, not a gamble.
   Frame.io). Note this manager **lists** installed extensions; it did not
   install Captioneer — the .exe did. Independent confirmation of CEP.
 
+### Distribution shape (confirmed)
+
+A screenshot of the owner's download folder shows Captioneer ships exactly two
+files, same build date:
+
+```
+install Captioneer.exe    (Windows)
+install Captioneer.pkg    (macOS)
+```
+
+Confirms the expected model: **one installer per OS, delivered together as a
+single purchase.** No cross-platform single binary exists — `.exe` is Windows
+PE, `.pkg` is macOS. Also confirms `.pkg` (via `pkgbuild`/`productbuild`) over
+`.dmg` for the Mac side.
+
+Each installer covers **both host apps** — the CEP `manifest.xml` declares
+`PPRO` and `AEFT`, so one extension folder is loaded by both Premiere and
+After Effects. Hence the "restart Premiere Pro and After Effects" finish
+screen. Everything is bundled: extension, ASR binaries, model, CUDA DLLs. No
+separate ZXP step and no first-run model download.
+
 ## Consequences for Capset
 
 1. **CEP is confirmed by a shipping competitor**, not just by documentation.
