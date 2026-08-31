@@ -42,7 +42,27 @@ def _selftest() -> int:
     return 0 if ok else 1
 
 
+def _fetch_model() -> int:
+    """`--fetch-model`: warm the model cache, then exit.
+
+    Run by the installer so the ~600 MB download happens once, visibly, at
+    install time rather than silently stalling the first transcription. It is
+    a no-op when the model is already on the machine, so reinstalling or
+    upgrading does not download it again.
+    """
+    from app.engines.onnx_asr_engine import OnnxAsrEngine
+
+    print("Checking for the speech model (this may take a while on first run)...")
+    ok, message = OnnxAsrEngine().fetch_model()
+    print(("OK: " if ok else "FAILED: ") + message)
+    # Never fail the installer over this: the backend downloads on demand
+    # anyway, so a flaky network at install time must not block installation.
+    return 0
+
+
 if __name__ == "__main__":
     if "--selftest" in sys.argv:
         raise SystemExit(_selftest())
+    if "--fetch-model" in sys.argv:
+        raise SystemExit(_fetch_model())
     main()

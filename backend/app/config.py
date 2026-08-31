@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import os
-import sys
-from pathlib import Path
+import sys  # noqa: F401  (used by the frozen entry point)
+from pathlib import Path  # noqa: F401
 
 HOST = os.environ.get("CAPSET_HOST", "127.0.0.1")
 
@@ -28,20 +28,21 @@ MODEL_NAME = os.environ.get("CAPSET_MODEL", "nemo-parakeet-tdt-0.6b-v3")
 # cost, which matters because the installer ships the weights.
 MODEL_QUANTIZATION = os.environ.get("CAPSET_QUANTIZATION", "int8")
 
-def _default_model_dir() -> Path:
-    """Where to look for model weights.
-
-    Frozen by PyInstaller, `__file__` points inside the extraction directory,
-    not next to the executable. The installer lays the model down beside the
-    binary so it can be updated without rebuilding, so resolve relative to the
-    executable when frozen and relative to the source tree otherwise.
-    """
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent / "models"
-    return Path(__file__).resolve().parent.parent / "models"
-
-
-MODEL_CACHE_DIR = Path(os.environ.get("CAPSET_MODEL_DIR", _default_model_dir()))
+# Where model weights live.
+#
+# Deliberately NOT passed to onnx_asr.load_model(). Its resolver treats an
+# existing local_dir as a signal to go offline:
+#
+#     if self.local_dir.exists(): self.offline = True
+#
+# so handing it a directory we created but have not populated makes it refuse
+# to download at all. The Hugging Face cache default already does the right
+# thing — it checks the cache first (local_files_only=True) and only reaches
+# the network when the files are genuinely absent, so the model downloads
+# once and is reused forever after.
+#
+# Set CAPSET_MODEL_DIR only if you have already populated that directory.
+MODEL_DIR = os.environ.get("CAPSET_MODEL_DIR") or None
 
 # ONNX Runtime execution providers, in priority order. CUDA on Windows/Linux
 # with an NVIDIA GPU, CoreML on Apple Silicon, CPU everywhere as the floor.

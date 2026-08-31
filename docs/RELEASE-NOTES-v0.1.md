@@ -4,7 +4,7 @@ First build. Local auto-captioning for After Effects: transcribes with NVIDIA
 Parakeet on your machine and generates timed, animated text layers.
 
 > **Pre-release — read this before installing.**
-> The code is tested (107 automated tests), but **the After Effects
+> The code is tested (124 automated tests), but **the After Effects
 > integration has not yet been run inside After Effects.** The ExtendScript
 > follows Adobe's scripting reference rather than a verified live host, so
 > expect rough edges in layer generation and animation. Treat this as a
@@ -62,9 +62,10 @@ enables unsigned extensions, since this build is not code-signed.
 - **Unsigned.** Windows SmartScreen will warn — *More info* → *Run anyway*.
   Some antivirus may flag the PyInstaller binary; this is a known
   false-positive pattern for unsigned Python bundles.
-- **The model downloads on first run** (~600 MB–2.5 GB from Hugging Face), so
-  the first transcription needs an internet connection and will be slow.
-  Bundling the weights into the installer is planned.
+- **The model is downloaded, not bundled** (~600 MB from Hugging Face). The
+  installer offers to fetch it during setup — a tick box you can decline —
+  and it is cached afterwards, so it downloads **once per machine**, not per
+  launch. Skipping it just moves the wait to the first transcription.
 - **Windows only.** The macOS build is written but not yet produced; it needs
   a macOS runner and Apple signing.
 - **No animation previews.** The preview grid shows placeholders — the loops

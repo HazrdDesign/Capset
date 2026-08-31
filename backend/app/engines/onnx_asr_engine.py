@@ -86,6 +86,10 @@ class OnnxAsrEngine:
         )
         try:
             kwargs = {}
+            if config.MODEL_DIR:
+                # Only when the caller has genuinely populated it — see the
+                # note in config.py about the resolver's offline behaviour.
+                kwargs["path"] = config.MODEL_DIR
             if self.quantization:
                 kwargs["quantization"] = self.quantization
             if self._providers:
@@ -105,6 +109,22 @@ class OnnxAsrEngine:
             raise EngineUnavailable("engine not loaded")
         result = self._model.recognize(audio, sample_rate=sample_rate)
         return _tokens_from_result(result)
+
+    def fetch_model(self) -> tuple[bool, str]:
+        """Download the weights now, or confirm they are already cached.
+
+        onnx_asr checks its cache first (local_files_only=True) and only
+        reaches the network when the files are genuinely missing, so calling
+        this repeatedly is cheap and re-running the installer will not
+        re-download a model the user already has.
+        """
+        try:
+            self.load()
+        except EngineUnavailable as exc:
+            return False, str(exc)
+        except Exception as exc:  # pragma: no cover - needs the real package
+            return False, f"{type(exc).__name__}: {exc}"
+        return True, f"{self.model_name} ({self.quantization}) is ready"
 
     @staticmethod
     def selftest() -> tuple[bool, str]:

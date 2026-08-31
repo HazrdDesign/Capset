@@ -41,6 +41,12 @@ UninstallDisplayName={#AppName} {#AppVersion}
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+[Tasks]
+; Optional so a user on a metered or offline connection can skip it. The
+; backend downloads on demand anyway; this just moves the wait somewhere
+; visible instead of stalling the first transcription with no explanation.
+Name: "fetchmodel"; Description: "Download the speech model now (about 600 MB, one time)"; GroupDescription: "Setup:"
+
 [Files]
 ; --- CEP extension -------------------------------------------------------
 ; {commoncf32} is "Program Files (x86)\Common Files", which is where Adobe
@@ -80,6 +86,13 @@ Filename: "{sys}\reg.exe"; Parameters: "add ""HKCU\Software\Adobe\CSXS.9"" /v Pl
 Filename: "{sys}\reg.exe"; Parameters: "add ""HKCU\Software\Adobe\CSXS.10"" /v PlayerDebugMode /t REG_SZ /d 1 /f"; Flags: runhidden runasoriginaluser
 Filename: "{sys}\reg.exe"; Parameters: "add ""HKCU\Software\Adobe\CSXS.11"" /v PlayerDebugMode /t REG_SZ /d 1 /f"; Flags: runhidden runasoriginaluser
 Filename: "{sys}\reg.exe"; Parameters: "add ""HKCU\Software\Adobe\CSXS.12"" /v PlayerDebugMode /t REG_SZ /d 1 /f"; Flags: runhidden runasoriginaluser
+
+; Warm the model cache during install. onnx_asr checks its cache before the
+; network, so this is a no-op if the model is already on the machine —
+; reinstalling or upgrading will not download it a second time.
+Filename: "{app}\backend\capset-backend.exe"; Parameters: "--fetch-model"; \
+    StatusMsg: "Downloading the speech model (one time, about 600 MB)..."; \
+    Flags: runhidden waituntilterminated; Tasks: fetchmodel
 
 Filename: "{app}\backend\capset-backend.exe"; \
     Description: "Start the Capset transcription service"; \
