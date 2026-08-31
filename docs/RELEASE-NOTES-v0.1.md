@@ -4,7 +4,7 @@ First build. Local auto-captioning for After Effects: transcribes with NVIDIA
 Parakeet on your machine and generates timed, animated text layers.
 
 > **Pre-release — read this before installing.**
-> The code is tested (95 automated tests), but **the After Effects
+> The code is tested (107 automated tests), but **the After Effects
 > integration has not yet been run inside After Effects.** The ExtendScript
 > follows Adobe's scripting reference rather than a verified live host, so
 > expect rough edges in layer generation and animation. Treat this as a
@@ -33,7 +33,7 @@ Parakeet on your machine and generates timed, animated text layers.
 
 ## Install
 
-1. Run `Capset-Setup-0.1.exe`.
+1. Run the `Capset-Setup-*.exe` from the Assets below.
 2. Restart After Effects.
 3. **Window → Extensions → Capset**.
 
@@ -58,6 +58,9 @@ enables unsigned extensions, since this build is not code-signed.
   it has been run on real hardware, CPU-only performance is unknown.
 - **ffmpeg is not bundled** in this build; it must be on `PATH` for video
   input.
+- **The backend binary has never been executed.** The build verifies it was
+  produced, not that it starts. If the panel reports the service is
+  unreachable, that is the likely cause — tell me and I will fix it.
 - **Speech detection uses a simple energy gate**, not a neural VAD. The
   obvious package for that pulls PyTorch and would have made the installer
   several gigabytes, so proper VAD is deferred to an ONNX implementation.

@@ -57,6 +57,30 @@ jobs:
             || { echo "PyInstaller produced no exe"; ls -R backend/dist; exit 1; }
           echo "backend binary present"
 
+      - name: Smoke-test the backend binary
+        shell: bash
+        # Verifying the exe EXISTS is not the same as verifying it RUNS. A
+        # PyInstaller bundle can build cleanly and still die at startup on a
+        # missing hidden import or an uncollected native DLL — which would
+        # reach users as "the panel says the service is unreachable" with no
+        # clue why. Start it and require a real HTTP answer.
+        run: |
+          ./backend/dist/capset-backend/capset-backend.exe &
+          pid=$!
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 3 http://127.0.0.1:8756/health -o health.json; then
+              ok=1; break
+            fi
+            sleep 2
+          done
+          kill $pid 2>/dev/null || true
+          if [ "$ok" != "1" ]; then
+            echo "::error::backend binary did not serve /health — the bundle is broken"
+            exit 1
+          fi
+          echo "backend responded:"; cat health.json
+
       - name: Stage installer payload
         run: >
           python installer/build_payload.py
