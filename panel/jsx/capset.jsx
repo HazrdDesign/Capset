@@ -271,6 +271,135 @@ function capsetApplyAnimation(layer, animation, timings) {
 }
 
 // ---------------------------------------------------------------------------
+// controller rig
+//
+// One null layer every caption is expression-linked to, so font size, colour
+// and baseline update everywhere at once while each layer stays individually
+// editable. This is the original project differentiator: Captioneer requires
+// restyling every layer by hand.
+//
+// Font size and fill colour are driven through Source Text, which needs the
+// JavaScript expression engine (AE 16.0+). Position is driven through
+// Transform, which works on any engine, so a project stuck on the legacy
+// engine still gets baseline control rather than nothing.
+// ---------------------------------------------------------------------------
+
+function capsetUsesJsEngine() {
+    try {
+        return String(app.project.expressionEngine).indexOf("javascript") === 0;
+    } catch (e) {
+        return false; // pre-16.0 has no expressionEngine property at all
+    }
+}
+
+function capsetFindController(comp) {
+    for (var i = 1; i <= comp.numLayers; i++) {
+        if (comp.layer(i).name === CAPSET_CONTROLLER) return comp.layer(i);
+    }
+    return null;
+}
+
+function capsetEnsureController(comp, style) {
+    var existing = capsetFindController(comp);
+    if (existing) return existing;
+
+    var controller = comp.layers.addNull();
+    controller.name = CAPSET_CONTROLLER;
+    controller.enabled = false;      // never renders
+    controller.shy = true;
+    controller.moveToBeginning();
+
+    var effects = controller.property("ADBE Effect Parade");
+
+    var fontSize = effects.addProperty("ADBE Slider Control");
+    fontSize.name = "Font Size";
+    fontSize.property("ADBE Slider Control-0001").setValue(
+        style && style.fontSize ? style.fontSize : 72
+    );
+
+    var baseline = effects.addProperty("ADBE Slider Control");
+    baseline.name = "Baseline %";
+    baseline.property("ADBE Slider Control-0001").setValue(
+        style && style.positionY !== undefined ? style.positionY * 100 : 82
+    );
+
+    var fill = effects.addProperty("ADBE Color Control");
+    fill.name = "Fill Colour";
+    fill.property("ADBE Color Control-0001").setValue(
+        style && style.fillColor ? style.fillColor.concat([1]) : [1, 1, 1, 1]
+    );
+
+    return controller;
+}
+
+/**
+ * Link a caption layer to the controller.
+ *
+ * Expressions are wrapped in try/catch: an expression that errors disables
+ * itself in AE and leaves a red layer, which is a far worse outcome than
+ * silently falling back to the layer's own value.
+ */
+function capsetLinkToController(layer, useJsEngine) {
+    var position = layer.property("Transform").property("Position");
+    position.expression =
+        'var c = thisComp.layer("' + CAPSET_CONTROLLER + '");\r' +
+        'try {\r' +
+        '  [thisComp.width / 2, thisComp.height * c.effect("Baseline %")("Slider") / 100];\r' +
+        '} catch (err) { value; }';
+
+    if (!useJsEngine) return false;
+
+    var sourceText = layer.property("Source Text");
+    sourceText.expression =
+        'var c = thisComp.layer("' + CAPSET_CONTROLLER + '");\r' +
+        'var t = value;\r' +
+        'try {\r' +
+        '  t.fontSize = c.effect("Font Size")("Slider");\r' +
+        '  t.fillColor = c.effect("Fill Colour")("Color");\r' +
+        '} catch (err) {}\r' +
+        't;';
+    return true;
+}
+
+function capsetBuildController(payloadJson) {
+    var undoOpen = false;
+    try {
+        var payload = JSON.parse(payloadJson || "{}");
+        var comp = capsetActiveComp();
+
+        app.beginUndoGroup("Capset: build controller");
+        undoOpen = true;
+
+        var controller = capsetEnsureController(comp, payload.style || {});
+        var useJs = capsetUsesJsEngine();
+
+        var linked = 0;
+        for (var i = 1; i <= comp.numLayers; i++) {
+            var layer = comp.layer(i);
+            if (layer instanceof TextLayer && capsetIsCapsetLayer(layer)) {
+                capsetLinkToController(layer, useJs);
+                linked++;
+            }
+        }
+
+        return capsetOk({
+            linked: linked,
+            controllerIndex: controller.index,
+            styleLinked: useJs,
+            note: useJs
+                ? null
+                : "Legacy expression engine: only the baseline is linked. " +
+                  "Switch to JavaScript in File > Project Settings > Expressions " +
+                  "for font size and colour."
+        });
+    } catch (e) {
+        return capsetErr(e.message);
+    } finally {
+        if (undoOpen) app.endUndoGroup();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // build
 // ---------------------------------------------------------------------------
 

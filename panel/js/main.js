@@ -25,7 +25,8 @@
   var el = {};
   ["status", "retry", "pick", "file-name", "mode", "mode-hint", "font-size",
    "position-y", "animations", "resolve", "resolve-value", "build", "progress",
-   "bar-fill", "progress-text", "log", "replace-selected", "replace-all"
+   "bar-fill", "progress-text", "log", "replace-selected", "replace-all",
+   "build-controller"
   ].forEach(function (id) {
     el[id] = document.getElementById(id);
   });
@@ -55,6 +56,7 @@
     el.pick.disabled = busy;
     el["replace-selected"].disabled = busy;
     el["replace-all"].disabled = busy;
+    el["build-controller"].disabled = busy;
     el.progress.className = busy ? "active" : "";
   }
 
@@ -309,6 +311,22 @@
       .then(function () { setBusy(false); });
   }
 
+  function buildController() {
+    setBusy(true);
+    host("capsetBuildController(" + hostArg({
+      style: {
+        fontSize: Number(el["font-size"].value),
+        positionY: Number(el["position-y"].value) / 100
+      }
+    }) + ")")
+      .then(function (data) {
+        log("Controller linked to " + data.linked + " layer(s).", "ok");
+        if (data.note) log(data.note);
+      })
+      .catch(function (err) { log(err.message, "err"); })
+      .then(function () { setBusy(false); });
+  }
+
   // --- wiring --------------------------------------------------------------
 
   el.retry.addEventListener("click", checkHealth);
@@ -316,6 +334,7 @@
   el.build.addEventListener("click", build);
   el["replace-selected"].addEventListener("click", function () { replaceAnimation("selected"); });
   el["replace-all"].addEventListener("click", function () { replaceAnimation("all"); });
+  el["build-controller"].addEventListener("click", buildController);
   el.resolve.addEventListener("input", function () {
     el["resolve-value"].textContent = el.resolve.value;
   });
