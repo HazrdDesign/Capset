@@ -15,8 +15,32 @@ so `python -m app.main` and the test suite keep working unchanged.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
+
+
+def _ensure_standard_streams() -> None:
+    """Give the process real stdout/stderr even with no console attached.
+
+    A windowed PyInstaller build (console=False) sets sys.stdout and
+    sys.stderr to None. Plenty of libraries assume they exist — uvicorn's
+    log formatter calls `sys.stdout.isatty()` unconditionally, which raises
+    AttributeError and takes the whole service down before it can serve
+    anything. v0.1.5 shipped exactly that way.
+
+    Must run BEFORE uvicorn is imported. app/main.py imports it lazily inside
+    main(), so doing this at module scope here is early enough.
+    """
+    devnull = None
+    for name in ("stdout", "stderr"):
+        if getattr(sys, name, None) is None:
+            if devnull is None:
+                devnull = open(os.devnull, "w", encoding="utf-8")
+            setattr(sys, name, devnull)
+
+
+_ensure_standard_streams()
 
 # Running from a source checkout, `backend/` is not necessarily on sys.path.
 # Frozen, PyInstaller has already placed the package; this is a harmless no-op.

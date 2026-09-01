@@ -157,7 +157,18 @@ def cancel_job(request: Request, job_id: str) -> dict:
 def main() -> None:
     import uvicorn
 
-    uvicorn.run(app, host=config.HOST, port=config.PORT, log_level="info")
+    # log_config=None: do NOT let uvicorn install its own logging. Its
+    # colourized formatter probes sys.stdout.isatty(), which is fatal in a
+    # windowed build, and we have already configured rotating file logging in
+    # logging_setup. Uvicorn's records still reach our handlers via the root
+    # logger, so nothing is lost.
+    uvicorn.run(
+        app,
+        host=config.HOST,
+        port=config.PORT,
+        log_config=None,
+        access_log=False,
+    )
 
 
 if __name__ == "__main__":
