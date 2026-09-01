@@ -39,9 +39,10 @@ Parakeet on your machine and generates timed, animated text layers.
 
 ## Using it
 
-**Insert** — select the layer with the audio, choose Full Composition or In
-to Out, and hit **Add Captions**. No file dialog: Capset reads the selected
-layer's own media. Or switch to *Captions File* to import an SRT/VTT instead.
+**Insert** — choose Full Composition or In to Out and hit **Add Captions**.
+No file dialog: After Effects renders the composition's audio, so what gets
+transcribed is what you actually hear — mix, levels, solo/mute and audio
+effects included. Or switch to *Captions File* to import an SRT/VTT instead.
 
 **Update** — restyle one caption layer by hand, select it, **Capture style**,
 then **Sync Style** across the composition or the whole project.
@@ -76,8 +77,6 @@ enables unsigned extensions, since this build is not code-signed.
   version. Selecting a footage layer directly avoids that path entirely.
 - **CPU speed is unmeasured.** `backend/bench.py` exists to answer this. Until
   it has been run on real hardware, CPU-only performance is unknown.
-- **ffmpeg is not bundled** in this build; it must be on `PATH` for video
-  input.
 - **Speech detection uses a simple energy gate**, not a neural VAD. The
   obvious package for that pulls PyTorch and would have made the installer
   several gigabytes, so proper VAD is deferred to an ONNX implementation.

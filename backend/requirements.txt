@@ -46,5 +46,7 @@ numpy>=1.24
 # pytest>=8.0
 # pyinstaller>=6.0
 
-# ffmpeg is NOT a pip dependency -- the binary ships with the installer
-# (LGPL, attribution required). See app/audio.py.
+# NO MEDIA DECODER, deliberately. After Effects renders uncompressed audio
+# and app/audio.py reads WAV/AIFF directly with numpy, which keeps ~100 MB
+# of ffmpeg and its LGPL obligations out of the installer entirely.
+# See docs/ARCHITECTURE.md section 5a.

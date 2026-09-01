@@ -263,23 +263,16 @@ function capsetApplyAnimation(layer, animation, timings) {
 }
 
 // ---------------------------------------------------------------------------
-// audio source
+// audio
 //
-// Prefer the selected layer's own file over rendering. Reading a path is
-// instant; rendering the comp's audio mix costs a render-queue round trip.
-// Rendering is only necessary when the audio is not a single flat file --
-// a nested comp, a layer with effects, or a multi-layer mix.
+// After Effects renders the audio; Capset does not read source files. That is
+// both simpler and more correct: rendering yields what the user actually
+// hears — the comp mix, levels, solo and mute states, audio effects, time
+// remapping, nested comps — rather than whatever happens to sit inside one
+// footage file. It also removes any need to bundle a media decoder.
+//
+// The backend reads the uncompressed WAV or AIFF this produces directly.
 // ---------------------------------------------------------------------------
-
-function capsetLayerSourceFile(layer) {
-    if (!layer || !layer.source) return null;
-    var source = layer.source;
-    // FootageItem with a real file on disk (not solid, not placeholder).
-    if (source instanceof FootageItem && source.file) {
-        return source.file;
-    }
-    return null;
-}
 
 function capsetHasAudio(layer) {
     try {
@@ -289,109 +282,86 @@ function capsetHasAudio(layer) {
     }
 }
 
-/**
- * @param payloadJson {scope: "composition"|"inout"}
- * @returns {mode:"file", path, start, duration} when a direct file can be
- *          used, or {mode:"render", start, duration} when the caller must
- *          call capsetRenderAudio.
- */
-function capsetGetAudioSource(payloadJson) {
-    try {
-        var payload = JSON.parse(payloadJson || "{}");
-        var comp = capsetActiveComp();
-        var scope = payload.scope || "composition";
-
-        var start = 0;
-        var duration = comp.duration;
-        if (scope === "inout") {
-            start = comp.workAreaStart;
-            duration = comp.workAreaDuration;
-        }
-
-        var selected = comp.selectedLayers;
-        var audioLayers = [];
-        var i;
-        for (i = 0; i < selected.length; i++) {
-            if (capsetHasAudio(selected[i])) audioLayers.push(selected[i]);
-        }
-
-        // Exactly one selected audio layer backed by a plain file: use it
-        // directly. Its own in-point is the time origin the panel must offset
-        // transcription results against.
-        if (audioLayers.length === 1) {
-            var file = capsetLayerSourceFile(audioLayers[0]);
-            if (file && file.exists) {
-                return capsetOk({
-                    mode: "file",
-                    path: file.fsName,
-                    layerName: audioLayers[0].name,
-                    // Where this layer's audio begins in comp time, and how far
-                    // into the source file that corresponds to.
-                    layerStart: audioLayers[0].startTime,
-                    layerInPoint: audioLayers[0].inPoint,
-                    start: start,
-                    duration: duration
-                });
-            }
-        }
-
-        // Nothing selected: fall back to the comp mix rather than erroring,
-        // since "caption this comp" is the common intent.
-        var reason;
-        if (audioLayers.length === 0) {
-            reason = selected.length
-                ? "The selected layer has no audio."
-                : "No layer selected.";
-        } else if (audioLayers.length > 1) {
-            reason = "Multiple audio layers selected.";
-        } else {
-            reason = "That layer's audio is not a plain file.";
-        }
-
-        var hasAnyAudio = false;
-        for (i = 1; i <= comp.numLayers; i++) {
-            if (capsetHasAudio(comp.layer(i))) { hasAnyAudio = true; break; }
-        }
-        if (!hasAnyAudio) {
-            throw new Error("This composition has no audio to transcribe.");
-        }
-
-        return capsetOk({
-            mode: "render",
-            reason: reason + " Rendering the composition's audio mix instead.",
-            start: start,
-            duration: duration
-        });
-    } catch (e) {
-        return capsetErr(e.message);
+/** Audio-bearing layers that will actually contribute to the render. */
+function capsetAudibleLayers(comp) {
+    var audible = [];
+    var soloed = false;
+    var i;
+    for (i = 1; i <= comp.numLayers; i++) {
+        if (comp.layer(i).solo) { soloed = true; break; }
     }
+    for (i = 1; i <= comp.numLayers; i++) {
+        var layer = comp.layer(i);
+        if (!capsetHasAudio(layer)) continue;
+        if (!layer.enabled && !layer.solo) continue;
+        // A solo anywhere in the comp silences every non-soloed layer.
+        if (soloed && !layer.solo) continue;
+        audible.push(layer.name);
+    }
+    return audible;
 }
 
 /**
- * Render the comp's audio mix to a temporary WAV.
+ * Pick an output module template that produces uncompressed audio.
  *
- * UNVERIFIED against a live host: the audio-only output-module template name
- * differs between After Effects versions and locales, so several candidates
- * are tried and the work area is restored afterwards regardless of outcome.
+ * Template names are NOT guessed. They differ by After Effects version and
+ * by locale, so the available list is searched instead — WAV first, then
+ * AIFF, then anything that mentions audio.
+ */
+function capsetFindAudioTemplate(outputModule) {
+    var available;
+    try {
+        available = outputModule.templates;
+    } catch (e) {
+        return null;
+    }
+    if (!available || !available.length) return null;
+
+    var patterns = [/wav/i, /aif/i, /audio/i];
+    for (var p = 0; p < patterns.length; p++) {
+        for (var i = 0; i < available.length; i++) {
+            if (patterns[p].test(available[i])) {
+                return { name: available[i], extension: p === 1 ? ".aif" : ".wav" };
+            }
+        }
+    }
+    return null;
+}
+
+/**
+ * @param payloadJson {scope: "composition"|"inout"}
+ * @returns {path, start, duration, layers}
  */
 function capsetRenderAudio(payloadJson) {
     var undoOpen = false;
+    var comp = null;
     var savedStart = null;
     var savedDuration = null;
-    var comp = null;
+    var item = null;
     try {
         var payload = JSON.parse(payloadJson || "{}");
         comp = capsetActiveComp();
 
-        var target = new File(
-            Folder.temp.fsName + "/capset_" + new Date().getTime() + ".wav"
-        );
+        var audible = capsetAudibleLayers(comp);
+        if (!audible.length) {
+            throw new Error(
+                "No audible audio in this composition. Check that the audio " +
+                "layer is enabled and not muted by another layer's solo."
+            );
+        }
+
+        var start = 0;
+        var duration = comp.duration;
+        if (payload.scope === "inout") {
+            start = comp.workAreaStart;
+            duration = comp.workAreaDuration;
+        }
 
         app.beginUndoGroup("Capset: render audio");
         undoOpen = true;
 
-        // Restrict the render to the requested range via the work area, then
-        // put it back — leaving a user's work area moved would be rude.
+        // Constrain the render via the work area, then restore it — silently
+        // moving a user's work area would be rude and hard to notice.
         savedStart = comp.workAreaStart;
         savedDuration = comp.workAreaDuration;
         if (payload.scope !== "inout") {
@@ -399,38 +369,59 @@ function capsetRenderAudio(payloadJson) {
             comp.workAreaDuration = comp.duration;
         }
 
-        var item = app.project.renderQueue.items.add(comp);
+        item = app.project.renderQueue.items.add(comp);
         item.render = true;
-        try {
-            item.applyTemplate("Best Settings");
-        } catch (e) {}
 
         var om = item.outputModule(1);
-        var templates = ["WAV", "AIFF 48kHz", "Audio Only", "MP3"];
-        var applied = false;
-        for (var t = 0; t < templates.length; t++) {
-            try {
-                om.applyTemplate(templates[t]);
-                applied = true;
-                break;
-            } catch (e) {}
-        }
-        if (!applied) {
+        var template = capsetFindAudioTemplate(om);
+        if (!template) {
             throw new Error(
-                "No audio-only output module template found. Create one named " +
-                "\"WAV\" in the Render Queue and try again."
+                "No audio output module template was found in this copy of " +
+                "After Effects. Create one (Render Queue > Output Module > " +
+                "Format: WAV) and save it as a template named \"WAV\"."
             );
         }
+        om.applyTemplate(template.name);
+
+        var target = new File(
+            Folder.temp.fsName + "/capset_" + new Date().getTime() + template.extension
+        );
         om.file = target;
 
         app.project.renderQueue.render();
-        item.remove();
 
-        if (!target.exists) throw new Error("Audio render produced no file.");
-        return capsetOk({ path: target.fsName });
+        // AE appends its own extension when the template disagrees with the
+        // filename, so accept whichever of the two actually landed.
+        var produced = target;
+        if (!produced.exists) {
+            var alternates = [".wav", ".aif", ".aiff"];
+            for (var a = 0; a < alternates.length; a++) {
+                var candidate = new File(
+                    target.fsName.replace(/\.[^.\\/]+$/, "") + alternates[a]
+                );
+                if (candidate.exists) { produced = candidate; break; }
+            }
+        }
+        if (!produced.exists) {
+            throw new Error(
+                "The audio render produced no file. Check the Render Queue " +
+                "for an error."
+            );
+        }
+
+        return capsetOk({
+            path: produced.fsName,
+            start: start,
+            duration: duration,
+            template: template.name,
+            layers: audible
+        });
     } catch (e) {
         return capsetErr(e.message);
     } finally {
+        if (item !== null) {
+            try { item.remove(); } catch (e) {}
+        }
         if (comp && savedStart !== null) {
             try {
                 comp.workAreaStart = savedStart;

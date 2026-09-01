@@ -46,13 +46,16 @@ class Transcriber:
         progress = on_progress or _noop
         cancelled = should_cancel or (lambda: False)
 
-        progress(0.02, "decoding audio")
-        audio = load_audio(audio_path, config.SAMPLE_RATE)
-        duration = len(audio) / config.SAMPLE_RATE
-        log.info("decoded %.2fs of audio", duration)
+        progress(0.02, "reading audio")
+        # Native rate is kept rather than resampled: onnx-asr ships ONNX
+        # resamplers and takes the rate alongside the samples, so converting
+        # here would be a lossy step for no benefit.
+        audio, sample_rate = load_audio(audio_path)
+        duration = len(audio) / sample_rate
+        log.info("read %.2fs of audio at %d Hz", duration, sample_rate)
 
         progress(0.06, "detecting speech")
-        spans = detect_speech(audio, config.SAMPLE_RATE)
+        spans = detect_speech(audio, sample_rate)
 
         chunks = plan_chunks(spans, config.MAX_CHUNK_S, config.OVERLAP_S)
         log.info("planned %d chunk(s) from %d speech span(s)", len(chunks), len(spans))
@@ -64,10 +67,10 @@ class Transcriber:
             if cancelled():
                 log.info("cancelled after %d/%d chunks", index, len(chunks))
                 break
-            samples = slice_audio(audio, chunk.start, chunk.end, config.SAMPLE_RATE)
+            samples = slice_audio(audio, chunk.start, chunk.end, sample_rate)
             if samples.size == 0:
                 continue
-            tokens = self.engine.transcribe_chunk(samples, config.SAMPLE_RATE)
+            tokens = self.engine.transcribe_chunk(samples, sample_rate)
             results.append((chunk, merge_tokens_to_words(tokens)))
             # 0.10 -> 0.98 across chunks, leaving room either side for the
             # decode/VAD prologue and the stitching epilogue.

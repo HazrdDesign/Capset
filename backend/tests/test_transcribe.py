@@ -49,8 +49,9 @@ def silence_30s():
     return np.zeros(int(30 * config.SAMPLE_RATE), dtype=np.float32)
 
 
-def _patch_audio(monkeypatch, audio, spans):
-    monkeypatch.setattr(transcribe_mod, "load_audio", lambda *a, **k: audio)
+def _patch_audio(monkeypatch, audio, spans, rate=config.SAMPLE_RATE):
+    # load_audio now returns (samples, sample_rate) — no resampling step.
+    monkeypatch.setattr(transcribe_mod, "load_audio", lambda *a, **k: (audio, rate))
     monkeypatch.setattr(transcribe_mod, "detect_speech", lambda *a, **k: spans)
 
 
@@ -143,3 +144,28 @@ def test_empty_speech_returns_empty_result(monkeypatch, silence_30s):
     assert result.words == []
     assert result.full_text == ""
     assert result.duration_sec == pytest.approx(30.0)
+
+
+def test_native_sample_rate_is_passed_to_the_engine(monkeypatch):
+    """AE renders at 48 kHz; onnx-asr resamples. We must not lie about the rate.
+
+    Claiming 16 kHz for 48 kHz audio would make every timestamp come back
+    three times too large — captions would drift further and further behind.
+    """
+    seen = {}
+
+    class RateCapturingEngine(FakeEngine):
+        def transcribe_chunk(self, audio, sample_rate):
+            seen["rate"] = sample_rate
+            return super().transcribe_chunk(audio, sample_rate)
+
+    native = 48000
+    audio = np.zeros(int(3 * native), dtype=np.float32)
+    _patch_audio(monkeypatch, audio, [(0.0, 3.0)], rate=native)
+
+    engine = RateCapturingEngine()
+    engine.load()
+    result = Transcriber(engine).transcribe("ignored.wav")
+
+    assert seen["rate"] == native, "engine received the wrong sample rate"
+    assert result.duration_sec == pytest.approx(3.0), "duration computed at the wrong rate"

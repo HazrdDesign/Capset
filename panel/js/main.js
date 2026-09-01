@@ -279,23 +279,20 @@
     return $("opt-split").checked ? "word" : $("mode").value;
   }
 
-  /** Resolve audio without a file dialog: the selected layer, or a render. */
-  function resolveAudio(scope) {
-    return host("capsetGetAudioSource(" + arg({ scope: scope }) + ")")
-      .then(function (source) {
-        if (source.mode === "file") {
-          log("Audio from layer “" + source.layerName + "”");
-          return source;
-        }
-        log(source.reason);
-        setProgress(0.05, "Rendering composition audio…");
-        return host("capsetRenderAudio(" + arg({ scope: scope }) + ")")
-          .then(function (rendered) {
-            return {
-              mode: "render", path: rendered.path,
-              start: source.start, duration: source.duration, layerStart: 0
-            };
-          });
+  /**
+   * Get audio without a file dialog: After Effects renders it.
+   *
+   * Rendering rather than reading the source file means we transcribe what
+   * the user actually hears — comp mix, levels, solo/mute, audio effects,
+   * time remapping — and it is why no media decoder ships with Capset.
+   */
+  function renderAudio(scope) {
+    setProgress(0.05, "Rendering audio from After Effects…");
+    return host("capsetRenderAudio(" + arg({ scope: scope }) + ")")
+      .then(function (rendered) {
+        log("Rendered audio via “" + rendered.template + "” (" +
+            rendered.layers.join(", ") + ")");
+        return rendered;
       });
   }
 
@@ -309,7 +306,7 @@
   }
 
   function captionsFromTranscription(scope) {
-    return resolveAudio(scope).then(function (source) {
+    return renderAudio(scope).then(function (source) {
       setProgress(0.08, "Uploading…");
       var name = source.path.split(/[\\/]/).pop();
       return backend.transcribe(
@@ -323,12 +320,9 @@
         });
         if (out.layout) log(out.layout.rationale);
         log(result.words.length + " words → " + out.captions.length + " captions");
-        // Layer audio starts at its own in-point in comp time; a rendered mix
-        // starts at the range we asked for.
-        var offset = source.mode === "file"
-          ? (source.layerStart || 0)
-          : (source.start || 0);
-        return { captions: out.captions, offset: offset };
+        // The render begins at the requested range, so timestamps are
+        // relative to that point in comp time.
+        return { captions: out.captions, offset: source.start || 0 };
       });
     });
   }

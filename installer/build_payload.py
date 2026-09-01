@@ -8,8 +8,7 @@ both platforms package an identical layout.
     build/payload/
       panel/     -> <CEP extensions>/design.hazrd.capset/
       backend/   -> <app>/backend/
-      vendor/    -> <app>/vendor/   (ffmpeg, optional)
-
+    
 Runs on any OS: staging is just file copying, and doing it here rather than in
 each installer script keeps the two in step.
 
@@ -90,39 +89,11 @@ def copy_backend(dest: Path, dist: Path | None) -> str:
     return "built"
 
 
-def copy_vendor(dest: Path, ffmpeg_dir: Path | None) -> str:
-    """Stage bundled binaries. ffmpeg AND ffprobe — duration probing needs both."""
-    dest.mkdir(parents=True, exist_ok=True)
-    if not ffmpeg_dir or not ffmpeg_dir.is_dir():
-        return "none"
-
-    copied = []
-    for name in ("ffmpeg", "ffmpeg.exe", "ffprobe", "ffprobe.exe"):
-        source = ffmpeg_dir / name
-        if source.is_file():
-            target = dest / name
-            shutil.copy2(source, target)
-            target.chmod(target.stat().st_mode | 0o111)
-            copied.append(name)
-
-    if not copied:
-        raise SystemExit(f"no ffmpeg/ffprobe binaries found in {ffmpeg_dir}")
-    # Shipping one without the other fails later, at probe time, on a user's
-    # machine rather than here.
-    has_ffmpeg = any(n.startswith("ffmpeg") for n in copied)
-    has_probe = any(n.startswith("ffprobe") for n in copied)
-    if not (has_ffmpeg and has_probe):
-        raise SystemExit(f"need both ffmpeg and ffprobe; got {copied}")
-    return ", ".join(copied)
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default=str(ROOT / "build" / "payload"))
     parser.add_argument("--backend-dist", default=None,
                         help="PyInstaller onedir output (backend/dist/capset-backend)")
-    parser.add_argument("--ffmpeg-dir", default=None,
-                        help="directory containing ffmpeg and ffprobe binaries")
     parser.add_argument("--version", default="0.1.0")
     args = parser.parse_args()
 
@@ -134,9 +105,6 @@ def main() -> int:
         out / "backend",
         Path(args.backend_dist).resolve() if args.backend_dist else None,
     )
-    vendor_state = copy_vendor(
-        out / "vendor", Path(args.ffmpeg_dir).resolve() if args.ffmpeg_dir else None
-    )
 
     total = sum(f.stat().st_size for f in out.rglob("*") if f.is_file())
     (out / "payload.json").write_text(
@@ -144,7 +112,6 @@ def main() -> int:
             {
                 "version": args.version,
                 "backend": backend_state,
-                "ffmpeg": vendor_state,
                 "bytes": total,
             },
             indent=2,
@@ -155,7 +122,6 @@ def main() -> int:
     print(f"payload staged at {out}")
     print(f"  panel   : {', '.join(panel_entries)}")
     print(f"  backend : {backend_state}")
-    print(f"  ffmpeg  : {vendor_state}")
     print(f"  size    : {total / 1_048_576:.1f} MiB")
     if backend_state == "placeholder":
         print("\nNOTE: no backend binary staged. The installer built from this "

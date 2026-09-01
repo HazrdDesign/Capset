@@ -60,10 +60,9 @@ Source: "{#PayloadDir}\backend\*"; \
     DestDir: "{app}\backend"; \
     Flags: ignoreversion recursesubdirs createallsubdirs
 
-; --- bundled ffmpeg (LGPL; attribution in LICENSE.txt) --------------------
-Source: "{#PayloadDir}\vendor\*"; \
-    DestDir: "{app}\vendor"; \
-    Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+; No bundled media tools. After Effects renders the audio and Capset reads
+; the resulting uncompressed WAV/AIFF directly, so there is no ffmpeg to
+; ship — roughly 100 MB and an LGPL obligation avoided.
 
 [Icons]
 Name: "{group}\Capset Backend"; Filename: "{app}\backend\capset-backend.exe"

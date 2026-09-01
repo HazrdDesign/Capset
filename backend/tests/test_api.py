@@ -26,7 +26,7 @@ def _wait(client, job_id, timeout=10.0):
 @pytest.fixture
 def client(monkeypatch):
     audio = np.zeros(int(30 * config.SAMPLE_RATE), dtype=np.float32)
-    monkeypatch.setattr(transcribe_mod, "load_audio", lambda *a, **k: audio)
+    monkeypatch.setattr(transcribe_mod, "load_audio", lambda *a, **k: (audio, config.SAMPLE_RATE))
     monkeypatch.setattr(transcribe_mod, "detect_speech", lambda *a, **k: [(0.0, 30.0)])
 
     engine = FakeEngine()

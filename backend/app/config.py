@@ -49,7 +49,10 @@ MODEL_DIR = os.environ.get("CAPSET_MODEL_DIR") or None
 # CUDA does not exist on macOS, so the macOS path is CoreML or CPU only.
 PROVIDERS = os.environ.get("CAPSET_PROVIDERS", "auto")
 
-# Model input contract: Parakeet expects 16 kHz mono.
+# Parakeet's own input rate. NOT used for decoding any more: After Effects
+# renders at its project rate (typically 48 kHz) and onnx-asr resamples with
+# its bundled ONNX resamplers, so audio is passed through at its native rate.
+# Kept for tests and for anything that needs the model's nominal rate.
 SAMPLE_RATE = 16_000
 
 # Most Parakeet builds cap out at 20-30s per call. 20 is the safe side.

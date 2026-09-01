@@ -191,35 +191,49 @@ Notes:
 
 ## 5a. Getting audio out of After Effects
 
-Two routes, and the priority is worth revisiting.
+**Decision: After Effects renders the audio. Capset ships no media decoder.**
 
-**Direct file read (current default).** When one plain footage layer is
-selected, its media file is read straight off disk and decoded with ffmpeg.
-Instant, no render.
+Earlier drafts hedged between reading the source file with ffmpeg and
+rendering from AE. Doing both was the wrong answer — two code paths, and a
+~100 MB dependency carried for the weaker one.
 
-**AE render (current fallback).** The comp's audio is rendered through the
-render queue.
+**Why rendering wins:**
 
-**The fallback is arguably the more correct one.** Reading the raw file gets
-the *file's* audio. Rendering from AE gets **what the user actually hears** —
-the comp mix, levels, mute states, audio effects, time remapping, nested
-comps. A project with two audio layers, or a compressor on the voiceover,
-transcribes the wrong thing under the direct read.
+- **It is the correct audio.** Reading a footage file gets that file's audio.
+  Rendering gets what the user actually *hears*: comp mix, levels, solo and
+  mute states, audio effects, time remapping, nested comps. A project with
+  two audio layers, or a compressor on the voiceover, transcribes the wrong
+  thing under a direct read.
+- **No decoder to bundle.** AE writes uncompressed PCM. `onnx-asr` reads WAV
+  natively, which is exactly why it advertises "no need for FFmpeg". Dropping
+  ffmpeg removes ~100 MB from the installer and an LGPL obligation.
+- **One code path.** No branching on whether the selection happens to be a
+  single plain file.
 
 Supporting evidence: the project owner recalls Captioneer exporting an
 **AIFF** before analysing. AIFF is what After Effects' audio-only output
-produces, which suggests Captioneer renders from AE rather than decoding the
-source file.
+produces, which suggests Captioneer renders from AE too.
 
-**Why ffmpeg is still bundled either way:** After Effects' audio output
-templates vary by version and locale, and the one that is available may be
-AIFF rather than WAV. `onnx-asr` reads WAV; it does not promise AIFF. So
-ffmpeg earns its place as a converter even when AE does the rendering — and
-it is what makes the fast path work on compressed sources.
+### How the two risks are handled
 
-**OPEN:** make the AE render the primary path once the output-module template
-names are verified against a live host. `capsetRenderAudio` already tries
-WAV, then AIFF, then Audio Only, then MP3.
+**Output module templates vary by version and locale.** They are not
+guessed. `capsetRenderAudio` enumerates `outputModule.templates` and searches
+it — WAV first, then AIFF, then anything matching "audio" — and fails with an
+instruction to create a template if none exists.
+
+**AE may produce AIFF rather than WAV.** `app/audio.py` reads both directly.
+Both are simple uncompressed IFF-style containers, so the reader is ~150
+lines of pure Python and numpy with no dependency. Notably it does **not**
+use the stdlib `aifc`, which was removed in Python 3.13 and would break the
+build on a newer interpreter.
+
+Audio is passed at its **native rate** (AE typically renders 48 kHz);
+onnx-asr resamples with its own bundled ONNX resamplers. Claiming 16 kHz for
+48 kHz audio would make every timestamp three times too large, so a test
+asserts the real rate reaches the engine.
+
+**Cost:** rendering is slower than reading a file, and the render queue is
+briefly used. Correctness and one less bundled dependency are worth it.
 
 ---
 
