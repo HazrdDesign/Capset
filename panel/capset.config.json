@@ -1,5 +1,5 @@
 {
-  "$comment": "Edit this after install without touching code. updateManifestUrl must be a public URL — customers cannot read a private GitHub repo. Set it to null to disable update checks entirely.",
+  "$comment": "Edit this after install without touching code. updateManifestUrl must be a public URL — customers cannot read a private GitHub repo; set it to null to disable update checks entirely. backendUrl must normally stay null: the panel then finds the service itself, including when it has fallen back to a different port. Setting it pins the panel to that exact address and turns discovery off, which is only useful when running the backend by hand on a fixed port.",
   "updateManifestUrl": null,
-  "backendUrl": "http://127.0.0.1:8756"
+  "backendUrl": null
 }

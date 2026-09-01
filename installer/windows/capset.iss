@@ -169,3 +169,25 @@ begin
   StopBackend();
   Result := True;
 end;
+
+// Tell the panel where the backend ended up.
+//
+// The panel starts the service on demand -- the installer launches it once,
+// and without this the first reboot would leave the user with "the
+// transcription service is not running" and a Start Menu shortcut to find.
+// It cannot guess the path: DefaultDirName is only a default and the user is
+// free to install anywhere, so Setup records the real location inside the
+// extension folder, which the panel can always locate for itself.
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ExtensionDir: String;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    ExtensionDir := ExpandConstant('{commoncf32}\Adobe\CEP\extensions\{#ExtensionId}');
+    // Failure is survivable: the panel falls back to the default install
+    // location, which is where all but a handful of users will have it.
+    SaveStringToFile(ExtensionDir + '\backend-path.txt',
+                     ExpandConstant('{app}\backend\capset-backend.exe'), False);
+  end;
+end;

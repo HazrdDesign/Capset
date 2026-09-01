@@ -147,6 +147,49 @@
       });
   }
 
+  // --- starting the backend ------------------------------------------------
+
+  /**
+   * Where the transcription service was installed.
+   *
+   * The Windows installer lets the user change the install directory, so the
+   * path cannot be hardcoded; setup writes it into the extension folder.
+   * The fallbacks cover a hand-copied extension or an installer that predates
+   * the file, and are the default install locations.
+   */
+  function backendExecutable() {
+    var extension = cs.getSystemPath(SystemPath.EXTENSION);
+    try {
+      var recorded = readText(extension + "/backend-path.txt").replace(/^\s+|\s+$/g, "");
+      if (recorded) return recorded;
+    } catch (e) {
+      // No file is normal on a hand-installed panel; fall through.
+    }
+    return cs.getOSInformation().indexOf("Windows") !== -1
+      ? "C:\\Program Files\\Capset\\backend\\capset-backend.exe"
+      : "/Library/Application Support/Capset/capset-backend";
+  }
+
+  /**
+   * Launch the service. Throws if it cannot be started, which the launcher
+   * turns into a message naming the executable rather than a bare refusal.
+   *
+   * Deliberately not a login-time autostart: the service holds the speech
+   * model in memory, so starting it at boot would cost hundreds of megabytes
+   * on machines where After Effects is never opened. Starting it when the
+   * panel opens costs nothing the rest of the time.
+   */
+  function spawnBackend() {
+    var exe = backendExecutable();
+    if (!window.cep || !window.cep.process || !window.cep.process.createProcess) {
+      throw new Error("this build of After Effects cannot launch it");
+    }
+    var result = window.cep.process.createProcess(exe);
+    if (!result || result.err) {
+      throw new Error(exe + " (error " + ((result && result.err) || "unknown") + ")");
+    }
+  }
+
   // --- backend health ------------------------------------------------------
 
   /**
@@ -162,7 +205,9 @@
 
   function describeHealth(health) {
     if (health.status === "unreachable") {
-      setStatus("error", "Service not running. Start the Capset backend.");
+      // Distinguish "we could not start it" from "we started it and it did
+      // not come up" — they need different things from the user.
+      setStatus("error", health.error || "The transcription service is not running.");
     } else if (health.model_loaded) {
       setStatus("ok", "Ready — " + ((health.engine || {}).model || "model loaded"));
     } else if (health.model_loading) {
@@ -175,14 +220,23 @@
     return health;
   }
 
+  /** One connect attempt: rediscover the port, then probe. */
+  function probeBackend() {
+    if (config.backendUrl) return backend.health();
+    return publishedPort().then(function (port) {
+      return backend.connect(port ? [port] : []);
+    });
+  }
+
   function checkHealth() {
     setStatus("warn", "Checking transcription service…");
-    if (config.backendUrl) {
-      return backend.health().then(describeHealth);
-    }
-    return publishedPort()
-      .then(function (port) { return backend.connect(port ? [port] : []); })
-      .then(describeHealth);
+    return CapsetLauncher.ensureRunning({
+      health: probeBackend,
+      spawn: spawnBackend,
+      onStarting: function () {
+        setStatus("warn", "Starting the transcription service…");
+      }
+    }).then(describeHealth);
   }
 
   // --- animations ----------------------------------------------------------

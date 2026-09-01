@@ -36,6 +36,12 @@ cp -R "$PAYLOAD/panel/." \
       "$ROOTDIR/Library/Application Support/Adobe/CEP/extensions/$IDENTIFIER/"
 cp -R "$PAYLOAD/backend/." "$ROOTDIR/Library/Application Support/Capset/"
 
+# Tell the panel where the backend is, so it can start the service on demand.
+# The install location is fixed on macOS, unlike Windows, but the panel reads
+# the same file on both platforms rather than carrying two code paths.
+printf '%s' "/Library/Application Support/Capset/capset-backend" > \
+  "$ROOTDIR/Library/Application Support/Adobe/CEP/extensions/$IDENTIFIER/backend-path.txt"
+
 # Apple Silicon refuses to execute unsigned arm64 binaries outright -- SIGKILL,
 # not a warning, and not bypassable. Ad-hoc signing satisfies that and needs no
 # Apple account. This is separate from notarisation: skip notarisation and you

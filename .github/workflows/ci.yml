@@ -103,4 +103,22 @@ jobs:
             echo "::error::runasoriginaluser is not valid in [UninstallRun]" >&2
             exit 1
           fi
+          # The panel starts the backend on demand, which it can only do if it
+          # knows where Setup put it. DefaultDirName is a default, not a
+          # promise -- the user can install anywhere -- so the real path must
+          # be recorded. Without it every install to a non-default directory
+          # reports "the transcription service is not running" forever.
+          if ! grep -q 'backend-path.txt' "$iss"; then
+            echo "::error::$iss never records the backend path for the panel" >&2
+            echo "Add a CurStepChanged that writes backend-path.txt into the extension folder." >&2
+            exit 1
+          fi
+          if ! grep -q 'backend-path.txt' installer/macos/build-pkg.sh; then
+            echo "::error::the macOS package never records the backend path" >&2
+            exit 1
+          fi
+          # Both files are read by panel/js/main.js; a rename on one side only
+          # is silent at build time and fatal at run time.
+          grep -q 'backend-path.txt' panel/js/main.js || {
+            echo "::error::the panel no longer reads backend-path.txt" >&2; exit 1; }
           echo "installer script OK"
