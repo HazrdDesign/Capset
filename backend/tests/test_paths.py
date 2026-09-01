@@ -81,7 +81,7 @@ def test_panel_resolves_the_same_windows_path():
     source = PANEL_JSX.read_text(encoding="utf-8")
     assert '$.getenv("LOCALAPPDATA")' in source
     # Escaped twice: once for ExtendScript, once here.
-    assert r'local + "\\Capset\\port"' in source
+    assert r'local + "\\Capset"' in source
     assert config.PORT_FILE_NAME == "port"
 
 

@@ -126,6 +126,24 @@
     <section>
       <h2>Animation</h2>
       <div id="animations"></div>
+      <div class="file" style="margin-top:8px">
+        <input type="text" id="preset-name" placeholder="Save the selected animation as…"
+               maxlength="60" autocomplete="off">
+        <button id="preset-save">Save</button>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <label class="check" style="margin:0">
+          <input type="checkbox" id="preset-with-style">
+          Include the captured text style
+        </label>
+      </div>
+      <button id="preset-delete" style="width:100%;margin-top:6px" disabled>
+        Delete this preset
+      </button>
+      <p class="hint" id="preset-hint">
+        Saved presets appear in the grid above and live in your user folder, so
+        they survive updates.
+      </p>
     </section>
 
     <section>
@@ -166,6 +184,7 @@
   <script src="js/lib/updates.js"></script>
   <script src="js/lib/launcher.js"></script>
   <script src="js/lib/preview.js"></script>
+  <script src="js/lib/presets.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>

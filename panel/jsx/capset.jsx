@@ -64,15 +64,43 @@ function capsetSnap(comp, seconds) {
  *   Windows  %LOCALAPPDATA%\Capset\port
  *   macOS    ~/Library/Application Support/Capset/port
  */
-function capsetPortFile() {
+function capsetUserDataDir() {
     if ($.os.indexOf("Windows") !== -1) {
         var local = $.getenv("LOCALAPPDATA");
         if (!local) return null;
-        return local + "\\Capset\\port";
+        return local + "\\Capset";
     }
     // Folder("~/...") expands the home directory on macOS; fsName gives the
     // platform path File() wants.
-    return Folder("~/Library/Application Support/Capset").fsName + "/port";
+    return Folder("~/Library/Application Support/Capset").fsName;
+}
+
+function capsetJoin(dir, name) {
+    if (!dir) return null;
+    return dir + ($.os.indexOf("Windows") !== -1 ? "\\" : "/") + name;
+}
+
+function capsetPortFile() {
+    return capsetJoin(capsetUserDataDir(), "port");
+}
+
+/**
+ * The directory the panel may write to.
+ *
+ * Never the extension folder: it lives under Program Files, needs elevation,
+ * and is replaced wholesale on every upgrade — saved presets would vanish
+ * with the first update.
+ */
+function capsetGetUserDataDir() {
+    try {
+        var dir = capsetUserDataDir();
+        if (!dir) return capsetErr("Could not locate a writable data folder.");
+        var folder = Folder(dir);
+        if (!folder.exists) folder.create();
+        return capsetOk(dir);
+    } catch (e) {
+        return capsetErr(e.message);
+    }
 }
 
 /**

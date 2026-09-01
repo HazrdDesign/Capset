@@ -79,7 +79,7 @@ test("every function returns through the ok/error envelope", () => {
 // service.
 
 test("the Windows port file path matches the backend", () => {
-  assert.match(source, /local \+ "\\\\Capset\\\\port"/);
+  assert.match(source, /local \+ "\\\\Capset"/);
   assert.match(source, /\$\.getenv\("LOCALAPPDATA"\)/);
 });
 

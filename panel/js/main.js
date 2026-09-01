@@ -22,6 +22,9 @@
     selectedAnimation: null,
     compInfo: null,
     selectedAnimationId: null,
+    builtInAnimations: [],
+    presets: [],
+    userDataDir: null,
     capturedStyle: null,
     busy: false
   };
@@ -274,9 +277,11 @@
     return fetch("animations/animations.json")
       .then(function (res) { return res.json(); })
       .then(function (data) {
-        state.animations = data.animations || [];
-        renderAnimations();
-        if (state.animations.length) selectAnimation(state.animations[0].id);
+        state.builtInAnimations = data.animations || [];
+        return loadPresets();
+      })
+      .then(function () {
+        refreshLibrary();
       })
       .catch(function (err) {
         log("Could not load animation library: " + err.message, "err");
@@ -389,6 +394,94 @@
              timings: previewTimings(animation), active: false };
   }
 
+  // --- saved presets -------------------------------------------------------
+  //
+  // Stored in the user's data folder, never in the extension folder: that
+  // lives under Program Files, needs elevation to write, and is replaced
+  // wholesale on upgrade — presets saved there would vanish with the first
+  // update.
+
+  var PRESETS_FILE = "presets.json";
+
+  function presetsPath() {
+    if (!state.userDataDir) return null;
+    return state.userDataDir +
+           (state.userDataDir.indexOf("\\") !== -1 ? "\\" : "/") + PRESETS_FILE;
+  }
+
+  function loadPresets() {
+    return host("capsetGetUserDataDir()")
+      .then(function (dir) {
+        state.userDataDir = dir;
+        var path = presetsPath();
+        var read = window.cep.fs.readFile(path);
+        // A missing file is the normal first-run state, not an error.
+        state.presets = read.err ? [] : CapsetPresets.parse(read.data);
+      })
+      .catch(function () {
+        // No writable folder: the built-in library still works, saving does
+        // not. Say so when they try, not before.
+        state.presets = [];
+      });
+  }
+
+  function writePresets() {
+    var path = presetsPath();
+    if (!path) throw new Error("No writable folder for presets on this machine.");
+    var result = window.cep.fs.writeFile(path, CapsetPresets.serialize(state.presets));
+    if (result && result.err) {
+      throw new Error("Could not write " + path + " (error " + result.err + ")");
+    }
+  }
+
+  function refreshLibrary() {
+    state.animations = CapsetPresets.merge(state.builtInAnimations, state.presets);
+    var keep = state.selectedAnimationId;
+    renderAnimations();
+    var found = false;
+    state.animations.forEach(function (a) { if (a.id === keep) found = true; });
+    if (state.animations.length) {
+      selectAnimation(found ? keep : state.animations[0].id);
+    }
+  }
+
+  function savePreset() {
+    var name = $("preset-name").value;
+    try {
+      var preset = CapsetPresets.fromAnimation(state.selectedAnimation, {
+        name: name,
+        style: $("preset-with-style").checked && state.capturedStyle
+          ? state.capturedStyle.style
+          : null
+      });
+      state.presets = CapsetPresets.upsert(state.presets, preset);
+      writePresets();
+      $("preset-name").value = "";
+      state.selectedAnimationId = preset.id;
+      refreshLibrary();
+      log("Saved preset \"" + preset.name + "\".", "ok");
+    } catch (err) {
+      log(err.message, "err");
+    }
+  }
+
+  function deletePreset() {
+    var animation = state.selectedAnimation;
+    if (!animation || !animation.custom) {
+      log("Built-in animations cannot be deleted.", "err");
+      return;
+    }
+    try {
+      state.presets = CapsetPresets.remove(state.presets, animation.id);
+      writePresets();
+      state.selectedAnimationId = null;
+      refreshLibrary();
+      log("Deleted preset \"" + animation.name + "\".", "ok");
+    } catch (err) {
+      log(err.message, "err");
+    }
+  }
+
   function renderAnimations() {
     var grid = $("animations");
     grid.innerHTML = "";
@@ -426,6 +519,12 @@
       var label = document.createElement("div");
       label.className = "label";
       label.textContent = animation.name;
+      if (animation.custom) {
+        // Marked so a saved preset is distinguishable from a shipped one at a
+        // glance — they behave differently, only one can be deleted.
+        card.classList.add("custom");
+        label.title = animation.name + " (your preset)";
+      }
 
       card.appendChild(thumb);
       card.appendChild(label);
@@ -448,6 +547,12 @@
     previews.forEach(function (item) {
       setPreviewActive(item, item.animation.id === id);
     });
+    var custom = !!(state.selectedAnimation && state.selectedAnimation.custom);
+    $("preset-delete").disabled = !custom;
+    $("preset-hint").textContent = custom
+      ? "This is one of your saved presets."
+      : "Saved presets appear in the grid above and live in your user folder, " +
+        "so they survive updates.";
   }
 
   function timingsFor(caption, animation) {
@@ -739,6 +844,12 @@
       phrase: "Broadcast style — 42 characters per line, up to 2 lines."
     };
     $("mode-hint").textContent = hints[$("mode").value] || "";
+  });
+
+  $("preset-save").addEventListener("click", savePreset);
+  $("preset-delete").addEventListener("click", deletePreset);
+  $("preset-name").addEventListener("keydown", function (event) {
+    if (event.key === "Enter") savePreset();
   });
 
   $("update-dismiss").addEventListener("click", function () {
