@@ -101,10 +101,30 @@ jobs:
           fi
           echo "backend responded:"; cat health.json
 
+      - name: Fetch ffmpeg (LGPL build)
+        shell: bash
+        # LGPL, deliberately NOT the GPL build. The GPL variant would impose
+        # GPL obligations on anything distributed alongside it; the LGPL one
+        # can be redistributed unmodified with its licence and a source link,
+        # which is what LICENSE.txt provides. Invoked as a separate process,
+        # never linked into our code.
+        run: |
+          url="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip"
+          curl -fsSL "$url" -o ffmpeg.zip
+          7z x ffmpeg.zip -offmpeg-extract > /dev/null
+          mkdir -p vendor-ffmpeg
+          find ffmpeg-extract -name 'ffmpeg.exe'  -exec cp {} vendor-ffmpeg/ \;
+          find ffmpeg-extract -name 'ffprobe.exe' -exec cp {} vendor-ffmpeg/ \;
+          find ffmpeg-extract -iname 'LICENSE*' -maxdepth 3 -exec cp {} vendor-ffmpeg/FFMPEG-LICENSE.txt \; || true
+          ls -la vendor-ffmpeg/
+          test -f vendor-ffmpeg/ffmpeg.exe  || { echo "::error::ffmpeg.exe not extracted"; exit 1; }
+          test -f vendor-ffmpeg/ffprobe.exe || { echo "::error::ffprobe.exe not extracted"; exit 1; }
+
       - name: Stage installer payload
         run: >
           python installer/build_payload.py
           --backend-dist backend/dist/capset-backend
+          --ffmpeg-dir vendor-ffmpeg
           --version ${{ steps.version.outputs.value }}
 
       - name: Install Inno Setup

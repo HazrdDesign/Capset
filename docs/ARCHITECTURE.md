@@ -189,6 +189,40 @@ Notes:
 
 ---
 
+## 5a. Getting audio out of After Effects
+
+Two routes, and the priority is worth revisiting.
+
+**Direct file read (current default).** When one plain footage layer is
+selected, its media file is read straight off disk and decoded with ffmpeg.
+Instant, no render.
+
+**AE render (current fallback).** The comp's audio is rendered through the
+render queue.
+
+**The fallback is arguably the more correct one.** Reading the raw file gets
+the *file's* audio. Rendering from AE gets **what the user actually hears** —
+the comp mix, levels, mute states, audio effects, time remapping, nested
+comps. A project with two audio layers, or a compressor on the voiceover,
+transcribes the wrong thing under the direct read.
+
+Supporting evidence: the project owner recalls Captioneer exporting an
+**AIFF** before analysing. AIFF is what After Effects' audio-only output
+produces, which suggests Captioneer renders from AE rather than decoding the
+source file.
+
+**Why ffmpeg is still bundled either way:** After Effects' audio output
+templates vary by version and locale, and the one that is available may be
+AIFF rather than WAV. `onnx-asr` reads WAV; it does not promise AIFF. So
+ffmpeg earns its place as a converter even when AE does the rendering — and
+it is what makes the fast path work on compressed sources.
+
+**OPEN:** make the AE render the primary path once the output-module template
+names are verified against a live host. `capsetRenderAudio` already tries
+WAV, then AIFF, then Audio Only, then MP3.
+
+---
+
 ## 6. Cross-platform: Windows and macOS
 
 **Decision: both. The panel is portable; the ASR runtime and installer are

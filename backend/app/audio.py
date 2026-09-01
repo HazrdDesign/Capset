@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 import subprocess
 from pathlib import Path
 
@@ -21,29 +22,49 @@ class AudioError(RuntimeError):
     pass
 
 
-def ffmpeg_path() -> str:
-    """Locate ffmpeg: alongside the bundled app first, then the system."""
-    bundled = Path(__file__).resolve().parent.parent / "vendor" / "ffmpeg"
-    for candidate in (bundled / "ffmpeg", bundled / "ffmpeg.exe"):
+def _vendor_dir() -> Path:
+    """Where bundled binaries live.
+
+    Frozen, __file__ points inside PyInstaller's extraction directory rather
+    than the install tree — the same trap that broke the model path. The
+    installer lays out {app}/backend/capset-backend.exe alongside
+    {app}/vendor, so resolve from the executable when frozen.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent.parent / "vendor"
+    return Path(__file__).resolve().parent.parent / "vendor"
+
+
+def _find_binary(name: str) -> str | None:
+    vendor = _vendor_dir()
+    candidates = (
+        vendor / name,
+        vendor / (name + ".exe"),
+        vendor / "ffmpeg" / name,
+        vendor / "ffmpeg" / (name + ".exe"),
+    )
+    for candidate in candidates:
         if candidate.exists():
             return str(candidate)
-    found = shutil.which("ffmpeg")
+    return shutil.which(name)
+
+
+def ffmpeg_path() -> str:
+    """Bundled ffmpeg first, then whatever is on PATH."""
+    found = _find_binary("ffmpeg")
     if not found:
         raise AudioError(
-            "ffmpeg not found. It ships with the installer; for a dev "
-            "checkout install it or set it on PATH."
+            "ffmpeg was not found. It ships with the installer, so this "
+            "usually means the install is incomplete — reinstalling should "
+            "fix it. For a source checkout, put ffmpeg on PATH."
         )
     return found
 
 
 def ffprobe_path() -> str:
-    bundled = Path(__file__).resolve().parent.parent / "vendor" / "ffmpeg"
-    for candidate in (bundled / "ffprobe", bundled / "ffprobe.exe"):
-        if candidate.exists():
-            return str(candidate)
-    found = shutil.which("ffprobe")
+    found = _find_binary("ffprobe")
     if not found:
-        raise AudioError("ffprobe not found alongside ffmpeg")
+        raise AudioError("ffprobe was not found alongside ffmpeg.")
     return found
 
 

@@ -90,12 +90,30 @@ def copy_backend(dest: Path, dist: Path | None) -> str:
     return "built"
 
 
-def copy_vendor(dest: Path, ffmpeg: Path | None) -> str:
+def copy_vendor(dest: Path, ffmpeg_dir: Path | None) -> str:
+    """Stage bundled binaries. ffmpeg AND ffprobe — duration probing needs both."""
     dest.mkdir(parents=True, exist_ok=True)
-    if ffmpeg and ffmpeg.exists():
-        shutil.copy2(ffmpeg, dest / ffmpeg.name)
-        return ffmpeg.name
-    return "none"
+    if not ffmpeg_dir or not ffmpeg_dir.is_dir():
+        return "none"
+
+    copied = []
+    for name in ("ffmpeg", "ffmpeg.exe", "ffprobe", "ffprobe.exe"):
+        source = ffmpeg_dir / name
+        if source.is_file():
+            target = dest / name
+            shutil.copy2(source, target)
+            target.chmod(target.stat().st_mode | 0o111)
+            copied.append(name)
+
+    if not copied:
+        raise SystemExit(f"no ffmpeg/ffprobe binaries found in {ffmpeg_dir}")
+    # Shipping one without the other fails later, at probe time, on a user's
+    # machine rather than here.
+    has_ffmpeg = any(n.startswith("ffmpeg") for n in copied)
+    has_probe = any(n.startswith("ffprobe") for n in copied)
+    if not (has_ffmpeg and has_probe):
+        raise SystemExit(f"need both ffmpeg and ffprobe; got {copied}")
+    return ", ".join(copied)
 
 
 def main() -> int:
@@ -103,7 +121,8 @@ def main() -> int:
     parser.add_argument("--out", default=str(ROOT / "build" / "payload"))
     parser.add_argument("--backend-dist", default=None,
                         help="PyInstaller onedir output (backend/dist/capset-backend)")
-    parser.add_argument("--ffmpeg", default=None, help="ffmpeg binary to bundle")
+    parser.add_argument("--ffmpeg-dir", default=None,
+                        help="directory containing ffmpeg and ffprobe binaries")
     parser.add_argument("--version", default="0.1.0")
     args = parser.parse_args()
 
@@ -116,7 +135,7 @@ def main() -> int:
         Path(args.backend_dist).resolve() if args.backend_dist else None,
     )
     vendor_state = copy_vendor(
-        out / "vendor", Path(args.ffmpeg).resolve() if args.ffmpeg else None
+        out / "vendor", Path(args.ffmpeg_dir).resolve() if args.ffmpeg_dir else None
     )
 
     total = sum(f.stat().st_size for f in out.rglob("*") if f.is_file())

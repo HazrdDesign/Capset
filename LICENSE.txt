@@ -21,9 +21,12 @@ NVIDIA Parakeet speech recognition model
   Copyright (c) NVIDIA Corporation.
 
 FFmpeg
-  Licensed under the GNU Lesser General Public License version 2.1 or later.
+  The LGPL build is bundled (not the GPL build), licensed under the GNU
+  Lesser General Public License version 2.1 or later.
   https://www.gnu.org/licenses/lgpl-2.1.html
-  Source: https://ffmpeg.org/
+  Binaries: https://github.com/BtbN/FFmpeg-Builds (unmodified)
+  Source:   https://ffmpeg.org/download.html
+  FFmpeg is invoked as a separate process and is not linked into Capset.
 
 ONNX Runtime — MIT Licence. Copyright (c) Microsoft Corporation.
 onnx-asr — MIT Licence.
