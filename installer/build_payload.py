@@ -58,7 +58,8 @@ def copy_panel(dest: Path) -> list[str]:
             "jsx/capset.jsx", "jsx/json2.jsx",
             "js/vendor/CSInterface.js", "js/main.js",
             "js/lib/timing.js", "js/lib/segmentation.js",
-            "js/lib/srt.js", "js/lib/backend.js",
+            "js/lib/srt.js", "js/lib/backend.js", "js/lib/updates.js",
+            "capset.config.json",
             "animations/animations.json",
         )
         if not (dest / rel).is_file()

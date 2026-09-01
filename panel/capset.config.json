@@ -1,0 +1,5 @@
+{
+  "$comment": "Edit this after install without touching code. updateManifestUrl must be a public URL — customers cannot read a private GitHub repo. Set it to null to disable update checks entirely.",
+  "updateManifestUrl": null,
+  "backendUrl": "http://127.0.0.1:8756"
+}

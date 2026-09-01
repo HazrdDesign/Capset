@@ -10,6 +10,7 @@
 
   var cs = new CSInterface();
   var backend = new CapsetBackendLib.CapsetBackend();
+  var config = { updateManifestUrl: null, backendUrl: null };
   var timing = CapsetTiming;
   var segmentation = CapsetSegmentation;
   var srt = CapsetSrt;
@@ -90,6 +91,56 @@
 
   function arg(value) {
     return JSON.stringify(JSON.stringify(value));
+  }
+
+  // --- updates -------------------------------------------------------------
+
+  /** The running version, from the CEP manifest rather than a hardcoded copy. */
+  function currentVersion() {
+    try {
+      var found = cs.getExtensions(["design.hazrd.capset.panel"]);
+      if (found && found.length && found[0].version) return found[0].version;
+    } catch (e) {}
+    return "0.0.0";
+  }
+
+  function showUpdate(result) {
+    var banner = $("update-banner");
+    banner.hidden = false;
+    banner.className = "update" + (result.required ? " required" : "");
+    $("update-title").textContent = result.required
+      ? "Update required — " + result.version
+      : "Capset " + result.version + " is available";
+    $("update-notes").textContent = result.notes || "";
+    $("update-get").disabled = !result.url;
+    $("update-get").onclick = function () {
+      if (result.url) cs.openURLInDefaultBrowser(result.url);
+    };
+  }
+
+  function checkForUpdates(force) {
+    if (!config.updateManifestUrl) return Promise.resolve();
+    var checker = new CapsetUpdates.UpdateChecker({
+      manifestUrl: config.updateManifestUrl,
+      currentVersion: currentVersion()
+    });
+    return checker.check(force).then(function (result) {
+      if (result.status === "update") showUpdate(result);
+      // "unavailable" is silent on purpose: being offline is normal and must
+      // not read as the plugin being broken.
+    });
+  }
+
+  function loadConfig() {
+    return fetch("capset.config.json")
+      .then(function (res) { return res.json(); })
+      .then(function (loaded) {
+        config.updateManifestUrl = loaded.updateManifestUrl || null;
+        if (loaded.backendUrl) backend.baseUrl = loaded.backendUrl;
+      })
+      .catch(function () {
+        // Missing or malformed config is not fatal — defaults are fine.
+      });
   }
 
   // --- backend health ------------------------------------------------------
@@ -449,6 +500,11 @@
     $("mode-hint").textContent = hints[$("mode").value] || "";
   });
 
+  $("update-dismiss").addEventListener("click", function () {
+    $("update-banner").hidden = true;
+  });
+
+  loadConfig().then(function () { checkForUpdates(false); });
   checkHealth();
   loadAnimations();
   log("Capset panel ready.");

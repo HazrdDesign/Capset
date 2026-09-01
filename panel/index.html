@@ -13,6 +13,17 @@
     <button class="tab" data-tab="animate">Animate</button>
   </nav>
 
+  <section id="update-banner" class="update" hidden>
+    <div class="update-text">
+      <strong id="update-title">Update available</strong>
+      <span id="update-notes"></span>
+    </div>
+    <div class="row">
+      <button id="update-get">Get it</button>
+      <button id="update-dismiss" title="Dismiss">✕</button>
+    </div>
+  </section>
+
   <section id="status" class="warn">
     <span class="dot"></span>
     <span class="msg">Checking transcription service…</span>
@@ -152,6 +163,7 @@
   <script src="js/lib/segmentation.js"></script>
   <script src="js/lib/srt.js"></script>
   <script src="js/lib/backend.js"></script>
+  <script src="js/lib/updates.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>

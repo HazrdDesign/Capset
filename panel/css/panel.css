@@ -227,3 +227,20 @@ button.primary:hover:not(:disabled) { background: #3d5f9e; }
   line-height: 1.5;
 }
 .captured strong { color: var(--text); font-weight: 600; }
+
+/* --- update banner ------------------------------------------------------ */
+#update-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-color: var(--accent);
+  border-left: 2px solid var(--accent);
+  background: #26303f;
+}
+#update-banner[hidden] { display: none; }
+#update-banner.required { border-color: var(--warn); border-left-color: var(--warn); }
+.update-text { flex: 1 1 auto; line-height: 1.4; }
+.update-text strong { display: block; color: var(--text); }
+.update-text span { color: var(--text-dim); font-size: 10px; }
+#update-banner .row { flex: 0 0 auto; display: flex; gap: 4px; }
+#update-dismiss { padding: 6px 8px; }
