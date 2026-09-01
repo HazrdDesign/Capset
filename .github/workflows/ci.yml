@@ -80,6 +80,23 @@ jobs:
           for v in 9 10 11 12; do
             grep -q "CSXS.$v" "$iss" || { echo "::error::missing CSXS.$v key" >&2; exit 1; }
           done
+          # Upgrading over a running backend fails with "DeleteFile failed;
+          # code 32 — being used by another process" on every locked file in
+          # turn. The service is windowless, so Restart Manager does not
+          # reliably catch it; Setup must terminate it explicitly first.
+          if ! grep -q 'PrepareToInstall' "$iss"; then
+            echo "::error::installer must stop the running backend before copying files" >&2
+            echo "Add a [Code] PrepareToInstall that terminates capset-backend.exe." >&2
+            exit 1
+          fi
+          if ! grep -q 'taskkill' "$iss"; then
+            echo "::error::no taskkill found — upgrades will fail on locked files" >&2
+            exit 1
+          fi
+          if ! grep -q 'InitializeUninstall' "$iss"; then
+            echo "::error::uninstall must stop the backend too, or it leaves locked files" >&2
+            exit 1
+          fi
           # runasoriginaluser is a [Run]-only flag. Inno Setup rejects it in
           # [UninstallRun] and aborts the compile, which cost a build.
           if awk '/^\[UninstallRun\]/{f=1;next} /^\[/{f=0} f' "$iss" | grep -q 'runasoriginaluser'; then

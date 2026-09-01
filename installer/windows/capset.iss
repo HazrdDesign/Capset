@@ -37,6 +37,11 @@ WizardStyle=modern
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#AppName} {#AppVersion}
+; Let Setup try to shut down anything holding our files. The backend runs
+; windowless, so Restart Manager does not always spot it — [Code] below
+; terminates it explicitly as well.
+CloseApplications=yes
+RestartApplications=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -119,3 +124,48 @@ Type: filesandordirs; Name: "{commoncf32}\Adobe\CEP\extensions\{#ExtensionId}"
 
 [Messages]
 FinishedLabel=Capset is installed.%n%nRestart After Effects, then open Window > Extensions > Capset.
+
+[Code]
+// Stop a running backend before touching its files.
+//
+// Upgrading over a running install fails otherwise: Windows locks the
+// executable and its DLLs, and Setup reports "DeleteFile failed; code 32 —
+// the process cannot access the file because it is being used by another
+// process" (or code 5) for capset-backend.exe, base_library.zip,
+// libcrypto-3.dll and every other locked file in turn. Skipping them leaves
+// a half-updated install, which is worse than failing outright.
+//
+// The service is windowless, so Restart Manager (CloseApplications) does not
+// reliably detect it. taskkill is unambiguous. /T also takes any child
+// processes; /F because the service has no message loop to ask politely.
+
+procedure StopBackend();
+var
+  ResultCode: Integer;
+  Launched: Boolean;
+begin
+  // Assigned rather than called bare: Exec is a function, and discarding a
+  // return value as a statement is not reliably accepted by Pascal Script.
+  // The result is intentionally unused — taskkill returning "not found" is
+  // the normal case on a first install.
+  Launched := Exec(ExpandConstant('{sys}\taskkill.exe'),
+                   '/IM capset-backend.exe /F /T',
+                   '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  // Windows releases file handles slightly after the process exits; without
+  // this pause the very next file copy can still hit a lock.
+  Sleep(1000);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  StopBackend();
+  // Empty string means "carry on". A message here would abort the install,
+  // and a missing process is a perfectly normal first-time install.
+  Result := '';
+end;
+
+function InitializeUninstall(): Boolean;
+begin
+  StopBackend();
+  Result := True;
+end;

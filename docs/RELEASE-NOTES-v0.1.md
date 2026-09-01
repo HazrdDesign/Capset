@@ -37,6 +37,10 @@ Parakeet on your machine and generates timed, animated text layers.
 2. Restart After Effects.
 3. **Window → Extensions → Capset**.
 
+Upgrading over an existing install is fine — Setup stops the running
+transcription service itself before replacing files. You do not need to hunt
+for it in Task Manager.
+
 ## Using it
 
 **Insert** — choose Full Composition or In to Out and hit **Add Captions**.
