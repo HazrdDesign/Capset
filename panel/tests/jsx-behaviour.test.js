@@ -601,3 +601,80 @@ test("colour and tracking are animatable", () => {
     ["ADBE Text Fill Color", "ADBE Text Tracking Amount"]
   );
 });
+
+// --- selecting what to transcribe -------------------------------------------
+//
+// "Select the layer with the audio, hit Add Captions" is the workflow the
+// plugin is built around. Rendering the whole comp mix regardless meant a
+// voiceover under a music bed was transcribed together with the music, which
+// costs real accuracy.
+
+test("selecting an audio layer transcribes only that layer", () => {
+  const h = load();
+  const voice = withAudio(h, "Voiceover");
+  withAudio(h, "Music Bed");
+  voice.selected = true;
+
+  const result = h.call("capsetRenderAudio", { scope: "composition" });
+  assert.deepStrictEqual(result.layers, ["Voiceover"]);
+  assert.strictEqual(result.fromSelection, true);
+});
+
+test("selecting nothing transcribes everything audible", () => {
+  const h = load();
+  withAudio(h, "Voiceover");
+  withAudio(h, "Music Bed");
+
+  const result = h.call("capsetRenderAudio", { scope: "composition" });
+  assert.deepStrictEqual(result.layers.sort(), ["Music Bed", "Voiceover"]);
+  assert.strictEqual(result.fromSelection, false);
+});
+
+test("selecting several audio layers transcribes all of them", () => {
+  const h = load();
+  const a = withAudio(h, "Dialogue A");
+  const b = withAudio(h, "Dialogue B");
+  withAudio(h, "Music Bed");
+  a.selected = true;
+  b.selected = true;
+
+  const result = h.call("capsetRenderAudio", { scope: "composition" });
+  assert.deepStrictEqual(result.layers.sort(), ["Dialogue A", "Dialogue B"]);
+});
+
+test("selecting a layer with no audio falls back to the comp mix", () => {
+  // Selecting the text layer you are about to caption is a natural thing to
+  // do, and it must not silence the render.
+  const h = load();
+  withAudio(h, "Voiceover");
+  const title = h.comp.layers.addText("A Title");
+  title.selected = true;
+
+  const result = h.call("capsetRenderAudio", { scope: "composition" });
+  assert.deepStrictEqual(result.layers, ["Voiceover"]);
+  assert.strictEqual(result.fromSelection, false);
+});
+
+test("solo states are exactly as they were afterwards", () => {
+  // Soloing is how After Effects expresses "just this layer", but leaving a
+  // comp soloed would silently change every render the user makes next.
+  const h = load();
+  const voice = withAudio(h, "Voiceover");
+  const music = withAudio(h, "Music Bed");
+  music.solo = true;
+  voice.selected = true;
+
+  h.call("capsetRenderAudio", { scope: "composition" });
+
+  assert.strictEqual(music.solo, true, "an existing solo was cleared");
+  assert.strictEqual(voice.solo, false, "our temporary solo was left behind");
+});
+
+test("solo is restored even when the render fails", () => {
+  const h = load({ templates: ["Lossless"] });
+  const voice = withAudio(h, "Voiceover");
+  voice.selected = true;
+
+  assert.throws(() => h.call("capsetRenderAudio", { scope: "composition" }));
+  assert.strictEqual(voice.solo, false);
+});

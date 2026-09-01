@@ -432,6 +432,52 @@ function capsetHasAudio(layer) {
     }
 }
 
+/** Audio-bearing layers the user has selected, if any. */
+function capsetSelectedAudioLayers(comp) {
+    var chosen = [];
+    var selected = comp.selectedLayers;
+    for (var i = 0; i < selected.length; i++) {
+        if (capsetHasAudio(selected[i])) chosen.push(selected[i]);
+    }
+    return chosen;
+}
+
+/**
+ * Solo exactly the given layers for the duration of a render.
+ *
+ * Selecting the voiceover layer and pressing Add Captions should transcribe
+ * the voiceover, not the voiceover plus the music bed — mixing music into the
+ * input costs real accuracy, and the workflow the plugin is built around is
+ * "select the audio layer, hit the button". Soloing is how After Effects
+ * expresses that, and it is restored afterwards.
+ *
+ * Returns the previous solo state of every layer, for capsetRestoreSolo.
+ */
+function capsetSoloOnly(comp, layers) {
+    var saved = [];
+    for (var i = 1; i <= comp.numLayers; i++) {
+        var layer = comp.layer(i);
+        var wanted = false;
+        for (var j = 0; j < layers.length; j++) {
+            if (layers[j] === layer) { wanted = true; break; }
+        }
+        try {
+            saved.push({ layer: layer, solo: layer.solo });
+            if (layer.solo !== wanted) layer.solo = wanted;
+        } catch (e) {
+            // Some layer types refuse solo; leaving them as they are is fine.
+        }
+    }
+    return saved;
+}
+
+function capsetRestoreSolo(saved) {
+    if (!saved) return;
+    for (var i = 0; i < saved.length; i++) {
+        try { saved[i].layer.solo = saved[i].solo; } catch (e) {}
+    }
+}
+
 /** Audio-bearing layers that will actually contribute to the render. */
 function capsetAudibleLayers(comp) {
     var audible = [];
@@ -540,9 +586,18 @@ function capsetRenderAudio(payloadJson) {
     var savedDuration = null;
     var item = null;
     var suspended = [];
+    var soloRestore = null;
     try {
         var payload = JSON.parse(payloadJson || "{}");
         comp = capsetActiveComp();
+
+        // Selection wins when there is one. Everything the user can hear is
+        // the sensible default, but it is a default, not a rule: with a music
+        // bed under a voiceover it transcribes both and accuracy suffers.
+        var chosen = capsetSelectedAudioLayers(comp);
+        if (chosen.length) {
+            soloRestore = capsetSoloOnly(comp, chosen);
+        }
 
         var audible = capsetAudibleLayers(comp);
         if (!audible.length) {
@@ -619,7 +674,11 @@ function capsetRenderAudio(payloadJson) {
             start: start,
             duration: duration,
             template: template.name,
-            layers: audible
+            layers: audible,
+            // So the panel can say WHAT it transcribed. Getting captions for
+            // the wrong layer with no indication of which one was used is a
+            // confusing failure to debug.
+            fromSelection: chosen.length > 0
         });
     } catch (e) {
         return capsetErr(e.message);
@@ -628,6 +687,7 @@ function capsetRenderAudio(payloadJson) {
         // silent failure they would discover hours later, when the render
         // they set going overnight turns out not to have run.
         capsetResumeQueue(suspended);
+        capsetRestoreSolo(soloRestore);
         if (item !== null) {
             try { item.remove(); } catch (e) {}
         }

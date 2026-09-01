@@ -634,8 +634,16 @@
     setProgress(0.05, "Rendering audio from After Effects…");
     return host("capsetRenderAudio(" + arg({ scope: scope }) + ")")
       .then(function (rendered) {
-        log("Rendered audio via “" + rendered.template + "” (" +
-            rendered.layers.join(", ") + ")");
+        // Naming the layers matters: captions built from the wrong audio, with
+        // no indication of which was used, is a miserable thing to debug.
+        log((rendered.fromSelection
+              ? "Transcribing your selection: "
+              : "Transcribing everything audible: ") +
+            rendered.layers.join(", "));
+        if (!rendered.fromSelection && rendered.layers.length > 1) {
+          log("Select just the voice layer for better accuracy — music mixed " +
+              "into the audio costs recognition quality.", "warn");
+        }
         return rendered;
       });
   }

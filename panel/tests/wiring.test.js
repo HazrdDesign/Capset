@@ -86,3 +86,22 @@ test("every log kind main.js uses has a style", () => {
   const missing = [...kinds].filter((k) => !css.includes("#log ." + k));
   assert.deepStrictEqual(missing, [], "log kinds with no stylesheet rule");
 });
+
+test("every input in the panel is actually read", () => {
+  // A decorative control is a promise the plugin does not keep, and this
+  // codebase has shipped several: "Include effects" was sent to the host and
+  // ignored, and every animation's `overshoot` was read by nothing at all.
+  // A checkbox nobody reads looks identical to one that works.
+  const ids = [...html.matchAll(/<(?:input|select|textarea)\b[^>]*\bid="([^"]+)"/g)]
+    .map((m) => m[1]);
+  const unread = ids.filter((id) => !main.includes('$("' + id + '")'));
+  assert.deepStrictEqual(unread, [], "controls the panel never reads");
+});
+
+test("every radio group is read", () => {
+  const names = new Set(
+    [...html.matchAll(/<input\b[^>]*type="radio"[^>]*\bname="([^"]+)"/g)].map((m) => m[1])
+  );
+  const unread = [...names].filter((name) => !main.includes('radio("' + name + '")'));
+  assert.deepStrictEqual(unread, [], "radio groups the panel never reads");
+});
