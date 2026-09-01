@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -35,7 +36,42 @@ def clean(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def copy_panel(dest: Path) -> list[str]:
+VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+
+
+def stamp_manifest(manifest: Path, version: str) -> None:
+    """Write the release version into the CEP manifest.
+
+    The panel reads its own version from here (currentVersion() in
+    js/main.js) and compares it against the update manifest. Leaving it at
+    whatever is committed means every install reports the committed version
+    forever, so the moment a newer release exists the update banner appears
+    and never goes away — including immediately after the user installs that
+    very release.
+
+    Also what After Effects shows in Window > Extensions, and what decides
+    whether an upgrade replaces the extension or sits alongside it.
+    """
+    if not VERSION_RE.match(version):
+        raise SystemExit(
+            f"--version must be MAJOR.MINOR.PATCH for the CEP manifest, got {version!r}"
+        )
+    text = manifest.read_text(encoding="utf-8")
+    stamped, bundle_count = re.subn(
+        r'(ExtensionBundleVersion=")[^"]*(")', rf"\g<1>{version}\g<2>", text
+    )
+    stamped, ext_count = re.subn(
+        r'(<Extension Id="[^"]*" Version=")[^"]*(")', rf"\g<1>{version}\g<2>", stamped
+    )
+    if not bundle_count or not ext_count:
+        raise SystemExit(
+            "could not stamp the version into CSXS/manifest.xml — its "
+            "ExtensionBundleVersion or Extension Version attribute has moved"
+        )
+    manifest.write_text(stamped, encoding="utf-8")
+
+
+def copy_panel(dest: Path, version: str) -> list[str]:
     source = ROOT / "panel"
     if not source.is_dir():
         raise SystemExit("panel/ not found")
@@ -50,6 +86,7 @@ def copy_panel(dest: Path) -> list[str]:
     manifest = dest / "CSXS" / "manifest.xml"
     if not manifest.is_file():
         raise SystemExit("payload is missing CSXS/manifest.xml")
+    stamp_manifest(manifest, version)
 
     missing = [
         rel for rel in (
@@ -100,7 +137,7 @@ def main() -> int:
     out = Path(args.out).resolve()
     clean(out)
 
-    panel_entries = copy_panel(out / "panel")
+    panel_entries = copy_panel(out / "panel", args.version)
     backend_state = copy_backend(
         out / "backend",
         Path(args.backend_dist).resolve() if args.backend_dist else None,

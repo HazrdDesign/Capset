@@ -44,7 +44,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Stage installer payload
-        run: python installer/build_payload.py
+        run: python installer/build_payload.py --version 9.8.7
       - name: Verify no development files leaked
         run: |
           for f in tests package.json node_modules; do
@@ -54,6 +54,31 @@ jobs:
             fi
           done
           echo "payload is clean"
+      - name: Verify the release version reaches the CEP manifest
+        # The panel reads its own version from the manifest and compares it
+        # against the update manifest. If staging does not stamp it, every
+        # install reports the committed version forever — so the update banner
+        # appears the moment a newer release exists and never goes away, including
+        # straight after installing that very release.
+        run: |
+          m=build/payload/panel/CSXS/manifest.xml
+          grep -q 'ExtensionBundleVersion="9.8.7"' "$m" || {
+            echo "::error::the release version did not reach ExtensionBundleVersion" >&2
+            grep -n 'Version=' "$m" >&2; exit 1; }
+          grep -q '<Extension Id="[^"]*" Version="9.8.7"' "$m" || {
+            echo "::error::the release version did not reach the Extension entry" >&2
+            grep -n 'Version=' "$m" >&2; exit 1; }
+          # The CSXS runtime version is a different thing and must NOT be stamped.
+          grep -q '<ExtensionManifest Version="9.0"' "$m" || {
+            echo "::error::the CSXS runtime version was overwritten" >&2; exit 1; }
+          echo "manifest version stamped correctly"
+      - name: Reject a version the CEP manifest cannot hold
+        run: |
+          if python installer/build_payload.py --version "v1.2" 2>/dev/null; then
+            echo "::error::a malformed version was accepted" >&2
+            exit 1
+          fi
+          echo "malformed versions rejected"
 
   installer:
     name: Installer script lint
