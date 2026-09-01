@@ -142,6 +142,20 @@ class OnnxAsrEngine:
             import onnx_asr  # noqa: F401
         except Exception as exc:
             return False, f"onnx_asr import failed: {type(exc).__name__}: {exc}"
+
+        # Checking only the two imports above is NOT enough — that is what
+        # v0.1.4 did, and it shipped broken. onnx_asr resolves model weights
+        # through huggingface_hub, imported inside a function in resolver.py,
+        # so the failure surfaces at model-load time rather than at import.
+        # Reach for the exact symbols the download path uses.
+        try:
+            from huggingface_hub import hf_hub_download, snapshot_download  # noqa: F401
+        except Exception as exc:
+            return False, (
+                f"huggingface_hub import failed: {type(exc).__name__}: {exc} "
+                "— model weights could not be downloaded"
+            )
+
         providers = ", ".join(onnxruntime.get_available_providers())
         return True, f"onnxruntime {onnxruntime.__version__}; providers: {providers}"
 

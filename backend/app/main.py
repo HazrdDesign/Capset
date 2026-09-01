@@ -23,8 +23,12 @@ from .jobs import JobStore
 from .models import TranscriptionResult
 from .transcribe import Transcriber
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+from .logging_setup import configure as configure_logging
+
+_LOG_PATH = configure_logging()
 log = logging.getLogger("capset")
+if _LOG_PATH:
+    log.info("logging to %s", _LOG_PATH)
 
 transcriber = Transcriber(OnnxAsrEngine())
 
@@ -74,6 +78,9 @@ def health() -> dict:
         "status": "ok",
         "model_loaded": transcriber.is_loaded(),
         "engine": transcriber.engine.describe(),
+        # Surfaced so the panel can tell the user where to find diagnostics
+        # now that the service runs without a console.
+        "log_path": str(_LOG_PATH) if _LOG_PATH else None,
     }
     if load_error:
         payload["status"] = "degraded"

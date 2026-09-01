@@ -94,9 +94,11 @@ Filename: "{app}\backend\capset-backend.exe"; Parameters: "--fetch-model"; \
     StatusMsg: "Downloading the speech model (one time, about 600 MB)..."; \
     Flags: runhidden waituntilterminated; Tasks: fetchmodel
 
+; runhidden as well as a windowed build: belt and braces, so no console
+; flashes even if the binary is ever rebuilt with console=True by mistake.
 Filename: "{app}\backend\capset-backend.exe"; \
     Description: "Start the Capset transcription service"; \
-    Flags: nowait postinstall skipifsilent
+    Flags: nowait postinstall skipifsilent runhidden
 
 ; No [UninstallRun] cleanup of PlayerDebugMode, for two reasons.
 ;

@@ -62,6 +62,17 @@ def test_onnx_runtime_is_present():
     assert "onnxruntime" in names
 
 
+def test_huggingface_hub_is_present():
+    """onnx-asr declares it as an EXTRA, so pip will not install it for us.
+
+    onnx_asr imports it inside a function, so leaving it out produces a
+    service that starts, answers /health, and only fails when a model is
+    actually resolved. v0.1.4 shipped exactly that way.
+    """
+    names = {_name(r) for r in _requirements()}
+    assert "huggingface-hub" in names or "huggingface_hub" in names
+
+
 def test_every_requirement_is_version_pinned():
     """An unpinned dependency can pull in a heavy transitive dep on any build."""
     unpinned = [

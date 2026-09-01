@@ -42,7 +42,10 @@ datas = []
 # onnxruntime` to succeed, so onnx_asr's very first import line failed and
 # the backend ran permanently degraded. Grab submodules, data files AND
 # binaries for both packages rather than guessing which parts matter.
-for module in ("onnx_asr", "onnxruntime"):
+# huggingface_hub is imported inside functions in onnx_asr's resolver, so
+# static analysis never sees it. v0.1.4 shipped without it and failed at
+# model resolution — after starting cleanly and passing the smoke test.
+for module in ("onnx_asr", "onnxruntime", "huggingface_hub"):
     mod_datas, mod_binaries, mod_hidden = collect_all(module)
     datas += mod_datas
     binaries += mod_binaries
@@ -94,7 +97,11 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,          # UPX compression is a strong antivirus heuristic trigger
-    console=True,       # the panel launches it hidden; a console aids support
+    # No console window. A terminal sitting on the user's desktop for the
+    # life of their After Effects session is not acceptable, and closing it
+    # by accident kills transcription. Diagnostics go to a log file instead
+    # (see app/logging_setup.py) so support can still ask for them.
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,   # set to "universal2" for a universal macOS build

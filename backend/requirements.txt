@@ -4,10 +4,20 @@
 # docs/ARCHITECTURE.md section 2.
 onnx-asr>=0.11.0
 
-# Execution providers. onnxruntime is the CPU/CoreML build and works
-# everywhere. For an NVIDIA GPU on Windows/Linux install onnxruntime-gpu
-# INSTEAD (they conflict). CUDA does not exist on macOS.
+# EVERY runtime dependency of onnx-asr is an optional EXTRA, so a plain
+# `pip install onnx-asr` gives you a package that cannot actually run:
+#
+#     onnxruntime  ... ; extra == 'cpu'
+#     huggingface-hub ; extra == 'hub'
+#
+# Both are therefore listed explicitly below. Missing huggingface-hub is
+# especially nasty: onnx_asr imports it INSIDE a function (resolver.py), so
+# nothing fails until the moment a model is resolved — the service starts,
+# answers /health, and only then reports it cannot load the model.
 onnxruntime>=1.20.0
+
+# Required to fetch model weights. See the note above.
+huggingface-hub>=0.30.2
 # onnxruntime-gpu>=1.20.0   ; Windows/Linux + NVIDIA only
 
 # NO VAD PACKAGE HERE, DELIBERATELY.
