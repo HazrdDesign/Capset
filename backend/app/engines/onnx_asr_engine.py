@@ -156,8 +156,21 @@ class OnnxAsrEngine:
                 "— model weights could not be downloaded"
             )
 
+        # hf_xet accelerates the model download. Its absence is NOT a failure:
+        # huggingface_hub falls back to plain HTTP with a warning. It is
+        # reported so a bundle that quietly lost it is visible in CI output
+        # rather than showing up as "the download feels slow" months later.
+        try:
+            import hf_xet  # noqa: F401
+            transfer = "xet"
+        except Exception:
+            transfer = "http (hf_xet not bundled; downloads will be slower)"
+
         providers = ", ".join(onnxruntime.get_available_providers())
-        return True, f"onnxruntime {onnxruntime.__version__}; providers: {providers}"
+        return True, (
+            f"onnxruntime {onnxruntime.__version__}; providers: {providers}; "
+            f"model transfer: {transfer}"
+        )
 
     def describe(self) -> dict:
         return {

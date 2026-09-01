@@ -45,8 +45,20 @@ datas = []
 # huggingface_hub is imported inside functions in onnx_asr's resolver, so
 # static analysis never sees it. v0.1.4 shipped without it and failed at
 # model resolution — after starting cleanly and passing the smoke test.
-for module in ("onnx_asr", "onnxruntime", "huggingface_hub"):
-    mod_datas, mod_binaries, mod_hidden = collect_all(module)
+# hf_xet is one layer deeper and the same shape again: huggingface_hub
+# declares it as a base dependency on every 64-bit platform, but imports it
+# INSIDE a function (file_download.xet_get) behind a try/except, so static
+# analysis never sees it. It ships a compiled Rust extension. Missing it is
+# not fatal -- huggingface_hub falls back to plain HTTP with a warning -- but
+# the fallback is a slower model download, and "quietly slower" is the kind of
+# thing nobody ever tracks down.
+for module in ("onnx_asr", "onnxruntime", "huggingface_hub", "hf_xet"):
+    try:
+        mod_datas, mod_binaries, mod_hidden = collect_all(module)
+    except Exception:
+        # hf_xet is absent on 32-bit and unusual architectures. The others
+        # failing would break the build later and more loudly, which is right.
+        continue
     datas += mod_datas
     binaries += mod_binaries
     hiddenimports += mod_hidden
