@@ -396,3 +396,114 @@ test("an unsupported animator property is skipped, not fatal", () => {
   });
   assert.strictEqual(result.created, 1);
 });
+
+// --- audio render -----------------------------------------------------------
+
+function withAudio(h, name = "voiceover") {
+  const layer = h.comp.layers.addText(name);
+  layer.hasAudio = true;
+  return layer;
+}
+
+function queueSomethingOfTheirOwn(h, name = "Final Delivery 4K") {
+  const comp = new h.fake.CompItem(name, 3840, 2160, 600, 24);
+  h.fake.project.items.push(comp);
+  return h.fake.project.renderQueue.items.add(comp);
+}
+
+test("rendering audio renders only our composition", () => {
+  // renderQueue.render() renders EVERY enabled item, not the one just added.
+  // Hitting Add Captions with a delivery queued would start that delivery:
+  // hours of machine time and an overwritten output file, from a button that
+  // says "Add Captions".
+  const h = load();
+  withAudio(h);
+  const theirs = queueSomethingOfTheirOwn(h);
+
+  h.call("capsetRenderAudio", { scope: "composition" });
+
+  const rendered = h.fake.project.renderQueue.rendered.map((i) => i.comp.name);
+  assert.deepStrictEqual(rendered, ["Comp 1"]);
+  assert.strictEqual(theirs.status, "queued", "the user's render was started");
+});
+
+test("the user's render queue is left exactly as it was", () => {
+  // Leaving their queue disabled is a silent failure they discover hours
+  // later, when the overnight render turns out not to have run.
+  const h = load();
+  withAudio(h);
+  const enabled = queueSomethingOfTheirOwn(h, "Delivery A");
+  const disabled = queueSomethingOfTheirOwn(h, "Delivery B");
+  disabled.render = false;
+
+  h.call("capsetRenderAudio", { scope: "composition" });
+
+  assert.strictEqual(enabled.render, true, "an enabled item was left disabled");
+  assert.strictEqual(disabled.render, false, "a disabled item was switched on");
+});
+
+test("the queue is restored even when the render fails", () => {
+  const h = load({ templates: ["Lossless", "High Quality"] });  // no audio template
+  withAudio(h);
+  const theirs = queueSomethingOfTheirOwn(h);
+
+  assert.throws(() => h.call("capsetRenderAudio", { scope: "composition" }),
+                /output module template/);
+  assert.strictEqual(theirs.render, true);
+});
+
+test("our render queue item is removed afterwards", () => {
+  // Otherwise every Add Captions leaves another dead entry in their queue.
+  const h = load();
+  withAudio(h);
+  h.call("capsetRenderAudio", { scope: "composition" });
+  assert.strictEqual(h.fake.project.renderQueue.numItems, 0);
+});
+
+test("an AIFF-only install still renders", () => {
+  // A stock After Effects has "AIFF 48kHz" and may have no WAV template at
+  // all, so AIFF is a likely path rather than an edge case.
+  const h = load({ templates: ["Lossless", "AIFF 48kHz"] });
+  withAudio(h);
+  const result = h.call("capsetRenderAudio", { scope: "composition" });
+  assert.strictEqual(result.template, "AIFF 48kHz");
+  assert.match(result.path, /\.aif$/);
+});
+
+test("no audio template at all is explained, not swallowed", () => {
+  const h = load({ templates: ["Lossless", "High Quality"] });
+  withAudio(h);
+  assert.throws(() => h.call("capsetRenderAudio", { scope: "composition" }),
+                /set Format to WAV or AIFF/);
+});
+
+test("a composition with no audible layer says so", () => {
+  const h = load();
+  h.comp.layers.addText("just a title");
+  assert.throws(() => h.call("capsetRenderAudio", { scope: "composition" }),
+                /No audible audio/);
+});
+
+test("the work area is restored after a full-composition render", () => {
+  // Silently moving the user's work area would be rude and hard to notice.
+  const h = load();
+  withAudio(h);
+  h.comp.workAreaStart = 4;
+  h.comp.workAreaDuration = 6;
+
+  h.call("capsetRenderAudio", { scope: "composition" });
+
+  assert.strictEqual(h.comp.workAreaStart, 4);
+  assert.strictEqual(h.comp.workAreaDuration, 6);
+});
+
+test("an in-to-out render reports the work area's bounds", () => {
+  const h = load();
+  withAudio(h);
+  h.comp.workAreaStart = 4;
+  h.comp.workAreaDuration = 6;
+
+  const result = h.call("capsetRenderAudio", { scope: "inout" });
+  assert.strictEqual(result.start, 4);
+  assert.strictEqual(result.duration, 6);
+});

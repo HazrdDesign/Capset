@@ -19,6 +19,35 @@ const fake = require("./fake-ae.js");
 
 const JSX_PATH = path.join(__dirname, "..", "jsx", "capset.jsx");
 
+/**
+ * ExtendScript's File, backed by the set of paths the fake render queue
+ * "wrote". `exists` is the property the render path branches on, so it has to
+ * reflect what the render actually produced rather than always answering yes.
+ */
+function makeFile() {
+  function File(fsName) {
+    if (!(this instanceof File)) return new File(fsName);
+    this.fsName = String(fsName);
+  }
+  Object.defineProperty(File.prototype, "exists", {
+    get() { return fake.writtenFiles.has(this.fsName); }
+  });
+  File.prototype.open = function () { return false; };
+  File.prototype.read = function () { return ""; };
+  File.prototype.close = function () {};
+  return File;
+}
+
+function makeFolder() {
+  function Folder(fsName) {
+    if (!(this instanceof Folder)) return new Folder(fsName);
+    this.fsName = String(fsName || "/tmp");
+  }
+  Folder.temp = { fsName: "/tmp" };
+  Folder.fs = "Windows";
+  return Folder;
+}
+
 function load(options = {}) {
   const comp = fake.reset(options);
   const source = fs.readFileSync(JSX_PATH, "utf8")
@@ -35,8 +64,8 @@ function load(options = {}) {
     JSON, Math, Date, String, Number, Array, Object, Error, RegExp, isNaN, parseInt, parseFloat,
     // ExtendScript globals the script probes. Overridable per test.
     $: options.$ || { os: "Windows", getenv: () => null, writeln: () => {} },
-    File: options.File || function File() { return { exists: false }; },
-    Folder: options.Folder || function Folder() { return { fsName: "/tmp" }; }
+    File: options.File || makeFile(),
+    Folder: options.Folder || makeFolder()
   };
   vm.createContext(sandbox);
   vm.runInContext(source, sandbox, { filename: "capset.jsx" });

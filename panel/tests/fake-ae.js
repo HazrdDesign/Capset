@@ -288,6 +288,83 @@ class LayerCollection {
   }
 }
 
+// --- render queue -----------------------------------------------------------
+
+/** Templates a stock After Effects install offers for an audio-only render. */
+const DEFAULT_TEMPLATES = [
+  "Lossless", "High Quality", "AIFF 48kHz", "Alpha Only", "Multi-Machine Sequence"
+];
+
+class OutputModule {
+  constructor(item, templates) {
+    this.item = item;
+    this.templates = templates.slice();
+    this.applied = null;
+    this.file = null;
+  }
+  applyTemplate(name) {
+    if (this.templates.indexOf(name) === -1) {
+      throw new Error("no output module template named " + name);
+    }
+    this.applied = name;
+  }
+}
+
+class RenderQueueItem {
+  constructor(queue, comp, templates) {
+    this.queue = queue;
+    this.comp = comp;
+    this.render = true;
+    this.status = "queued";
+    this._modules = [new OutputModule(this, templates)];
+  }
+  outputModule(i) {
+    const found = this._modules[i - 1];
+    if (!found) throw new Error("no output module " + i);
+    return found;
+  }
+  remove() {
+    const i = this.queue._items.indexOf(this);
+    if (i !== -1) this.queue._items.splice(i, 1);
+  }
+}
+
+class RenderQueue {
+  constructor(options = {}) {
+    this._items = [];
+    this._templates = options.templates || DEFAULT_TEMPLATES;
+    // Every item render() actually rendered, in order — the whole point of
+    // the queue fake, since renderQueue.render() renders EVERYTHING enabled.
+    this.rendered = [];
+    this.items = {
+      add: (comp) => {
+        const item = new RenderQueueItem(this, comp, this._templates);
+        this._items.push(item);
+        return item;
+      }
+    };
+    Object.defineProperty(this.items, "length", { get: () => this._items.length });
+  }
+  get numItems() { return this._items.length; }
+  item(i) {
+    const found = this._items[i - 1];
+    if (!found) throw new Error("no render queue item " + i);
+    return found;
+  }
+  render() {
+    this._items.forEach((item) => {
+      if (!item.render) return;
+      this.rendered.push(item);
+      item.status = "done";
+      const om = item._modules[0];
+      if (om.file) writtenFiles.add(om.file.fsName);
+    });
+  }
+}
+
+/** Files the fake render queue produced, so File.exists can answer. */
+const writtenFiles = new Set();
+
 // --- project ----------------------------------------------------------------
 
 class CompItem {
@@ -339,9 +416,11 @@ function reset(options = {}) {
     options.width || 1920, options.height || 1080,
     options.duration || 30, options.frameRate || 30
   );
+  writtenFiles.clear();
   project = {
     items: [comp],
     activeItem: comp,
+    renderQueue: new RenderQueue({ templates: options.templates }),
     expressionEngine: options.expressionEngine || "javascript-1.0",
     numItems: 1,
     item(i) { return project.items[i - 1]; }
@@ -352,7 +431,8 @@ function reset(options = {}) {
 }
 
 module.exports = {
-  reset, app, commandLog,
+  reset, app, commandLog, writtenFiles,
+  RenderQueue, RenderQueueItem, OutputModule, DEFAULT_TEMPLATES,
   get project() { return project; },
   CompItem, TextLayer, AVLayer, ShapeLayer, Layer,
   Property, PropertyGroup, TextDocument,

@@ -394,6 +394,50 @@ function capsetFindAudioTemplate(outputModule) {
 }
 
 /**
+ * Disable every other queued item so render() renders only ours.
+ *
+ * renderQueue.render() renders EVERY item whose render flag is set, not the
+ * one you just added. Without this, hitting Add Captions while the user had
+ * a delivery queued would start that delivery: hours of machine time, and
+ * their output file overwritten, from a button that says "Add Captions".
+ *
+ * Returns the items that were switched off, for the caller to restore.
+ */
+function capsetSuspendQueue(ourItem) {
+    var suspended = [];
+    var queue;
+    try {
+        queue = app.project.renderQueue;
+    } catch (e) {
+        return suspended;
+    }
+    for (var i = 1; i <= queue.numItems; i++) {
+        var queued;
+        try {
+            queued = queue.item(i);
+        } catch (e) {
+            continue;
+        }
+        if (queued === ourItem) continue;
+        try {
+            // Items already rendered refuse the assignment; that is fine,
+            // they will not render again anyway.
+            if (queued.render) {
+                queued.render = false;
+                suspended.push(queued);
+            }
+        } catch (e) {}
+    }
+    return suspended;
+}
+
+function capsetResumeQueue(suspended) {
+    for (var i = 0; i < suspended.length; i++) {
+        try { suspended[i].render = true; } catch (e) {}
+    }
+}
+
+/**
  * @param payloadJson {scope: "composition"|"inout"}
  * @returns {path, start, duration, layers}
  */
@@ -403,6 +447,7 @@ function capsetRenderAudio(payloadJson) {
     var savedStart = null;
     var savedDuration = null;
     var item = null;
+    var suspended = [];
     try {
         var payload = JSON.parse(payloadJson || "{}");
         comp = capsetActiveComp();
@@ -454,6 +499,8 @@ function capsetRenderAudio(payloadJson) {
         );
         om.file = target;
 
+        // Only ours. See capsetSuspendQueue.
+        suspended = capsetSuspendQueue(item);
         app.project.renderQueue.render();
 
         // AE appends its own extension when the template disagrees with the
@@ -485,6 +532,10 @@ function capsetRenderAudio(payloadJson) {
     } catch (e) {
         return capsetErr(e.message);
     } finally {
+        // Restore before anything else: leaving a user's queue disabled is a
+        // silent failure they would discover hours later, when the render
+        // they set going overnight turns out not to have run.
+        capsetResumeQueue(suspended);
         if (item !== null) {
             try { item.remove(); } catch (e) {}
         }

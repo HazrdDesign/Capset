@@ -69,22 +69,50 @@
 
   // --- ExtendScript bridge -------------------------------------------------
 
-  function host(call) {
+  // evalScript's callback is not guaranteed to fire. If After Effects puts up
+  // a modal dialog, or the host script throws somewhere ExtendScript cannot
+  // report, the promise never settles — the panel stays disabled with a
+  // spinner and the only way out is closing and reopening it. A timeout turns
+  // that into a message the user can act on.
+  //
+  // Generous on purpose: rendering audio from a long composition is legitimately
+  // slow, and cutting off work that was going to succeed is the worse failure.
+  var HOST_TIMEOUT_MS = 10 * 60 * 1000;
+
+  function host(call, timeoutMs) {
     return new Promise(function (resolve, reject) {
+      var settled = false;
+      var timer = setTimeout(function () {
+        if (settled) return;
+        settled = true;
+        reject(new Error(
+          "After Effects did not respond. If a dialog is open in After " +
+          "Effects, close it and try again."
+        ));
+      }, timeoutMs || HOST_TIMEOUT_MS);
+
+      function finish(fn, value) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        fn(value);
+      }
+
       cs.evalScript(call, function (raw) {
         if (raw === "EvalScript error.") {
-          reject(new Error("ExtendScript failed. Check the AE console."));
+          finish(reject, new Error("ExtendScript failed. Check the AE console."));
           return;
         }
         var parsed;
         try {
           parsed = JSON.parse(raw);
         } catch (e) {
-          reject(new Error("Unexpected host response: " + String(raw).slice(0, 200)));
+          finish(reject, new Error(
+            "Unexpected host response: " + String(raw).slice(0, 200)));
           return;
         }
-        if (!parsed.ok) reject(new Error(parsed.error || "Host error"));
-        else resolve(parsed.data);
+        if (!parsed.ok) finish(reject, new Error(parsed.error || "Host error"));
+        else finish(resolve, parsed.data);
       });
     });
   }
