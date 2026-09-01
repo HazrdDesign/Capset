@@ -61,7 +61,13 @@ function load(options = {}) {
     ShapeLayer: fake.ShapeLayer,
     KeyframeEase: fake.KeyframeEase,
     ParagraphJustification: fake.ParagraphJustification,
-    JSON, Math, Date, String, Number, Array, Object, Error, RegExp, isNaN, parseInt, parseFloat,
+    // Intrinsics (JSON, Array, Math...) are DELIBERATELY not injected. The vm
+    // context has its own, and injecting the host's would break `instanceof
+    // Array` for arrays the script builds itself — the branch that decides
+    // whether a property is 2D. ExtendScript has one realm; so must this.
+    // The cost is that values crossing back out are sandbox-realm objects,
+    // which is what plain() in the tests is for.
+    //
     // ExtendScript globals the script probes. Overridable per test.
     $: options.$ || { os: "Windows", getenv: () => null, writeln: () => {} },
     File: options.File || makeFile(),

@@ -507,3 +507,97 @@ test("an in-to-out render reports the work area's bounds", () => {
   assert.strictEqual(result.start, 4);
   assert.strictEqual(result.duration, 6);
 });
+
+// --- overshoot --------------------------------------------------------------
+//
+// `overshoot` sat in every animation definition and nothing read it, so the
+// library's "Pop In" and "Bounce" were plain interpolations. It is the whole
+// difference between a CapCut-style punch and a fade.
+
+function animate(h, animation, duration = 2) {
+  h.call("capsetBuildCaptions", {
+    captions: [{
+      text: "word", start: 0, end: duration,
+      timings: { inStart: 0, inDuration: 0.4, outStart: duration - 0.3, outDuration: 0.3 }
+    }],
+    style: {}, animation, options: {}
+  });
+  const layer = captionLayers(h.comp)[0];
+  const animators = layer.property("ADBE Text Properties").property("ADBE Text Animators");
+  return { layer, animators };
+}
+
+function firstAnimatorProperty(animators) {
+  return animators.property(1).property("ADBE Text Animator Properties").property(1);
+}
+
+test("an overshooting property passes its target before settling", () => {
+  const h = load();
+  const { animators } = animate(h, {
+    id: "pop",
+    in: { properties: [{ type: "scale", from: [40, 40], to: [100, 100], overshoot: 1.2 }] }
+  });
+  const prop = firstAnimatorProperty(animators);
+  assert.strictEqual(prop.numKeys, 3, "overshoot needs a peak key between the two ends");
+
+  const peak = plain(prop.keyValue(2));
+  const settle = plain(prop.keyValue(3));
+  assert.ok(peak[0] > settle[0], "the peak does not exceed the target");
+  assert.deepStrictEqual(settle.slice(0, 2), [100, 100]);
+});
+
+test("overshoot is measured against travel, so it works towards zero", () => {
+  // Scaling the TARGET would do nothing whenever the target is zero — which
+  // is every position animation, the ones that most need the bounce.
+  const h = load();
+  const { animators } = animate(h, {
+    id: "bounce",
+    in: { properties: [{ type: "position", from: [0, -80], to: [0, 0], overshoot: 1.25 }] }
+  });
+  const prop = firstAnimatorProperty(animators);
+  const peak = plain(prop.keyValue(2));
+  assert.strictEqual(peak[1], 20, "travelled -80 -> 0 should overshoot to +20");
+});
+
+test("no overshoot means no extra keyframe", () => {
+  const h = load();
+  const { animators } = animate(h, {
+    id: "plain",
+    in: { properties: [{ type: "opacity", from: 0, to: 100 }] }
+  });
+  assert.strictEqual(firstAnimatorProperty(animators).numKeys, 2);
+});
+
+test("an overshoot settle is eased, not left linear", () => {
+  // Easing the middle key instead would leave the settle linear, which reads
+  // as a stutter at the end of the punch.
+  const h = load();
+  const { animators } = animate(h, {
+    id: "pop",
+    in: { properties: [{ type: "scale", from: [0, 0], to: [100, 100], overshoot: 1.15 }] }
+  });
+  const prop = firstAnimatorProperty(animators);
+  assert.ok(prop.keys[0].easeIn, "the first key was not eased");
+  assert.ok(prop.keys[2].easeIn, "the settle key was not eased");
+});
+
+test("colour and tracking are animatable", () => {
+  // Colour is what a karaoke or Hormozi style is made of; without it the
+  // library can only ever offer motion.
+  const h = load();
+  const { animators } = animate(h, {
+    id: "karaoke",
+    in: {
+      properties: [
+        { type: "fillColor", from: [1, 1, 1], to: [1, 0.85, 0] },
+        { type: "tracking", from: -8, to: 0 }
+      ]
+    }
+  });
+  const props = animators.property(1).property("ADBE Text Animator Properties");
+  assert.strictEqual(props.numProperties, 2);
+  assert.deepStrictEqual(
+    [props.property(1).matchName, props.property(2).matchName],
+    ["ADBE Text Fill Color", "ADBE Text Tracking Amount"]
+  );
+});

@@ -1,101 +1,111 @@
 {
-  "$comment": "Animation library. Definitions are data, not .ffx binaries: .ffx cannot be generated programmatically, bakes fixed keyframes that cannot adapt to caption duration, and is near-impossible to cleanly remove when swapping. Every animation here is generated procedurally by jsx/animators.jsx under the Capset__ prefix, so replacing one is a clean teardown and rebuild. See docs/ARCHITECTURE.md section 3.",
-  "version": 1,
+  "$comment": "Animation library. Definitions are data, not .ffx binaries: .ffx cannot be generated programmatically, bakes fixed keyframes that cannot adapt to caption duration, and is near-impossible to remove cleanly when swapping. Every animation is generated procedurally under the Capset__ prefix, so replacing one is an exact teardown and rebuild. See docs/ARCHITECTURE.md section 3. The token \"$textColor\" resolves to the layer's own fill colour at apply time, so a colour animation settles on the colour the user chose rather than overwriting it. ease.in and ease.out are After Effects keyframe INFLUENCE percentages, applied to the incoming and outgoing side of every key in the phase. Higher influence means a more gradual change at that side, so an entrance that punches has a high in (decelerate into place) and a low out (leave the start pose immediately); an exit is the mirror.",
+  "version": 2,
   "animations": [
     {
-      "id": "fade",
-      "name": "Fade",
-      "description": "Simple opacity fade. The safe default.",
-      "preview": "previews/fade.mp4",
+      "id": "word-pop",
+      "name": "Word Pop",
+      "description": "Hard scale punch, no fade. The short-form default — reads instantly at speed.",
+      "tags": ["capcut", "tiktok", "word-by-word"],
       "basedOn": "characters",
-      "in": { "fraction": 0.25, "min": 0.10, "max": 0.40,
-              "properties": [{ "type": "opacity", "from": 0, "to": 100 }],
-              "ease": { "in": 33, "out": 66 } },
-      "out": { "fraction": 0.20, "min": 0.08, "max": 0.30,
-               "properties": [{ "type": "opacity", "from": 100, "to": 0 }],
-               "ease": { "in": 66, "out": 33 } }
-    },
-    {
-      "id": "pop-in",
-      "name": "Pop In",
-      "description": "Scales up past 100% and settles. The CapCut staple.",
-      "preview": "previews/pop-in.mp4",
-      "basedOn": "characters",
-      "in": { "fraction": 0.25, "min": 0.12, "max": 0.45,
+      "in": { "fraction": 0.30, "min": 0.08, "max": 0.22,
               "properties": [
-                { "type": "scale", "from": [40, 40], "to": [100, 100], "overshoot": 1.12 },
+                { "type": "scale", "from": [58, 58], "to": [100, 100], "overshoot": 1.14 },
                 { "type": "opacity", "from": 0, "to": 100 }
               ],
-              "ease": { "in": 20, "out": 80 } },
-      "out": { "fraction": 0.18, "min": 0.08, "max": 0.28,
-               "properties": [{ "type": "opacity", "from": 100, "to": 0 }],
-               "ease": { "in": 70, "out": 30 } }
+              "ease": { "in": 72, "out": 8 } }
     },
     {
-      "id": "rise",
-      "name": "Rise",
-      "description": "Words lift into place from below with a soft fade.",
-      "preview": "previews/rise.mp4",
+      "id": "hormozi",
+      "name": "Hormozi",
+      "description": "Punches in from an accent colour and settles into yours, with a rotation kick.",
+      "tags": ["capcut", "tiktok", "word-by-word", "colour"],
+      "basedOn": "characters",
+      "in": { "fraction": 0.32, "min": 0.09, "max": 0.26,
+              "properties": [
+                { "type": "scale", "from": [34, 34], "to": [100, 100], "overshoot": 1.22 },
+                { "type": "rotation", "from": -7, "to": 0, "overshoot": 1.3 },
+                { "type": "fillColor", "from": [1, 0.84, 0.16], "to": "$textColor" },
+                { "type": "opacity", "from": 0, "to": 100 }
+              ],
+              "ease": { "in": 75, "out": 8 } }
+    },
+    {
+      "id": "karaoke",
+      "name": "Karaoke Fill",
+      "description": "Colour sweeps word by word across the caption as it is spoken.",
+      "tags": ["karaoke", "phrase", "colour"],
       "basedOn": "words",
-      "in": { "fraction": 0.28, "min": 0.12, "max": 0.45,
+      "spansLayer": true,
+      "in": { "fraction": 1.0, "min": 0.30, "max": 30.0,
               "properties": [
-                { "type": "position", "from": [0, 60], "to": [0, 0] },
+                { "type": "fillColor", "from": [0.42, 1, 0.44], "to": "$textColor" }
+              ],
+              "ease": { "in": 0, "out": 0 } }
+    },
+    {
+      "id": "impact",
+      "name": "Impact",
+      "description": "Slams in oversized and snaps to size through a blur. Heavy hits.",
+      "tags": ["capcut", "tiktok", "word-by-word"],
+      "basedOn": "characters",
+      "in": { "fraction": 0.28, "min": 0.09, "max": 0.24,
+              "properties": [
+                { "type": "scale", "from": [168, 168], "to": [100, 100], "overshoot": 1.06 },
+                { "type": "blur", "from": [46, 46], "to": [0, 0] },
                 { "type": "opacity", "from": 0, "to": 100 }
               ],
-              "ease": { "in": 15, "out": 85 } },
-      "out": { "fraction": 0.18, "min": 0.08, "max": 0.28,
+              "ease": { "in": 78, "out": 8 } }
+    },
+    {
+      "id": "bounce-up",
+      "name": "Bounce Up",
+      "description": "Springs up from below and overshoots before settling.",
+      "tags": ["capcut", "phrase", "word-by-word"],
+      "basedOn": "words",
+      "in": { "fraction": 0.34, "min": 0.14, "max": 0.40,
+              "properties": [
+                { "type": "position", "from": [0, 96], "to": [0, 0], "overshoot": 1.32 },
+                { "type": "scale", "from": [82, 82], "to": [100, 100], "overshoot": 1.08 },
+                { "type": "opacity", "from": 0, "to": 100 }
+              ],
+              "ease": { "in": 70, "out": 8 } },
+      "out": { "fraction": 0.16, "min": 0.07, "max": 0.22,
                "properties": [
-                 { "type": "position", "from": [0, 0], "to": [0, -40] },
+                 { "type": "scale", "from": [100, 100], "to": [88, 88] },
                  { "type": "opacity", "from": 100, "to": 0 }
                ],
-               "ease": { "in": 80, "out": 20 } }
+               "ease": { "in": 12, "out": 78 } }
+    },
+    {
+      "id": "tracking-in",
+      "name": "Tighten",
+      "description": "Letters draw together into place. Clean, editorial, not shouty.",
+      "tags": ["phrase", "editorial"],
+      "basedOn": "characters",
+      "in": { "fraction": 0.32, "min": 0.14, "max": 0.42,
+              "properties": [
+                { "type": "tracking", "from": 26, "to": 0 },
+                { "type": "opacity", "from": 0, "to": 100 }
+              ],
+              "ease": { "in": 62, "out": 8 } }
     },
     {
       "id": "typewriter",
       "name": "Typewriter",
-      "description": "Characters appear one at a time.",
-      "preview": "previews/typewriter.mp4",
+      "description": "Characters appear one at a time, hard cut, no fade.",
+      "tags": ["phrase"],
       "basedOn": "characters",
-      "selector": "range",
-      "in": { "fraction": 0.45, "min": 0.20, "max": 0.80,
+      "in": { "fraction": 0.55, "min": 0.20, "max": 1.20,
               "properties": [{ "type": "opacity", "from": 0, "to": 100 }],
-              "ease": { "in": 0, "out": 0 } },
-      "out": { "fraction": 0.15, "min": 0.06, "max": 0.25,
-               "properties": [{ "type": "opacity", "from": 100, "to": 0 }],
-               "ease": { "in": 50, "out": 50 } }
+              "ease": { "in": 0, "out": 0 } }
     },
     {
-      "id": "slide-left",
-      "name": "Slide In",
-      "description": "Slides in horizontally with a blur trail.",
-      "preview": "previews/slide-left.mp4",
-      "basedOn": "words",
-      "in": { "fraction": 0.26, "min": 0.12, "max": 0.42,
-              "properties": [
-                { "type": "position", "from": [-120, 0], "to": [0, 0] },
-                { "type": "blur", "from": [40, 0], "to": [0, 0] },
-                { "type": "opacity", "from": 0, "to": 100 }
-              ],
-              "ease": { "in": 10, "out": 90 } },
-      "out": { "fraction": 0.18, "min": 0.08, "max": 0.28,
-               "properties": [{ "type": "opacity", "from": 100, "to": 0 }],
-               "ease": { "in": 70, "out": 30 } }
-    },
-    {
-      "id": "bounce",
-      "name": "Bounce",
-      "description": "Drops in and overshoots. Energetic; good for shorts.",
-      "preview": "previews/bounce.mp4",
-      "basedOn": "words",
-      "in": { "fraction": 0.30, "min": 0.14, "max": 0.48,
-              "properties": [
-                { "type": "position", "from": [0, -80], "to": [0, 0], "overshoot": 1.25 },
-                { "type": "opacity", "from": 0, "to": 100 }
-              ],
-              "ease": { "in": 5, "out": 95 } },
-      "out": { "fraction": 0.16, "min": 0.07, "max": 0.26,
-               "properties": [{ "type": "opacity", "from": 100, "to": 0 }],
-               "ease": { "in": 70, "out": 30 } }
+      "id": "none",
+      "name": "No Animation",
+      "description": "Captions cut in and out on their timings. Nothing is applied.",
+      "tags": ["off"],
+      "basedOn": "characters"
     }
   ]
 }

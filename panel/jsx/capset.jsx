@@ -167,7 +167,14 @@ var CAPSET_PROPERTY_MATCH = {
     scale: "ADBE Text Scale 3D",
     rotation: "ADBE Text Rotation",
     opacity: "ADBE Text Opacity",
-    blur: "ADBE Text Blur"
+    blur: "ADBE Text Blur",
+    // Colour and tracking are what separate a CapCut-style caption from a
+    // generic fade. addProperty is wrapped in try/catch below, so a host that
+    // rejects one of these skips that property rather than failing the build.
+    fillColor: "ADBE Text Fill Color",
+    strokeColor: "ADBE Text Stroke Color",
+    strokeWidth: "ADBE Text Stroke Width",
+    tracking: "ADBE Text Tracking Amount"
 };
 
 var CAPSET_BASED_ON = {
@@ -193,12 +200,55 @@ function capsetRemoveAnimators(layer) {
     return removed;
 }
 
-function capsetToValue(spec, key) {
+/**
+ * Read a from/to value out of an animation definition.
+ *
+ * Understands the token "$textColor", which resolves to the layer's OWN fill
+ * colour. A colour flash has to settle on the colour the user actually chose:
+ * hardcoding white in the definition would quietly overwrite the look they
+ * dialled in through the Character panel, which is the one thing the styling
+ * design is careful never to do.
+ */
+function capsetToValue(spec, key, layer) {
     var raw = spec[key];
+    if (raw === "$textColor") {
+        try {
+            var colour = layer.property("Source Text").value.fillColor;
+            if (colour && colour.length >= 3) {
+                return [colour[0], colour[1], colour[2]];
+            }
+        } catch (e) {}
+        return [1, 1, 1];   // white: the overwhelmingly common caption colour
+    }
     if (raw instanceof Array) {
         return raw.length === 2 ? [raw[0], raw[1], 0] : raw;
     }
     return raw;
+}
+
+/**
+ * The value a property passes through before settling.
+ *
+ * Overshoot is measured against the TRAVEL, not the target: scaling 40 -> 100
+ * with overshoot 1.12 peaks at 107.2, and sliding -80 -> 0 with 1.25 peaks at
+ * +20 before coming back. Multiplying the target instead would do nothing at
+ * all whenever the target is zero, which is every position animation.
+ *
+ * This is what makes a caption feel like CapCut rather than a fade. The field
+ * was in the animation definitions from the start and nothing read it, so
+ * every "pop" and "bounce" in the library was a plain interpolation.
+ */
+function capsetOvershootValue(from, to, overshoot) {
+    var extra = overshoot - 1;
+    if (to instanceof Array) {
+        var peaked = [];
+        for (var i = 0; i < to.length; i++) {
+            var start = (from instanceof Array) ? from[i] : from;
+            peaked.push(to[i] + (to[i] - start) * extra);
+        }
+        return peaked;
+    }
+    return to + (to - from) * extra;
 }
 
 /**
@@ -252,10 +302,20 @@ function capsetAddPhase(layer, name, phase, startTime, duration, basedOn) {
             continue; // property unsupported on this host; skip, do not abort
         }
 
-        var from = capsetToValue(spec, "from");
-        var to = capsetToValue(spec, "to");
+        var from = capsetToValue(spec, "from", layer);
+        var to = capsetToValue(spec, "to", layer);
 
         prop.setValueAtTime(startTime, from);
+        // The peak sits at 70% of the phase: far enough in to read as a punch,
+        // late enough that the settle is quick rather than a slow drift back.
+        var overshoot = Number(spec.overshoot);
+        var overshot = overshoot > 1 && duration > 0;
+        if (overshot) {
+            prop.setValueAtTime(
+                startTime + duration * 0.7,
+                capsetOvershootValue(from, to, overshoot)
+            );
+        }
         prop.setValueAtTime(startTime + duration, to);
 
         // Ease both keys. KeyframeEase(speed, influence); influence is the
@@ -263,6 +323,10 @@ function capsetAddPhase(layer, name, phase, startTime, duration, basedOn) {
         try {
             var n = prop.numKeys;
             var dims = (from instanceof Array) ? from.length : 1;
+            // With an overshoot key in the middle, ease the FIRST and LAST
+            // keys; easing n-1 would land on the peak and leave the settle
+            // linear, which reads as a stutter at the end of the punch.
+            var firstKey = n - (overshot ? 2 : 1);
             var inEase = [];
             var outEase = [];
             for (var d = 0; d < dims; d++) {
@@ -270,10 +334,10 @@ function capsetAddPhase(layer, name, phase, startTime, duration, basedOn) {
                 outEase.push(new KeyframeEase(0, easeOut));
             }
             if (dims === 1) {
-                prop.setTemporalEaseAtKey(n - 1, [inEase[0]], [outEase[0]]);
+                prop.setTemporalEaseAtKey(firstKey, [inEase[0]], [outEase[0]]);
                 prop.setTemporalEaseAtKey(n, [inEase[0]], [outEase[0]]);
             } else {
-                prop.setTemporalEaseAtKey(n - 1, inEase, outEase);
+                prop.setTemporalEaseAtKey(firstKey, inEase, outEase);
                 prop.setTemporalEaseAtKey(n, inEase, outEase);
             }
         } catch (e) {

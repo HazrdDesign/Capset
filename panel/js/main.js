@@ -21,6 +21,7 @@
     animations: [],
     selectedAnimation: null,
     compInfo: null,
+    selectedAnimationId: null,
     capturedStyle: null,
     busy: false
   };
@@ -282,9 +283,121 @@
       });
   }
 
+  // --- live previews -------------------------------------------------------
+  //
+  // One requestAnimationFrame loop for the whole grid, not one per card. Only
+  // cards that are hovered or selected are sampled, and the loop stops
+  // entirely when none are — a panel sitting idle in a corner of After
+  // Effects must not burn a core rendering animations nobody is looking at.
+
+  var PREVIEW_TEXT = "make it pop";
+  var PREVIEW_DURATION = 1.5;     // seconds of caption
+  var PREVIEW_GAP = 0.45;         // pause before looping, so the punch reads
+
+  var previews = [];              // {animation, units[], timings, active}
+  var previewFrame = null;
+
+  function previewTimings(animation) {
+    var spec = { hasOut: !!(animation && animation.out) };
+    if (animation && animation.spansLayer) {
+      spec.maxInFraction = 1;
+      spec.maxTotalFraction = 1;
+    }
+    if (animation && animation["in"]) {
+      spec.inFraction = animation["in"].fraction;
+      spec.inMin = animation["in"].min;
+      spec.inMax = animation["in"].max;
+    }
+    if (animation && animation.out) {
+      spec.outFraction = animation.out.fraction;
+      spec.outMin = animation.out.min;
+      spec.outMax = animation.out.max;
+    }
+    return timing.computeTimings(PREVIEW_DURATION, spec);
+  }
+
+  function drawPreviews(now) {
+    previewFrame = null;
+    var t = (now / 1000) % (PREVIEW_DURATION + PREVIEW_GAP);
+    var running = false;
+
+    for (var i = 0; i < previews.length; i++) {
+      var item = previews[i];
+      if (!item.active) continue;
+      running = true;
+      for (var u = 0; u < item.units.length; u++) {
+        var state = CapsetPreview.sampleUnit(
+          item.animation, item.timings, u, item.units.length,
+          Math.min(t, PREVIEW_DURATION)
+        );
+        var styles = CapsetPreview.stylesFor(state);
+        var el = item.units[u];
+        el.style.transform = styles.transform;
+        el.style.opacity = styles.opacity;
+        el.style.filter = styles.filter;
+        el.style.letterSpacing = styles.letterSpacing;
+        el.style.color = styles.color;
+      }
+    }
+    if (running) previewFrame = requestAnimationFrame(drawPreviews);
+  }
+
+  function startPreviews() {
+    if (previewFrame === null) previewFrame = requestAnimationFrame(drawPreviews);
+  }
+
+  function resetPreview(item) {
+    for (var u = 0; u < item.units.length; u++) {
+      var el = item.units[u];
+      el.style.transform = "";
+      el.style.opacity = "";
+      el.style.filter = "";
+      el.style.letterSpacing = "";
+      el.style.color = "";
+    }
+  }
+
+  function setPreviewActive(item, active) {
+    if (item.active === active) return;
+    item.active = active;
+    if (active) startPreviews();
+    else resetPreview(item);
+  }
+
+  function buildPreview(animation, thumb) {
+    var stage = document.createElement("div");
+    stage.className = "stage";
+    var units = [];
+    var text = animation.basedOn === "words"
+      ? PREVIEW_TEXT
+      : PREVIEW_TEXT.split(" ")[0];         // characters: one short word fits
+    var pieces = CapsetPreview.splitUnits(text, animation.basedOn);
+
+    pieces.forEach(function (piece, index) {
+      var span = document.createElement("span");
+      // A non-breaking space keeps word gaps while each unit stays its own
+      // element — a plain space between inline-blocks collapses.
+      span.textContent = piece;
+      stage.appendChild(span);
+      if (animation.basedOn === "words" && index < pieces.length - 1) {
+        stage.appendChild(document.createTextNode("\u00a0"));
+      }
+      units.push(span);
+    });
+    thumb.appendChild(stage);
+    return { animation: animation, units: units,
+             timings: previewTimings(animation), active: false };
+  }
+
   function renderAnimations() {
     var grid = $("animations");
     grid.innerHTML = "";
+    previews = [];
+    if (previewFrame !== null) {
+      cancelAnimationFrame(previewFrame);
+      previewFrame = null;
+    }
+
     state.animations.forEach(function (animation) {
       var card = document.createElement("div");
       card.className = "anim";
@@ -293,18 +406,22 @@
 
       var thumb = document.createElement("div");
       thumb.className = "thumb";
-      var video = document.createElement("video");
-      video.muted = true; video.loop = true; video.playsInline = true;
-      video.src = animation.preview;
-      video.addEventListener("error", function () {
-        thumb.textContent = "no preview";
-        if (video.parentNode) thumb.removeChild(video);
-      });
-      thumb.appendChild(video);
+      var item = null;
+      if (animation["in"] || animation.out) {
+        item = buildPreview(animation, thumb);
+        previews.push(item);
+      } else {
+        thumb.textContent = "—";
+      }
+
       card.addEventListener("mouseenter", function () {
-        if (video.parentNode) video.play().catch(function () {});
+        if (item) setPreviewActive(item, true);
       });
-      card.addEventListener("mouseleave", function () { video.pause(); });
+      card.addEventListener("mouseleave", function () {
+        if (item && animation.id !== state.selectedAnimationId) {
+          setPreviewActive(item, false);
+        }
+      });
 
       var label = document.createElement("div");
       label.className = "label";
@@ -319,17 +436,31 @@
 
   function selectAnimation(id) {
     state.selectedAnimation = null;
+    state.selectedAnimationId = id;
     state.animations.forEach(function (a) {
       if (a.id === id) state.selectedAnimation = a;
     });
     Array.prototype.forEach.call($("animations").children, function (card) {
       card.className = card.dataset.id === id ? "anim selected" : "anim";
     });
+    // The chosen animation keeps playing, so the user can see what they
+    // picked without holding the pointer over it. Everything else stops.
+    previews.forEach(function (item) {
+      setPreviewActive(item, item.animation.id === id);
+    });
   }
 
   function timingsFor(caption, animation) {
     var duration = caption.end - caption.start;
     var spec = { maxInFraction: Number($("resolve").value) / 100 };
+    // A karaoke fill is supposed to run the length of the caption — that IS
+    // the effect. The resolve-early cap exists so an entrance is not still
+    // moving when the word disappears, which is a different thing, so an
+    // animation that spans the layer opts out of it.
+    if (animation && animation.spansLayer) {
+      spec.maxInFraction = 1;
+      spec.maxTotalFraction = 1;
+    }
     if (animation && animation["in"]) {
       spec.inFraction = animation["in"].fraction;
       spec.inMin = animation["in"].min;

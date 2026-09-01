@@ -153,7 +153,9 @@ function makeTextAnimators() {
         {
           addable: [
             "ADBE Text Position 3D", "ADBE Text Scale 3D",
-            "ADBE Text Rotation", "ADBE Text Opacity", "ADBE Text Blur"
+            "ADBE Text Rotation", "ADBE Text Opacity", "ADBE Text Blur",
+            "ADBE Text Fill Color", "ADBE Text Stroke Color",
+            "ADBE Text Stroke Width", "ADBE Text Tracking Amount"
           ]
         }
       ));

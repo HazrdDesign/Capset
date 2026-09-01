@@ -146,14 +146,28 @@ override globally. Marker-driven preset systems cannot offer this.
 
 ## 4. Animation previews
 
-**Decision: pre-rendered video loops shipped with the plugin.** This is what
-Mister Horse and SonDuck do; there is no live-render-to-panel path in CEP.
+**Decision: the panel animates the previews itself, from the same JSON the
+host script applies.** See `panel/js/lib/preview.js`.
 
-CEP panels are Chromium, so a `<video muted loop>` grid with play-on-hover
-works directly. Preview assets are generated **from the procedural engine
-itself** via `aerender`, so adding an animation is: write the JSON → run the
-preview render script. No hand-authoring, and previews cannot drift out of
-sync with the real animation.
+The original decision here was pre-rendered video loops, the way Mister Horse
+and SonDuck do it, generated from the procedural engine via a render script.
+It was reversed after the fact that killed it turned up in review: the loops
+could only be produced by running a script inside After Effects, `*.mp4` is
+gitignored, and no build step produced them — so every shipped card read "no
+preview". A preview that exists only if someone remembers to render it is not
+a preview, and a manual render step before every release is a step that will
+eventually be skipped.
+
+CEP panels are Chromium, so sampling the definitions and driving DOM elements
+costs no build step, no assets and no download, and the preview cannot drift
+from the animation because it reads the same data. One `requestAnimationFrame`
+loop serves the whole grid and stops when nothing is hovered or selected, so
+an idle panel costs nothing.
+
+It is an approximation and is documented as one: keyframe influence becomes a
+cubic bezier, the range selector's sweep becomes a fixed stagger, and the text
+is the panel's font. It conveys punch, overshoot, direction, colour and
+stagger — what someone picking from a grid is actually choosing between.
 
 **On Essential Graphics:** the EGP authors `.mogrt` files for *Premiere*. It
 is not an in-AE reusable animation library and does not help here.
@@ -170,7 +184,7 @@ capset-setup.exe (Inno Setup, Windows) / Capset.pkg (macOS, signed + notarized)
 │   ├── CSXS/manifest.xml
 │   ├── index.html + panel JS
 │   ├── jsx/            (ExtendScript: layer generation, animators, rig)
-│   ├── animations/     (JSON definitions + preview .mp4 loops)
+│   ├── animations/     (JSON definitions; previews render live in the panel)
 │   └── assets/lib/asr/{windows,macos}/{cpu,gpu}/   ← Captioneer's layout
 ├── model weights     (Parakeet ONNX, quantized)
 └── ffmpeg.exe        (audio extraction from video; LGPL — attribute)
