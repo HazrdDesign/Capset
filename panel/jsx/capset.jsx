@@ -304,9 +304,16 @@ function capsetAudibleLayers(comp) {
 /**
  * Pick an output module template that produces uncompressed audio.
  *
- * Template names are NOT guessed. They differ by After Effects version and
- * by locale, so the available list is searched instead — WAV first, then
- * AIFF, then anything that mentions audio.
+ * A template MUST be used. The output module's Format property is read-only
+ * to scripting — setSettings() rejects it with "Invalid Value for key:
+ * <Format>. Property is read-only" — so applyTemplate is the only way to
+ * change what AE writes. Setting the file extension alone does not change
+ * the format.
+ *
+ * Names are searched rather than guessed, because they differ by After
+ * Effects version and locale. WAV is tried first, but note that AE's stock
+ * templates include "AIFF 48kHz" and may not include WAV at all, so AIFF is
+ * a likely outcome rather than an edge case. app/audio.py reads both.
  */
 function capsetFindAudioTemplate(outputModule) {
     var available;
@@ -377,8 +384,9 @@ function capsetRenderAudio(payloadJson) {
         if (!template) {
             throw new Error(
                 "No audio output module template was found in this copy of " +
-                "After Effects. Create one (Render Queue > Output Module > " +
-                "Format: WAV) and save it as a template named \"WAV\"."
+                "After Effects. Create one: open the Render Queue, click an " +
+                "Output Module, set Format to WAV or AIFF, then save it as a " +
+                "template with \"WAV\" or \"AIFF\" in the name."
             );
         }
         om.applyTemplate(template.name);

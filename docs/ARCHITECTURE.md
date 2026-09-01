@@ -216,12 +216,21 @@ produces, which suggests Captioneer renders from AE too.
 
 ### How the two risks are handled
 
-**Output module templates vary by version and locale.** They are not
-guessed. `capsetRenderAudio` enumerates `outputModule.templates` and searches
-it — WAV first, then AIFF, then anything matching "audio" — and fails with an
-instruction to create a template if none exists.
+**A template must be used; the format cannot be set directly.** The output
+module's `Format` property is **read-only to scripting** — `setSettings()`
+rejects it with *"Invalid Value for key: `<Format>`. Property is read-only"* —
+so `applyTemplate()` is the only programmatic way to change what AE writes.
+Setting the output filename's extension does not change the format.
 
-**AE may produce AIFF rather than WAV.** `app/audio.py` reads both directly.
+Template names are therefore searched rather than guessed, since they vary by
+version and locale: `capsetRenderAudio` enumerates `outputModule.templates`
+and matches WAV, then AIFF, then anything containing "audio".
+
+**AIFF is a likely outcome, not an edge case.** After Effects' stock output
+module templates include **"AIFF 48kHz"**, and WAV may not be present at all
+on a given install. This lines up with the project owner recalling Captioneer
+exporting an AIFF. `app/audio.py` reads both formats directly —
+**do not "simplify" the AIFF reader away.**
 Both are simple uncompressed IFF-style containers, so the reader is ~150
 lines of pure Python and numpy with no dependency. Notably it does **not**
 use the stdlib `aifc`, which was removed in Python 3.13 and would break the
