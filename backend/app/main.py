@@ -204,9 +204,13 @@ def _publish_port(port: int) -> None:
 
     Without this a fallback port is useless — the panel would keep asking
     8756 and conclude the service is down.
+
+    The panel reads this file through ExtendScript (capsetPortFile in
+    panel/jsx/capset.jsx), which resolves the same directory by hand. The
+    two must stay in step.
     """
     try:
-        path = logging_setup.log_dir().parent / "port"
+        path = logging_setup.data_dir() / config.PORT_FILE_NAME
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(str(port), encoding="utf-8")
         log.info("listening on %d (published to %s)", port, path)

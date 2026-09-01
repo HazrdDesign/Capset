@@ -136,7 +136,11 @@
       .then(function (res) { return res.json(); })
       .then(function (loaded) {
         config.updateManifestUrl = loaded.updateManifestUrl || null;
-        if (loaded.backendUrl) backend.baseUrl = loaded.backendUrl;
+        if (loaded.backendUrl) {
+          backend.baseUrl = loaded.backendUrl;
+          // An explicit URL is an override, so stop hunting for the service.
+          config.backendUrl = loaded.backendUrl;
+        }
       })
       .catch(function () {
         // Missing or malformed config is not fatal — defaults are fine.
@@ -145,18 +149,40 @@
 
   // --- backend health ------------------------------------------------------
 
+  /**
+   * Ask the host where the backend published its port.
+   *
+   * Panel JavaScript has no access to environment variables, so the path has
+   * to be resolved in ExtendScript. Any failure resolves to null and the
+   * default port is used — discovery is an optimisation, never a gate.
+   */
+  function publishedPort() {
+    return host("capsetBackendPort()").catch(function () { return null; });
+  }
+
+  function describeHealth(health) {
+    if (health.status === "unreachable") {
+      setStatus("error", "Service not running. Start the Capset backend.");
+    } else if (health.model_loaded) {
+      setStatus("ok", "Ready — " + ((health.engine || {}).model || "model loaded"));
+    } else if (health.model_loading) {
+      // The first launch downloads roughly 600 MB. Saying so is the
+      // difference between "it is working" and "it is broken".
+      setStatus("warn", "Preparing the speech model (one time, ~600 MB)…");
+    } else {
+      setStatus("error", health.error || "The speech model failed to load.");
+    }
+    return health;
+  }
+
   function checkHealth() {
     setStatus("warn", "Checking transcription service…");
-    return backend.health().then(function (health) {
-      if (health.status === "ok" && health.model_loaded) {
-        setStatus("ok", "Ready — " + ((health.engine || {}).model || "model loaded"));
-      } else if (health.status === "unreachable") {
-        setStatus("error", "Service not running. Start the Capset backend.");
-      } else {
-        setStatus("warn", health.error || "Model still loading…");
-      }
-      return health;
-    });
+    if (config.backendUrl) {
+      return backend.health().then(describeHealth);
+    }
+    return publishedPort()
+      .then(function (port) { return backend.connect(port ? [port] : []); })
+      .then(describeHealth);
   }
 
   // --- animations ----------------------------------------------------------

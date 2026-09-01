@@ -8,14 +8,16 @@ from pathlib import Path  # noqa: F401
 
 HOST = os.environ.get("CAPSET_HOST", "127.0.0.1")
 
-# TODO(phase1): a fixed port is fragile in the field. If anything already
-# holds it -- most likely a Capset backend left over from a previous AE
-# session -- uvicorn exits with "address already in use" and the panel sees
-# a connection refused with no explanation. Observed in local testing.
-# The panel should GET /health first and reuse a healthy existing instance,
-# and the service should fall back to a free port and advertise it (a small
-# file in the user data dir) rather than dying.
+# Preferred port, not a guarantee. If anything already holds it -- most
+# likely a Capset backend left over from a previous After Effects session --
+# main._pick_port falls back to any free port, because uvicorn exiting with
+# "address already in use" is invisible in a windowed build: the process just
+# disappears and the panel reports the service as not running.
 PORT = int(os.environ.get("CAPSET_PORT", "8756"))
+
+# The chosen port is written here, inside logging_setup.data_dir(), so the
+# panel can find a service that did not land on PORT.
+PORT_FILE_NAME = "port"
 
 # Parakeet TDT 0.6B. v2 is English-only; v3 is multilingual. Both are far
 # smaller than the 1.1B checkpoint and score better on the Open ASR

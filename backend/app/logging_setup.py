@@ -18,19 +18,35 @@ MAX_BYTES = 2 * 1024 * 1024
 BACKUP_COUNT = 3
 
 
-def log_dir() -> Path:
+def data_dir() -> Path:
     """Per-user, writable, and conventional for each platform.
 
     Never next to the executable: that is under Program Files, which is not
-    writable without elevation, so logging there would fail silently for
-    exactly the users who need the log.
+    writable without elevation, so writing there would fail silently for
+    exactly the users who need the diagnostics.
+
+    The panel resolves this same path in ExtendScript (capsetPortFile in
+    panel/jsx/capset.jsx) to find the published port. Neither runtime can
+    read the other's constants, so the two must be changed together; the
+    shape is pinned by tests on both sides.
     """
     if sys.platform == "win32":
         base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-        return Path(base) / "Capset" / "logs"
+        return Path(base) / "Capset"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Capset"
+    return Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "capset"
+
+
+def log_dir() -> Path:
+    """Where the rotating log lives.
+
+    Derived from data_dir() everywhere except macOS, where logs belong in
+    ~/Library/Logs by convention and support asks for them there.
+    """
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Logs" / "Capset"
-    return Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "capset"
+    return data_dir() / "logs"
 
 
 def configure(level: int = logging.INFO) -> Path | None:

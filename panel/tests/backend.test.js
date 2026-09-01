@@ -117,3 +117,87 @@ test("cancel issues a DELETE", async () => {
   await b.cancel("job1");
   assert.strictEqual(f.calls[0].method, "DELETE");
 });
+
+// --- port discovery ---------------------------------------------------------
+//
+// The backend falls back to a free port when 8756 is taken -- most often by a
+// Capset backend left over from a previous After Effects session -- and
+// publishes the port it landed on. Before this the panel only ever asked
+// 8756, so a service running perfectly well on 49871 read as "not running".
+
+/** A fetch that answers only for the given port, refusing every other. */
+function onlyPort(port, body) {
+  const seen = [];
+  const fn = async (url) => {
+    seen.push(url);
+    if (url.indexOf(":" + port + "/") === -1) throw new Error("ECONNREFUSED");
+    return { ok: true, status: 200, json: async () => body };
+  };
+  fn.seen = seen;
+  return fn;
+}
+
+test("connect uses the published port when the default is dead", async () => {
+  const fetch = onlyPort(49871, { status: "ok", model_loaded: true });
+  const b = new CapsetBackend({ fetch });
+  const health = await b.connect([49871]);
+  assert.strictEqual(health.status, "ok");
+  assert.strictEqual(b.baseUrl, "http://127.0.0.1:49871");
+});
+
+test("connect prefers the published port over the default", async () => {
+  // Both answer. The published one is authoritative: the default may be held
+  // by a stale process that would accept requests and never finish a job.
+  const fetch = async (url) => ({
+    ok: true, status: 200, json: async () => ({ status: "ok", url })
+  });
+  const b = new CapsetBackend({ fetch });
+  await b.connect([49871]);
+  assert.strictEqual(b.baseUrl, "http://127.0.0.1:49871");
+});
+
+test("connect falls back to the default when no port was published", async () => {
+  const fetch = onlyPort(8756, { status: "ok", model_loaded: true });
+  const b = new CapsetBackend({ fetch });
+  const health = await b.connect([]);
+  assert.strictEqual(health.status, "ok");
+  assert.strictEqual(b.baseUrl, "http://127.0.0.1:8756");
+});
+
+test("connect tries the default after a stale published port", async () => {
+  // The port file outlives the process that wrote it, so a stale port is the
+  // expected case after a crash or a reboot.
+  const fetch = onlyPort(8756, { status: "ok", model_loaded: true });
+  const b = new CapsetBackend({ fetch });
+  const health = await b.connect([49871]);
+  assert.strictEqual(health.status, "ok");
+  assert.strictEqual(b.baseUrl, "http://127.0.0.1:8756");
+});
+
+test("connect reports unreachable and leaves baseUrl on the default", async () => {
+  // Leaving baseUrl on a dead discovered port would make the retry button
+  // useless once the user actually starts the service. Holds because the
+  // default is always the last candidate tried, which this pins.
+  const b = new CapsetBackend({
+    fetch: async () => { throw new Error("ECONNREFUSED"); }
+  });
+  const health = await b.connect([49871]);
+  assert.strictEqual(health.status, "unreachable");
+  assert.strictEqual(b.baseUrl, "http://127.0.0.1:8756");
+});
+
+test("connect does not probe the same port twice", async () => {
+  // The repeated port must be DEAD, or a non-deduplicating implementation
+  // stops on the first success and passes without deduplicating anything.
+  const fetch = onlyPort(9999, { status: "ok" });
+  const b = new CapsetBackend({ fetch });
+  await b.connect([8756, 8756]);
+  assert.deepStrictEqual(fetch.seen, ["http://127.0.0.1:8756/health"]);
+});
+
+test("connect ignores a malformed published port", async () => {
+  const fetch = onlyPort(8756, { status: "ok" });
+  const b = new CapsetBackend({ fetch });
+  await b.connect([null, "", "not-a-port", 0]);
+  assert.deepStrictEqual(fetch.seen, ["http://127.0.0.1:8756/health"]);
+});

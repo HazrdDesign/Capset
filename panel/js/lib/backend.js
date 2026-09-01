@@ -8,7 +8,12 @@
 (function (root) {
   "use strict";
 
-  var DEFAULT_BASE = "http://127.0.0.1:8756";
+  var DEFAULT_PORT = 8756;
+  var DEFAULT_BASE = "http://127.0.0.1:" + DEFAULT_PORT;
+
+  function baseForPort(port) {
+    return "http://127.0.0.1:" + port;
+  }
 
   function CapsetBackend(options) {
     options = options || {};
@@ -44,6 +49,52 @@
           baseUrl: self.baseUrl
         };
       });
+  };
+
+  /**
+   * Point at whichever port the service actually bound to.
+   *
+   * `ports` is tried in order and the first one whose /health answers wins;
+   * baseUrl is left alone if none do, so the failure the user sees is the
+   * ordinary "service not running" rather than a silent wrong-port stall.
+   *
+   * The backend falls back to a free port when its preferred one is taken
+   * and publishes the result to a file (see _publish_port in the backend).
+   * Without this the fallback would be useless: the panel would keep asking
+   * 8756 and conclude the service was down while it was serving happily
+   * somewhere else.
+   */
+  CapsetBackend.prototype.connect = function (ports) {
+    var self = this;
+    var candidates = [];
+    var seen = {};
+    for (var i = 0; i < (ports || []).length; i++) {
+      var port = parseInt(ports[i], 10);
+      if (!port || seen[port]) continue;
+      seen[port] = true;
+      candidates.push(port);
+    }
+    if (!seen[DEFAULT_PORT]) candidates.push(DEFAULT_PORT);
+
+    var index = 0;
+    var lastResult = null;
+
+    function attempt() {
+      if (index >= candidates.length) {
+        // Nothing answered. baseUrl is left on the default rather than on a
+        // stale discovered port, because the default is always tried last —
+        // so the retry button asks the port the service will most likely
+        // come up on.
+        return Promise.resolve(lastResult);
+      }
+      self.baseUrl = baseForPort(candidates[index++]);
+      return self.health().then(function (health) {
+        lastResult = health;
+        if (health.status === "unreachable") return attempt();
+        return health;
+      });
+    }
+    return attempt();
   };
 
   CapsetBackend.prototype.submit = function (file, filename) {
@@ -106,7 +157,11 @@
     });
   };
 
-  var api = { CapsetBackend: CapsetBackend, DEFAULT_BASE: DEFAULT_BASE };
+  var api = {
+    CapsetBackend: CapsetBackend,
+    DEFAULT_BASE: DEFAULT_BASE,
+    DEFAULT_PORT: DEFAULT_PORT
+  };
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

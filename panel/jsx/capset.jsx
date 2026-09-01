@@ -47,6 +47,62 @@ function capsetSnap(comp, seconds) {
 }
 
 // ---------------------------------------------------------------------------
+// backend discovery
+// ---------------------------------------------------------------------------
+
+/*
+ * Where the backend publishes the port it actually bound to.
+ *
+ * Must stay in step with logging_setup.data_dir() in the backend, which
+ * writes config.PORT_FILE_NAME there. The two runtimes cannot share
+ * constants, so the path is spelled out twice; tests on both sides pin the
+ * shape so a drift fails a build instead of producing a panel that cannot
+ * find a service that is running perfectly well.
+ *
+ *   Windows  %LOCALAPPDATA%\Capset\port
+ *   macOS    ~/Library/Application Support/Capset/port
+ */
+function capsetPortFile() {
+    if ($.os.indexOf("Windows") !== -1) {
+        var local = $.getenv("LOCALAPPDATA");
+        if (!local) return null;
+        return local + "\\Capset\\port";
+    }
+    // Folder("~/...") expands the home directory on macOS; fsName gives the
+    // platform path File() wants.
+    return Folder("~/Library/Application Support/Capset").fsName + "/port";
+}
+
+/**
+ * Read the port the running backend published, or null.
+ *
+ * Panel JavaScript cannot read environment variables, so the host resolves
+ * the path. Every failure returns null rather than an error: no file means
+ * no backend has ever run here, which is the ordinary first-launch state,
+ * and the panel simply falls back to the default port.
+ */
+function capsetBackendPort() {
+    var file = null;
+    try {
+        var path = capsetPortFile();
+        if (!path) return capsetOk(null);
+        file = File(path);
+        if (!file.exists) return capsetOk(null);
+        if (!file.open("r")) return capsetOk(null);
+        var text = String(file.read());
+        file.close();
+        file = null;
+        var port = parseInt(text.replace(/^\s+|\s+$/g, ""), 10);
+        if (isNaN(port) || port < 1 || port > 65535) return capsetOk(null);
+        return capsetOk(port);
+    } catch (e) {
+        // Discovery must never break the panel; the default port still works.
+        if (file) { try { file.close(); } catch (ignored) {} }
+        return capsetOk(null);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // comp info — the panel needs dimensions to choose a smart layout
 // ---------------------------------------------------------------------------
 
