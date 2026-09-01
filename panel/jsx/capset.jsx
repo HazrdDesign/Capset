@@ -10,9 +10,11 @@
  * applies them, so the duration-adaptive rules have exactly one
  * implementation and it is the tested one.
  *
- * STATUS: not yet executed inside After Effects. Match names and API shapes
- * follow the AE scripting reference, but nothing below is verified against a
- * running host. Treat as a first draft until it has been run.
+ * STATUS: exercised by panel/tests/jsx-behaviour.test.js against the fake host
+ * in panel/tests/fake-ae.js, which found four bugs that reading the file had
+ * not. Still NOT run inside After Effects: match names, precompose semantics
+ * and Character panel behaviour follow the scripting reference and remain
+ * unverified against a real host.
  */
 
 #include "json2.jsx"
@@ -587,44 +589,6 @@ function capsetLinkToController(layer, useJsEngine) {
     return true;
 }
 
-function capsetBuildController(payloadJson) {
-    var undoOpen = false;
-    try {
-        var payload = JSON.parse(payloadJson || "{}");
-        var comp = capsetActiveComp();
-
-        app.beginUndoGroup("Capset: build controller");
-        undoOpen = true;
-
-        var controller = capsetEnsureController(comp, payload.style || {});
-        var useJs = capsetUsesJsEngine();
-
-        var linked = 0;
-        for (var i = 1; i <= comp.numLayers; i++) {
-            var layer = comp.layer(i);
-            if (layer instanceof TextLayer && capsetIsCapsetLayer(layer)) {
-                capsetLinkToController(layer, useJs);
-                linked++;
-            }
-        }
-
-        return capsetOk({
-            linked: linked,
-            controllerIndex: controller.index,
-            styleLinked: useJs,
-            note: useJs
-                ? null
-                : "Legacy expression engine: only the baseline is linked. " +
-                  "Switch to JavaScript in File > Project Settings > Expressions " +
-                  "for font size and colour."
-        });
-    } catch (e) {
-        return capsetErr(e.message);
-    } finally {
-        if (undoOpen) app.endUndoGroup();
-    }
-}
-
 // ---------------------------------------------------------------------------
 // style capture and sync
 //
@@ -681,6 +645,12 @@ function capsetCaptureStyle() {
         try { style.strokeColor = doc.strokeColor; } catch (e) {}
         try { style.position = source.property("Transform").property("Position").value; } catch (e) {}
         try { style.scale = source.property("Transform").property("Scale").value; } catch (e) {}
+        // Recorded WITH the style, not looked up at apply time: position is
+        // stored proportionally, and applyStyleToLayer skips it entirely
+        // without these. Their absence made every synced caption keep its old
+        // position, which read as the feature not working at all.
+        style.sourceWidth = comp.width;
+        style.sourceHeight = comp.height;
 
         // Effect names only. Values are copied layer-to-layer at apply time,
         // because serialising arbitrary effect parameters through JSON loses
@@ -742,33 +712,85 @@ function capsetApplyStyleToLayer(layer, style, comp) {
     }
 }
 
-/** Copy effects from a source layer onto a target, replacing any Capset added. */
-function capsetCopyEffects(sourceLayer, targetLayer) {
-    var targetParade = targetLayer.property("ADBE Effect Parade");
-    for (var i = targetParade.numProperties; i >= 1; i--) {
-        try { targetParade.property(i).remove(); } catch (e) {}
+// Effect copying goes through the clipboard, because After Effects has no
+// scripting API for duplicating an effect together with its parameter values.
+// That has two consequences worth stating plainly:
+//
+//  1. Menu commands act on the ACTIVE composition. Selecting a layer in some
+//     other comp does not redirect a Paste there, so copying effects across a
+//     whole project would paste them into whatever comp happens to be open.
+//     Effects are therefore copied within the active comp only; a project-wide
+//     sync still pushes type and position everywhere. The result reports how
+//     many layers actually received effects so the panel can say so rather
+//     than implying more happened than did.
+//
+//  2. It hijacks the selection. Whatever the user had selected is restored
+//     afterwards.
+
+function capsetDeselectAll(comp) {
+    for (var i = 1; i <= comp.numLayers; i++) {
+        try { comp.layer(i).selected = false; } catch (e) {}
     }
-    var sourceParade = sourceLayer.property("ADBE Effect Parade");
-    var copied = 0;
-    for (var j = 1; j <= sourceParade.numProperties; j++) {
-        var effect = sourceParade.property(j);
-        try {
-            effect.selected = true;
-            copied++;
-        } catch (e) {}
-    }
-    if (copied) {
-        try {
-            // AE has no scripting API for duplicating an effect with its
-            // values, so the copy/paste commands are the only route.
-            app.executeCommand(app.findMenuCommandId("Copy"));
-            targetLayer.selected = true;
-            app.executeCommand(app.findMenuCommandId("Paste"));
-        } catch (e) {
-            return 0;
+}
+
+function capsetSelectionNames(comp) {
+    var names = [];
+    var selected = comp.selectedLayers;
+    for (var i = 0; i < selected.length; i++) names.push(selected[i].name);
+    return names;
+}
+
+function capsetRestoreSelection(comp, names) {
+    capsetDeselectAll(comp);
+    for (var i = 1; i <= comp.numLayers; i++) {
+        var layer = comp.layer(i);
+        for (var j = 0; j < names.length; j++) {
+            if (layer.name === names[j]) {
+                try { layer.selected = true; } catch (e) {}
+                break;
+            }
         }
     }
-    return copied;
+}
+
+/** Put a layer's effects on the clipboard. Returns how many were selected. */
+function capsetCopyEffectsToClipboard(sourceLayer, comp) {
+    var parade = sourceLayer.property("ADBE Effect Parade");
+    if (!parade.numProperties) return 0;
+
+    capsetDeselectAll(comp);
+    try { sourceLayer.selected = true; } catch (e) {}
+
+    var selected = 0;
+    for (var i = 1; i <= parade.numProperties; i++) {
+        try {
+            parade.property(i).selected = true;
+            selected++;
+        } catch (e) {}
+    }
+    if (!selected) return 0;
+    try {
+        app.executeCommand(app.findMenuCommandId("Copy"));
+    } catch (e) {
+        return 0;
+    }
+    return selected;
+}
+
+/** Replace a layer's effects with whatever is on the clipboard. */
+function capsetPasteEffectsOnto(targetLayer, comp) {
+    var parade = targetLayer.property("ADBE Effect Parade");
+    for (var i = parade.numProperties; i >= 1; i--) {
+        try { parade.property(i).remove(); } catch (e) {}
+    }
+    capsetDeselectAll(comp);
+    try { targetLayer.selected = true; } catch (e) {}
+    try {
+        app.executeCommand(app.findMenuCommandId("Paste"));
+        return true;
+    } catch (e) {
+        return false;
+    }
 }
 
 /**
@@ -783,13 +805,33 @@ function capsetSyncStyle(payloadJson) {
         if (!style) throw new Error("No captured style to apply.");
 
         var scope = payload.scope || "comp";
-        var comps = scope === "project" ? capsetAllComps() : [capsetActiveComp()];
+        var activeComp = capsetActiveComp();
+        var comps = scope === "project" ? capsetAllComps() : [activeComp];
 
         app.beginUndoGroup("Capset: sync caption style");
         undoOpen = true;
 
+        // The clipboard only reaches the active comp (see the note above
+        // capsetCopyEffectsToClipboard), so effects are copied there and the
+        // caller is told how far they got.
+        var selectionBefore = null;
+        var effectSource = null;
+        if (payload.copyEffects) {
+            selectionBefore = capsetSelectionNames(activeComp);
+            if (payload.sourceCompName === activeComp.name &&
+                payload.sourceLayerIndex >= 1 &&
+                payload.sourceLayerIndex <= activeComp.numLayers) {
+                effectSource = activeComp.layer(payload.sourceLayerIndex);
+            }
+            if (effectSource &&
+                !capsetCopyEffectsToClipboard(effectSource, activeComp)) {
+                effectSource = null;   // nothing to paste
+            }
+        }
+
         var updated = 0;
         var compsTouched = 0;
+        var effectsCopied = 0;
         for (var c = 0; c < comps.length; c++) {
             var comp = comps[c];
             var layers = capsetTextLayers(comp, true);
@@ -798,7 +840,16 @@ function capsetSyncStyle(payloadJson) {
             for (var i = 0; i < layers.length; i++) {
                 capsetApplyStyleToLayer(layers[i], style, comp);
                 updated++;
+                if (effectSource && comp === activeComp &&
+                    layers[i] !== effectSource &&
+                    capsetPasteEffectsOnto(layers[i], comp)) {
+                    effectsCopied++;
+                }
             }
+        }
+
+        if (selectionBefore) {
+            capsetRestoreSelection(activeComp, selectionBefore);
         }
 
         if (!updated) {
@@ -812,7 +863,13 @@ function capsetSyncStyle(payloadJson) {
         return capsetOk({
             updated: updated,
             comps: compsTouched,
-            scope: scope
+            scope: scope,
+            effectsCopied: effectsCopied,
+            // True when the user asked for effects across the project and only
+            // the active comp could get them, so the panel can say so instead
+            // of letting the user assume it worked everywhere.
+            effectsLimitedToActiveComp:
+                payload.copyEffects === true && scope === "project"
         });
     } catch (e) {
         return capsetErr(e.message);
@@ -878,14 +935,36 @@ function capsetBuildCaptions(payloadJson) {
         for (var r = comp.numLayers; r >= 1; r--) {
             var existing = comp.layer(r);
             if (capsetIsCapsetLayer(existing) && existing.name !== CAPSET_CONTROLLER) {
+                // A precomposed caption layer owns a composition of its own.
+                // Removing only the layer leaves that comp behind, so a user
+                // who rebuilds a few times finds the project panel filling up
+                // with dead "Capset__captions" items.
+                var orphan = null;
+                try {
+                    if (existing.source &&
+                        existing.source instanceof CompItem &&
+                        capsetIsCapsetLayer(existing.source)) {
+                        orphan = existing.source;
+                    }
+                } catch (e) {}
                 existing.remove();
+                if (orphan) {
+                    try { orphan.remove(); } catch (e) {}
+                }
                 replaced++;
             }
         }
 
         var controller = null;
+        var linkStyle = false;
         if (options.parentToController) {
             controller = capsetEnsureController(comp, style);
+            // The controller carries Font Size and Fill Colour sliders. Without
+            // the expressions that read them they are decoration: the user
+            // drags a slider and nothing moves. Only the JavaScript engine can
+            // drive a text document, so on the legacy engine the captions are
+            // still parented and still follow the baseline slider.
+            linkStyle = capsetUsesJsEngine();
         }
 
         var created = [];
@@ -906,6 +985,7 @@ function capsetBuildCaptions(payloadJson) {
             }
             if (controller) {
                 try { layer.parent = controller; } catch (e) {}
+                try { capsetLinkToController(layer, linkStyle); } catch (e) {}
             }
             created.push(layer);
         }
@@ -915,8 +995,23 @@ function capsetBuildCaptions(payloadJson) {
             var indices = [];
             for (i = 0; i < created.length; i++) indices.push(created[i].index);
             try {
-                var pre = comp.layers.precompose(indices, "Capset Captions", true);
-                pre.name = CAPSET_PREFIX + "captions";
+                // Named with the prefix from the start, NOT renamed afterwards.
+                // precompose() returns the new COMPOSITION, so assigning to
+                // its .name renamed the project item and left the layer in the
+                // timeline called something else -- something without the
+                // Capset prefix, which capsetIsCapsetLayer could not recognise.
+                // The next Add Captions therefore could not find the precomp
+                // to remove, and stacked a second one on top of it.
+                var precompName = CAPSET_PREFIX + "captions";
+                var pre = comp.layers.precompose(indices, precompName, true);
+                // Belt and braces: make certain the LAYER carries the name,
+                // whatever the host called it.
+                for (i = 1; i <= comp.numLayers; i++) {
+                    if (comp.layer(i).source === pre) {
+                        comp.layer(i).name = precompName;
+                        break;
+                    }
+                }
                 precomposed = true;
             } catch (e) {
                 // Not fatal: the captions exist either way.

@@ -478,21 +478,29 @@
   function sync() {
     if (!state.capturedStyle) { log("Capture a style first.", "err"); return; }
     setBusy(true);
-    // Refresh comp size so proportional positioning is relative to the comp
-    // the style came from, not whichever comp is open now.
-    host("capsetGetCompInfo()")
-      .then(function (info) {
-        state.compInfo = info;
-        return host("capsetSyncStyle(" + arg({
-          style: state.capturedStyle.style,
-          effects: state.capturedStyle.effects,
-          copyEffects: $("opt-effects").checked,
-          scope: radio("scope")
-        }) + ")");
-      })
+    // The comp the style came from is recorded at capture time, so position
+    // scales correctly however many comps have been opened since.
+    host("capsetSyncStyle(" + arg({
+      style: state.capturedStyle.style,
+      effects: state.capturedStyle.effects,
+      copyEffects: $("opt-effects").checked,
+      scope: radio("scope"),
+      sourceLayerIndex: state.capturedStyle.sourceLayerIndex,
+      sourceCompName: state.capturedStyle.sourceCompName
+    }) + ")")
       .then(function (data) {
         log("Styled " + data.updated + " layer(s) across " +
             data.comps + " comp(s).", "ok");
+        if (data.effectsCopied) {
+          log("Copied effects onto " + data.effectsCopied + " layer(s).", "ok");
+        }
+        if (data.effectsLimitedToActiveComp) {
+          // After Effects pastes into the active comp, whichever layer is
+          // selected, so saying nothing here would leave the user believing
+          // effects went everywhere the type did.
+          log("Effects were copied in this composition only — After Effects " +
+              "can only paste into the composition that is open.", "warn");
+        }
       })
       .catch(function (err) { log(err.message, "err"); })
       .then(function () { setBusy(false); });

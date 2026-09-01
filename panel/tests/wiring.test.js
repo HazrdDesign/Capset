@@ -75,3 +75,14 @@ test("every element main.js looks up exists in index.html", () => {
     "getElementById returns null for these, so the panel throws on load"
   );
 });
+
+test("every log kind main.js uses has a style", () => {
+  // A kind with no rule still renders, just not as a warning — the message
+  // the user most needs to notice would look like ordinary output.
+  const css = fs.readFileSync(path.join(ROOT, "css", "panel.css"), "utf8");
+  const kinds = new Set(
+    [...main.matchAll(/\blog\((?:[^;]*?),\s*"(\w+)"\)/g)].map((m) => m[1])
+  );
+  const missing = [...kinds].filter((k) => !css.includes("#log ." + k));
+  assert.deepStrictEqual(missing, [], "log kinds with no stylesheet rule");
+});

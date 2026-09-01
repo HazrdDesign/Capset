@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from app import config  # noqa: E402
-from app.audio import load_audio, probe_duration  # noqa: E402
+from app.audio import load_audio  # noqa: E402
 from app.engines.onnx_asr_engine import OnnxAsrEngine  # noqa: E402
 from app.transcribe import Transcriber  # noqa: E402
 
@@ -80,10 +80,13 @@ def main() -> int:
     for key, value in engine.describe().items():
         print(f"  {key}: {value}")
 
-    duration = probe_duration(path)
+    # Duration comes from the decode itself. There is no separate probe any
+    # more: probing meant running ffprobe, and ffmpeg was dropped entirely
+    # when After Effects took over rendering the audio.
     decode_started = time.perf_counter()
-    load_audio(path)
+    audio, sample_rate = load_audio(path)
     decode_s = time.perf_counter() - decode_started
+    duration = len(audio) / sample_rate
     print(f"\n=== input ===\n  {path.name}: {duration:.2f}s audio")
     print(f"  decode: {decode_s:.2f}s")
 

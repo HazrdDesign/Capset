@@ -176,6 +176,7 @@ button.primary:hover:not(:disabled) { background: #3d5f9e; }
 }
 #log .err { color: var(--err); }
 #log .ok { color: var(--ok); }
+#log .warn { color: var(--warn); }
 
 /* --- tabs --------------------------------------------------------------- */
 #tabs {
