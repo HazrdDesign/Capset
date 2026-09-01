@@ -10,6 +10,8 @@ import logging
 import os
 import shutil
 import tempfile
+import socket
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -23,6 +25,7 @@ from .jobs import JobStore
 from .models import TranscriptionResult
 from .transcribe import Transcriber
 
+from . import logging_setup
 from .logging_setup import configure as configure_logging
 
 _LOG_PATH = configure_logging()
@@ -40,19 +43,37 @@ transcriber = Transcriber(OnnxAsrEngine())
 # Set when model load fails, so /health can explain itself instead of the
 # panel seeing a silent "not ready" forever.
 load_error: str | None = None
+# Model loading runs on a worker thread, so /health stays answerable while a
+# ~600 MB first-run download is in progress. Previously load() ran inline in
+# the async lifespan, blocking the event loop: /health did not answer AT ALL
+# for the whole download, and the panel sat on "Checking transcription
+# service..." with no way to know anything was happening.
+model_loading = False
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global load_error
+def _load_model_in_background() -> None:
+    global load_error, model_loading
+    model_loading = True
     try:
         transcriber.load()
         log.info("model ready")
     except EngineUnavailable as exc:
-        # Do not take the process down: the panel polls /health and can show
-        # a useful message, which beats a connection refused.
         load_error = str(exc)
         log.error("model load failed: %s", exc)
+    except Exception as exc:
+        load_error = f"{type(exc).__name__}: {exc}"
+        log.exception("unexpected error loading the model")
+    finally:
+        model_loading = False
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Daemon thread: loading must never hold up shutdown, and a half-finished
+    # download is resumable — huggingface_hub caches partial fetches.
+    threading.Thread(
+        target=_load_model_in_background, name="capset-model-load", daemon=True
+    ).start()
     app.state.jobs = JobStore(retention_s=config.JOB_RETENTION_S)
     try:
         yield
@@ -75,8 +96,9 @@ app.add_middleware(
 @app.get("/health")
 def health() -> dict:
     payload = {
-        "status": "ok",
+        "status": "loading" if model_loading else "ok",
         "model_loaded": transcriber.is_loaded(),
+        "model_loading": model_loading,
         "engine": transcriber.engine.describe(),
         # Surfaced so the panel can tell the user where to find diagnostics
         # now that the service runs without a console.
@@ -154,6 +176,44 @@ def cancel_job(request: Request, job_id: str) -> dict:
     return {"id": job_id, "cancelled": store.cancel(job_id)}
 
 
+def _pick_port(preferred: int, host: str) -> int:
+    """Return a bindable port, falling back to any free one.
+
+    A hardcoded port dies badly: uvicorn exits, and because the build is
+    windowed the process vanishes with no dialog. The panel then shows the
+    same "service not running" as a machine where it was never installed.
+    The most likely squatter is a leftover Capset backend.
+    """
+    for candidate in (preferred, 0):
+        try:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind((host, candidate))
+            chosen = probe.getsockname()[1]
+            probe.close()
+            if candidate != preferred:
+                log.warning("port %d unavailable; using %d", preferred, chosen)
+            return chosen
+        except OSError:
+            continue
+    return preferred
+
+
+def _publish_port(port: int) -> None:
+    """Write the live port where the panel can find it.
+
+    Without this a fallback port is useless — the panel would keep asking
+    8756 and conclude the service is down.
+    """
+    try:
+        path = logging_setup.log_dir().parent / "port"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str(port), encoding="utf-8")
+        log.info("listening on %d (published to %s)", port, path)
+    except Exception as exc:
+        log.warning("could not publish the port file: %s", exc)
+
+
 def main() -> None:
     import uvicorn
 
@@ -162,10 +222,13 @@ def main() -> None:
     # windowed build, and we have already configured rotating file logging in
     # logging_setup. Uvicorn's records still reach our handlers via the root
     # logger, so nothing is lost.
+    port = _pick_port(config.PORT, config.HOST)
+    _publish_port(port)
+
     uvicorn.run(
         app,
         host=config.HOST,
-        port=config.PORT,
+        port=port,
         log_config=None,
         access_log=False,
     )

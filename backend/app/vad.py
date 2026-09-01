@@ -30,6 +30,11 @@ MIN_SPEECH_S = 0.20
 MIN_SILENCE_S = 0.30
 # Padding either side so a cut never clips a word's onset or tail.
 PAD_S = 0.15
+# Detected spans must retain at least this share of the signal's total energy.
+# Below it, the gate is assumed to be discarding speech and the whole file is
+# transcribed instead. Silence carries almost no energy, so a correct gate
+# comfortably clears this.
+MIN_ENERGY_RETAINED = 0.90
 
 
 def detect_speech(
@@ -81,7 +86,27 @@ def _silero_spans(audio: np.ndarray, sample_rate: int) -> list[tuple[float, floa
 
 
 def _energy_spans(audio: np.ndarray, sample_rate: int) -> list[tuple[float, float]]:
-    """Crude RMS gate. Only a safety net when Silero is missing."""
+    """RMS gate keyed to the NOISE FLOOR, never the peak.
+
+    The previous threshold was `max(percentile(rms, 30) * 2, max(rms) * 0.05)`.
+    Keying off `max(rms)` made a single loud transient — a door closing, a mic
+    bump, one emphatic word — raise the threshold above ordinary speech, so
+    that transient became the only detected span. Reproduced: 11s of speech
+    plus one 30ms bump yielded 0.36s of "speech", silently discarding 97% of
+    the dialogue while the job reported success.
+
+    Two changes prevent that class of failure:
+
+    1. The speech level is estimated with a high percentile rather than the
+       maximum, so one outlier frame cannot move it.
+    2. Whatever the threshold decides, the result is only trusted if the
+       detected spans still contain nearly all of the signal's ENERGY. Silence
+       carries almost none, so a correct gate cuts duration while keeping
+       energy. Dropping energy means dropping speech.
+
+    Returning [] is safe: the caller falls back to transcribing the whole
+    file. That costs a little time; missing speech costs the user their work.
+    """
     frame = max(1, int(0.03 * sample_rate))
     usable = (len(audio) // frame) * frame
     if usable == 0:
@@ -91,11 +116,48 @@ def _energy_spans(audio: np.ndarray, sample_rate: int) -> list[tuple[float, floa
     if not np.any(rms > 0):
         return []
 
-    # Relative threshold: speech level varies far too much between sources
-    # for any absolute dB figure to hold up.
-    threshold = max(np.percentile(rms, 30) * 2.0, np.max(rms) * 0.05)
+    # Percentiles, not min/max: both ends must survive a few outlier frames.
+    floor = float(np.percentile(rms, 20))
+    speech_level = float(np.percentile(rms, 90))
+
+    # No clear gap between quiet and loud means this is either continuous
+    # speech or continuous noise. Either way there is nothing safe to cut.
+    if speech_level <= floor * 2.0:
+        log.info("no clear speech/silence separation; using the whole file")
+        return []
+
+    threshold = floor + 0.20 * (speech_level - floor)
     voiced = rms > threshold
-    return _merge_flags(voiced, frame / sample_rate, len(audio) / sample_rate)
+    spans = _merge_flags(voiced, frame / sample_rate, len(audio) / sample_rate)
+    if not spans:
+        return []
+
+    # The real safety net. Compare energy inside the spans against the total.
+    energy = rms ** 2
+    total_energy = float(np.sum(energy))
+    if total_energy <= 0:
+        return []
+
+    frame_s = frame / sample_rate
+    kept = np.zeros(len(rms), dtype=bool)
+    for span_start, span_end in spans:
+        lo = max(0, int(span_start / frame_s))
+        hi = min(len(rms), int(np.ceil(span_end / frame_s)))
+        kept[lo:hi] = True
+    retained = float(np.sum(energy[kept])) / total_energy
+
+    if retained < MIN_ENERGY_RETAINED:
+        log.warning(
+            "speech detection would discard %.1f%% of the audio's energy "
+            "(%d span(s), %.2fs of %.2fs); using the whole file instead",
+            100 * (1 - retained),
+            len(spans),
+            sum(e - s for s, e in spans),
+            len(audio) / sample_rate,
+        )
+        return []
+
+    return spans
 
 
 def _merge_flags(
