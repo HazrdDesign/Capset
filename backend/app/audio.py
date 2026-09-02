@@ -10,9 +10,15 @@ template the host offers (WAV on Windows, AIFF is common on macOS). Both are
 simple IFF-style containers, so they are parsed here directly. That removes
 the ~100 MB ffmpeg bundle and its LGPL obligations entirely.
 
-Resampling is not done here. onnx-asr ships ONNX resamplers and takes a
-sample rate alongside the samples, so the native rate is passed straight
-through.
+Resampling is mostly not done here -- onnx-asr takes a sample rate alongside
+the samples and does its own internal resampling. But that only covers a
+fixed whitelist of rates (onnx_asr.utils.SampleRates: 8000/11025/16000/22050/
+24000/32000/44100/48000); anything else raises WrongSampleRateError instead
+of resampling, and After Effects projects are routinely set to rates outside
+that list (96 kHz is a common "high quality" project setting). So a native
+rate outside the whitelist is resampled here, to 16 kHz -- the rate Parakeet
+actually runs at internally regardless of what it's given, so landing there
+directly loses nothing further downstream.
 """
 
 from __future__ import annotations
@@ -22,6 +28,33 @@ import wave
 from pathlib import Path
 
 import numpy as np
+
+# Mirrors onnx_asr.utils.SampleRates. Not imported directly: audio.py has no
+# other dependency on the ASR engine, and this is a fixed, versioned contract
+# in a third-party library, not something worth coupling an import to.
+_ASR_SUPPORTED_RATES = frozenset({8_000, 11_025, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000})
+_ASR_FALLBACK_RATE = 16_000
+
+
+def _resample(samples: np.ndarray, orig_rate: int, target_rate: int) -> np.ndarray:
+    """Bandlimited resample via the Fourier method -- no scipy dependency.
+
+    Truncating (downsampling) or zero-padding (upsampling) the spectrum
+    before inverting it is the same technique scipy.signal.resample uses;
+    unlike naive linear interpolation it does not alias when downsampling
+    from a much higher rate (e.g. a 96 kHz project render).
+    """
+    if orig_rate == target_rate or samples.size == 0:
+        return samples
+    target_len = max(1, round(samples.size * target_rate / orig_rate))
+    spectrum = np.fft.rfft(samples)
+    keep = target_len // 2 + 1
+    if keep <= spectrum.size:
+        spectrum = spectrum[:keep]
+    else:
+        spectrum = np.pad(spectrum, (0, keep - spectrum.size))
+    resampled = np.fft.irfft(spectrum, n=target_len) * (target_len / samples.size)
+    return resampled.astype(np.float32)
 
 
 class AudioError(RuntimeError):
@@ -133,7 +166,11 @@ def _extended_to_float(raw: bytes) -> float:
 
 
 def load_audio(path: str | Path) -> tuple[np.ndarray, int]:
-    """Read rendered audio. Returns (mono float32 samples, sample rate)."""
+    """Read rendered audio. Returns (mono float32 samples, sample rate).
+
+    The returned rate is always one onnx-asr's numpy-array input accepts --
+    see _ASR_SUPPORTED_RATES above.
+    """
     path = Path(path)
     if not path.exists():
         raise AudioError(f"audio file not found: {path}")
@@ -145,21 +182,26 @@ def load_audio(path: str | Path) -> tuple[np.ndarray, int]:
     with open(path, "rb") as handle:
         header = handle.read(12)
     if header[0:4] == b"RIFF":
-        return _read_wav(path)
-    if header[0:4] == b"FORM":
-        return _read_aiff(path)
+        samples, rate = _read_wav(path)
+    elif header[0:4] == b"FORM":
+        samples, rate = _read_aiff(path)
+    else:
+        # Unrecognised magic: fall back to the extension before giving up.
+        suffix = path.suffix.lower()
+        if suffix in (".wav", ".wave"):
+            samples, rate = _read_wav(path)
+        elif suffix in (".aif", ".aiff", ".aifc"):
+            samples, rate = _read_aiff(path)
+        else:
+            raise AudioError(
+                f"unsupported audio format: {path.suffix or 'unknown'}. Capset "
+                "reads the uncompressed WAV or AIFF that After Effects renders."
+            )
 
-    # Unrecognised magic: fall back to the extension before giving up.
-    suffix = path.suffix.lower()
-    if suffix in (".wav", ".wave"):
-        return _read_wav(path)
-    if suffix in (".aif", ".aiff", ".aifc"):
-        return _read_aiff(path)
-
-    raise AudioError(
-        f"unsupported audio format: {path.suffix or 'unknown'}. Capset reads "
-        "the uncompressed WAV or AIFF that After Effects renders."
-    )
+    if rate not in _ASR_SUPPORTED_RATES:
+        samples = _resample(samples, rate, _ASR_FALLBACK_RATE)
+        rate = _ASR_FALLBACK_RATE
+    return samples, rate
 
 
 def slice_audio(audio: np.ndarray, start_s: float, end_s: float,
