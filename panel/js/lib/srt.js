@@ -92,7 +92,7 @@
       });
     }
 
-    captions.sort(function (a, b2) { return a.start - b2.start; });
+    captions.sort(function (a, b) { return a.start - b.start; });
     return { captions: captions, errors: errors };
   }
 

@@ -105,3 +105,120 @@ test("every radio group is read", () => {
   const unread = [...names].filter((name) => !main.includes('radio("' + name + '")'));
   assert.deepStrictEqual(unread, [], "radio groups the panel never reads");
 });
+
+// --- settings snapshot ------------------------------------------------------
+//
+// The panel's controls stay live while a run is in flight, because a
+// transcription takes minutes and locking the panel for its duration is worse.
+// That is only safe if the run reads its settings ONCE, at the click. These
+// used to be read inside the promise chain -- segmentationMode() at the point
+// the transcription came back -- so changing the mode dropdown mid-run silently
+// changed the captions that came out, with nothing to indicate why.
+
+/** Source of one top-level function in main.js, up to the next one. */
+function functionBody(name) {
+  const start = main.indexOf("  function " + name + "(");
+  assert.notStrictEqual(start, -1, name + " is not a top-level function in main.js");
+  const rest = main.slice(start + 1);
+  const end = rest.indexOf("\n  function ");
+  return end === -1 ? rest : rest.slice(0, end);
+}
+
+test("the run path reads no live controls after the click", () => {
+  // Controls whose value decides what a run produces. Reading any of these
+  // after the click means the result can disagree with what was clicked.
+  const settingIds = [
+    "mode", "opt-split", "resolve",
+    "opt-precompose", "opt-parent", "opt-titlesafe"
+  ];
+
+  // Everything downstream of the click, whether or not it is async itself.
+  const downstream = ["build", "captionsFromTranscription", "timingsFor"];
+
+  const offenders = [];
+  downstream.forEach((name) => {
+    const src = functionBody(name);
+    settingIds.forEach((id) => {
+      if (src.includes('$("' + id + '")')) offenders.push(name + " reads $(\"" + id + "\")");
+    });
+    if (/\bradio\(/.test(src)) offenders.push(name + " calls radio()");
+  });
+
+  assert.deepStrictEqual(
+    offenders, [],
+    "these read a live control after the run started; take the value from the " +
+    "captureSettings() snapshot instead:\n" + offenders.join("\n")
+  );
+});
+
+test("captureSettings covers every control the run depends on", () => {
+  // The snapshot is only worth having if it is complete: a setting left out of
+  // it is a setting still read live, or one silently dropped from the run.
+  const src = functionBody("captureSettings");
+  ["mode", "opt-split", "resolve", "opt-precompose", "opt-parent", "opt-titlesafe"]
+    .forEach((id) => {
+      assert.ok(
+        src.includes('$("' + id + '")'),
+        'captureSettings() does not snapshot $("' + id + '")'
+      );
+    });
+  ["source", "duration"].forEach((name) => {
+    assert.ok(
+      src.includes('radio("' + name + '")'),
+      "captureSettings() does not snapshot radio(\"" + name + "\")"
+    );
+  });
+});
+
+// --- the rest of the audit fixes -------------------------------------------
+
+test("the log is capped", () => {
+  // Every stage of every chunk logs a line. Uncapped, the panel's DOM grows for
+  // as long as it stays open, and a long video is exactly when it matters.
+  const src = functionBody("log");
+  assert.ok(/LOG_MAX_LINES/.test(src), "log() does not consult a line cap");
+  assert.ok(/removeChild/.test(src), "log() never removes an old line");
+});
+
+test("port discovery cannot inherit the ten-minute host timeout", () => {
+  // It runs on every health check including startup, and has a working
+  // fallback, so it must never be able to hold the panel open for ten minutes.
+  const src = functionBody("publishedPort");
+  assert.ok(
+    /capsetBackendPort\(\)",\s*DISCOVERY_TIMEOUT_MS/.test(src),
+    "publishedPort() does not pass a short timeout, so it inherits HOST_TIMEOUT_MS"
+  );
+  const timeout = main.match(/var DISCOVERY_TIMEOUT_MS\s*=\s*([^;]+);/);
+  assert.ok(timeout, "DISCOVERY_TIMEOUT_MS is not defined");
+  // eslint-disable-next-line no-eval
+  assert.ok(eval(timeout[1]) <= 10 * 1000, "discovery timeout is not short");
+});
+
+test("removing every caption asks first", () => {
+  // One click from the button that builds them, and the user has usually just
+  // spent time styling the thing it deletes.
+  const src = functionBody("clearCaptions");
+  const confirmAt = src.indexOf("confirm(");
+  const hostAt = src.indexOf("host(");
+  assert.notStrictEqual(confirmAt, -1, "clearCaptions() does not confirm");
+  assert.ok(
+    confirmAt < hostAt,
+    "clearCaptions() calls the host before confirming, so the layers are " +
+    "already gone by the time the user is asked"
+  );
+});
+
+test("capture refreshes the comp it is capturing from", () => {
+  // The captured dimensions are what a later Sync scales by. state.compInfo is
+  // null until the first build and stale after switching comps, so trusting it
+  // could record a 16:9 comp's size for a style captured in a 9:16 one.
+  const src = functionBody("capture");
+  assert.ok(
+    src.indexOf("capsetGetCompInfo()") !== -1,
+    "capture() reuses whatever comp info was left behind by the last build"
+  );
+  assert.ok(
+    src.indexOf("capsetGetCompInfo()") < src.indexOf("capsetCaptureStyle()"),
+    "capture() reads the comp info after capturing, which is too late"
+  );
+});
