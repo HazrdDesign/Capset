@@ -37,6 +37,8 @@
 
   // --- logging -------------------------------------------------------------
 
+  var LOG_MAX_LINES = 500;
+
   function log(message, kind) {
     var line = document.createElement("div");
     if (kind) line.className = kind;
@@ -45,8 +47,13 @@
       ("0" + now.getHours()).slice(-2) + ":" +
       ("0" + now.getMinutes()).slice(-2) + ":" +
       ("0" + now.getSeconds()).slice(-2) + "  " + message;
-    $("log").appendChild(line);
-    $("log").scrollTop = $("log").scrollHeight;
+    var box = $("log");
+    box.appendChild(line);
+    // A long job on a long video logs per chunk and per stage. Without a cap
+    // the panel's DOM grows for as long as it is open, and the oldest lines are
+    // the least useful ones to keep.
+    while (box.children.length > LOG_MAX_LINES) box.removeChild(box.firstChild);
+    box.scrollTop = box.scrollHeight;
   }
 
   function setStatus(kind, message) {
@@ -82,6 +89,10 @@
   // Generous on purpose: rendering audio from a long composition is legitimately
   // slow, and cutting off work that was going to succeed is the worse failure.
   var HOST_TIMEOUT_MS = 10 * 60 * 1000;
+
+  // Port discovery is an optimisation with a fallback, not a gate. See
+  // publishedPort().
+  var DISCOVERY_TIMEOUT_MS = 2 * 1000;
 
   function host(call, timeoutMs) {
     return new Promise(function (resolve, reject) {
@@ -232,7 +243,13 @@
    * default port is used — discovery is an optimisation, never a gate.
    */
   function publishedPort() {
-    return host("capsetBackendPort()").catch(function () { return null; });
+    // Short timeout on purpose. This runs on every health check, including the
+    // one at startup, and it has a working fallback (the default port). The
+    // 10-minute default belongs to calls that render audio; inheriting it here
+    // means a host that never answers leaves the panel apparently frozen for
+    // ten minutes over a lookup it was always allowed to skip.
+    return host("capsetBackendPort()", DISCOVERY_TIMEOUT_MS)
+      .catch(function () { return null; });
   }
 
   function describeHealth(health) {
@@ -556,9 +573,9 @@
         "so they survive updates.";
   }
 
-  function timingsFor(caption, animation) {
+  function timingsFor(caption, animation, resolvePercent) {
     var duration = caption.end - caption.start;
-    var spec = { maxInFraction: Number($("resolve").value) / 100 };
+    var spec = { maxInFraction: Number(resolvePercent) / 100 };
     // A karaoke fill is supposed to run the length of the caption — that IS
     // the effect. The resolve-early cap exists so an entrance is not still
     // moving when the word disappears, which is a different thing, so an
@@ -612,16 +629,30 @@
 
   // --- build ---------------------------------------------------------------
 
-  function buildOptions() {
+  /**
+   * Freeze every user-facing setting at the moment a run starts.
+   *
+   * The controls deliberately stay live during a run: transcribing a long
+   * composition takes minutes, and locking the whole panel for its duration is
+   * worse than letting someone set up their next run. But the values used to be
+   * READ inside the promise chain, long after the click — so changing the mode
+   * dropdown while a transcription was in flight silently changed the captions
+   * you got out, with nothing to indicate why. Reading everything once, up
+   * front, means what you clicked with is what you get.
+   */
+  function captureSettings() {
     return {
-      precompose: $("opt-precompose").checked,
-      parentToController: $("opt-parent").checked,
-      titleSafe: $("opt-titlesafe").checked
+      source: radio("source"),
+      scope: radio("duration"),
+      mode: $("opt-split").checked ? "word" : $("mode").value,
+      resolve: Number($("resolve").value),
+      animation: state.selectedAnimation,
+      options: {
+        precompose: $("opt-precompose").checked,
+        parentToController: $("opt-parent").checked,
+        titleSafe: $("opt-titlesafe").checked
+      }
     };
-  }
-
-  function segmentationMode() {
-    return $("opt-split").checked ? "word" : $("mode").value;
   }
 
   /**
@@ -658,8 +689,8 @@
     return { captions: parsed.captions, offset: 0 };
   }
 
-  function captionsFromTranscription(scope) {
-    return renderAudio(scope).then(function (source) {
+  function captionsFromTranscription(settings) {
+    return renderAudio(settings.scope).then(function (source) {
       setProgress(0.08, "Uploading…");
       var name = source.path.split(/[\\/]/).pop();
       return backend.transcribe(
@@ -667,7 +698,7 @@
         function (p, stage) { setProgress(0.08 + p * 0.82, stage); }
       ).then(function (result) {
         var out = segmentation.segment(result.words, {
-          mode: segmentationMode(),
+          mode: settings.mode,
           width: state.compInfo.width,
           height: state.compInfo.height
         });
@@ -681,6 +712,7 @@
   }
 
   function build() {
+    var settings = captureSettings();
     setBusy(true);
     setProgress(0, "Reading composition…");
 
@@ -688,28 +720,27 @@
       .then(function (info) {
         state.compInfo = info;
         log("Comp: " + info.name + " " + info.width + "×" + info.height);
-        var scope = radio("duration");
-        return radio("source") === "file"
+        return settings.source === "file"
           ? captionsFromSrt()
-          : captionsFromTranscription(scope);
+          : captionsFromTranscription(settings);
       })
       .then(function (payload) {
         setProgress(0.94, "Building layers…");
-        var animation = state.selectedAnimation;
+        var animation = settings.animation;
         var captions = payload.captions.map(function (caption) {
           return {
             text: caption.text,
             lines: caption.lines,
             start: caption.start,
             end: caption.end,
-            timings: timingsFor(caption, animation)
+            timings: timingsFor(caption, animation, settings.resolve)
           };
         });
         return host("capsetBuildCaptions(" + arg({
           captions: captions,
           animation: animation,
-          style: { titleSafe: $("opt-titlesafe").checked },
-          options: buildOptions(),
+          style: { titleSafe: settings.options.titleSafe },
+          options: settings.options,
           timeOffset: payload.offset
         }) + ")");
       })
@@ -729,7 +760,16 @@
 
   function capture() {
     setBusy(true);
-    host("capsetCaptureStyle()")
+    // Refresh the comp info rather than trusting whatever the last build left
+    // behind. These dimensions are what a later Sync scales the style by, and
+    // state.compInfo is null until the first build and stale after switching
+    // comps -- so capturing from a 9:16 comp could record a 16:9 comp's size
+    // and silently mis-scale every layer it was later synced onto.
+    host("capsetGetCompInfo()")
+      .then(function (info) {
+        state.compInfo = info;
+        return host("capsetCaptureStyle()");
+      })
       .then(function (data) {
         data.style.sourceWidth = state.compInfo ? state.compInfo.width : null;
         data.style.sourceHeight = state.compInfo ? state.compInfo.height : null;
@@ -780,6 +820,13 @@
   }
 
   function clearCaptions() {
+    // The one irreversible-feeling action in the panel, one click from the
+    // button that builds them. After Effects' own undo does cover it, but a
+    // user who has just spent ten minutes styling captions should not discover
+    // that by accident.
+    if (!window.confirm(
+      "Remove every Capset caption layer and the controller from this project?"
+    )) return;
     setBusy(true);
     host("capsetClearCaptions(" + arg({ removeController: true }) + ")")
       .then(function (data) { log("Removed " + data.removed + " layer(s).", "ok"); })
