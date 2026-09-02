@@ -657,7 +657,7 @@ function capsetRenderAudio(payloadJson) {
             var alternates = [".wav", ".aif", ".aiff"];
             for (var a = 0; a < alternates.length; a++) {
                 var candidate = new File(
-                    target.fsName.replace(/\.[^.\\/]+$/, "") + alternates[a]
+                    target.fsName.replace(/\.[^.\\\/]+$/, "") + alternates[a]
                 );
                 if (candidate.exists) { produced = candidate; break; }
             }

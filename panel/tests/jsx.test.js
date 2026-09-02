@@ -62,6 +62,27 @@ for (const [pattern, name] of banned) {
   });
 }
 
+test("no unescaped / follows \\\\ inside a regex character class", () => {
+  // [^.\\/] parses fine under Node's vm sandbox (jsx-host.js) -- V8 follows
+  // spec, where / needs no escaping inside a character class. ExtendScript's
+  // own regex-literal scanner does not reliably track character-class state
+  // though: an escaped backslash (\\) immediately followed by a bare /
+  // reads as the end of the regex literal, corrupting everything after it
+  // into stray tokens ("Expected: )"). Bit capset.jsx:660 in real After
+  // Effects while every execution-based test here stayed green.
+  const pattern = /\[[^\]\n]*(?<!\\)\\\\\/[^\]\n]*\]/;
+  const lines = source.split("\n");
+  const hits = [];
+  lines.forEach((line, i) => {
+    if (pattern.test(line)) hits.push(`${i + 1}: ${line.trim()}`);
+  });
+  assert.deepStrictEqual(
+    hits, [],
+    `escape the / (as \\/) in these character classes -- ExtendScript's regex ` +
+    `scanner can end the literal early otherwise:\n${hits.join("\n")}`
+  );
+});
+
 test("every function returns through the ok/error envelope", () => {
   // host() in main.js parses the response as JSON and reads .ok. A host
   // function that returns a bare value makes the panel report "Unexpected
