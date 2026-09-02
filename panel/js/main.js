@@ -544,8 +544,9 @@
     });
     // The chosen animation keeps playing, so the user can see what they
     // picked without holding the pointer over it. Everything else stops.
+    var animateVisible = !!document.querySelector('.panel[data-panel="animate"].active');
     previews.forEach(function (item) {
-      setPreviewActive(item, item.animation.id === id);
+      setPreviewActive(item, animateVisible && item.animation.id === id);
     });
     var custom = !!(state.selectedAnimation && state.selectedAnimation.custom);
     $("preset-delete").disabled = !custom;
@@ -820,6 +821,14 @@
       });
       Array.prototype.forEach.call(document.querySelectorAll(".panel"), function (p) {
         p.classList.toggle("active", p.dataset.panel === tab.dataset.tab);
+      });
+      // The selected animation keeps playing so the user can see their choice,
+      // but a hidden tab is not worth a frame of work — an idle panel parked
+      // in a corner of After Effects should cost nothing.
+      var visible = tab.dataset.tab === "animate";
+      previews.forEach(function (item) {
+        setPreviewActive(item,
+          visible && item.animation.id === state.selectedAnimationId);
       });
     });
   });
