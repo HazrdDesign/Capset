@@ -47,9 +47,8 @@ class Transcriber:
         cancelled = should_cancel or (lambda: False)
 
         progress(0.02, "reading audio")
-        # Native rate is kept rather than resampled: onnx-asr ships ONNX
-        # resamplers and takes the rate alongside the samples, so converting
-        # here would be a lossy step for no benefit.
+        # load_audio already resamples to a rate onnx-asr accepts if the
+        # rendered file's native rate isn't one of the ones it supports.
         audio, sample_rate = load_audio(audio_path)
         duration = len(audio) / sample_rate
         log.info("read %.2fs of audio at %d Hz", duration, sample_rate)

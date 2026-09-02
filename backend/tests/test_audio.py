@@ -49,11 +49,46 @@ def test_reads_16bit_mono_wav(tmp_path):
     assert np.allclose(audio, expected, atol=1e-3)
 
 
-def test_preserves_the_native_sample_rate(tmp_path):
-    """No resampling here — onnx-asr does it, and needs the true rate."""
+def test_preserves_rates_onnx_asr_already_accepts(tmp_path):
+    """onnx-asr resamples these itself — converting again would be lossy for no benefit."""
     for rate in (8000, 16000, 22050, 44100, 48000):
         _, read_rate = load_audio(write_wav(tmp_path / f"{rate}.wav", tone(0.1, rate), rate=rate))
         assert read_rate == rate
+
+
+def test_unsupported_rate_is_resampled_to_16k(tmp_path):
+    """96 kHz is a routine After Effects project setting, and onnx-asr's
+    numpy-array input raises WrongSampleRateError for anything outside its
+    fixed whitelist -- it does not resample arbitrary rates the way it does
+    for a file path input. This is the exact bug reported from a real
+    After Effects render."""
+    seconds = 0.2
+    audio, rate = load_audio(write_wav(tmp_path / "96k.wav", tone(seconds, 96000, freq=440.0), rate=96000))
+    assert rate == 16000
+    assert abs(len(audio) - int(seconds * 16000)) <= 1
+
+
+def test_resampling_below_16k_upsamples_to_it(tmp_path):
+    """A rate below the whitelist's floor (8000) should also land on 16 kHz,
+    not merely on the nearest supported rate."""
+    seconds = 0.2
+    audio, rate = load_audio(write_wav(tmp_path / "6k.wav", tone(seconds, 6000, freq=200.0), rate=6000))
+    assert rate == 16000
+    assert abs(len(audio) - int(seconds * 16000)) <= 1
+
+
+def test_resampling_preserves_tone_frequency(tmp_path):
+    """Not just the right length -- the resampled signal should still be
+    recognisably the same tone, i.e. actually bandlimited rather than
+    aliased noise."""
+    seconds = 0.5
+    freq = 440.0
+    audio, rate = load_audio(write_wav(tmp_path / "hi.wav", tone(seconds, 96000, freq=freq), rate=96000))
+
+    spectrum = np.abs(np.fft.rfft(audio))
+    freqs = np.fft.rfftfreq(len(audio), d=1.0 / rate)
+    peak_freq = freqs[np.argmax(spectrum)]
+    assert abs(peak_freq - freq) < 5.0
 
 
 def test_stereo_is_downmixed_to_mono(tmp_path):
