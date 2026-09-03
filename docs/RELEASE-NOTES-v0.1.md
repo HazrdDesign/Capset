@@ -13,57 +13,67 @@ Local auto-captioning for After Effects: transcribes with NVIDIA Parakeet on
 your machine and generates timed, animated text layers.
 
 > **Pre-release — read this before installing.**
-> The code is tested (344 automated tests: 133 backend, 211 panel), and the
-> ExtendScript host script is now exercised end-to-end against a simulated
-> After Effects environment rather than only read for correctness — that
-> testing found and fixed several real bugs before this build. It has
-> **still never been run inside real After Effects.** Treat this as a build
-> to try and report on, not production software.
+> The code is tested (410 automated tests: 148 backend, 262 panel) and has now
+> been **run inside real After Effects for the first time**. That found four
+> real bugs in a row that no amount of testing had caught, all fixed in this
+> build. It is closer to working than any previous release and still not
+> proven: treat this as a build to try and report on, not production software.
 
 ## What's new in this build
 
-Since the last tested build, three problems that would have surfaced on
-first real use were found and fixed:
+The first real runs inside After Effects found four failures, each of which
+made the plugin unusable in a different way. All four are fixed.
 
-- **Add Captions used to render everything in your Render Queue**, not just
-  its own audio — including anything you had queued for delivery. It now
-  renders only its own item and puts your queue back exactly as it was,
-  even if the render fails.
-- **A caption-cutting bug could silently discard most of a take.** One loud
-  moment early in the audio — a door, a mic bump — could push the
-  speech-detection threshold above the actual dialogue, so a take with 11
-  seconds of speech could yield a few hundred milliseconds of captions with
-  no error shown. Fixed and covered by tests that reproduce the exact
-  failure.
-- **Selecting the audio layer now actually drives what gets transcribed.**
-  Previously Capset always rendered the whole composition mix regardless of
-  selection, so a voiceover under a music bed was transcribed together with
-  the music. Select the layer with the dialogue and hit Add Captions; with
-  nothing selected it still falls back to everything audible.
+- **Add Captions did nothing at all.** A single character in the host script —
+  an unescaped `/` inside a regular expression — stopped After Effects
+  parsing the file. Because a parse error kills the whole file rather than one
+  function, *every* button broke at once, showing either "Unable to execute
+  script at line 660" or "Unexpected host response". Fixed, with a check that
+  makes this class of typo fail the test suite instead of the plugin.
 
-Also new:
+- **A 96 kHz project crashed the transcription.** The speech engine accepts
+  only a fixed set of sample rates and rejects everything else outright rather
+  than converting — the opposite of what its documentation implies. Audio at
+  any other rate is now resampled before it gets there, so an unusual project
+  audio setting is no longer a failure.
 
-- **A real animation library.** The starting set was generic (fade, slide,
-  bounce). It is now short-form-style presets — Word Pop, Hormozi, Karaoke
-  Fill, Impact, Bounce Up, Tighten, Typewriter — with working overshoot
-  (the actual "punch"), which was declared in the old presets but never
-  implemented.
-- **Live animation previews**, sampled directly in the panel from the same
-  definitions applied to your captions. The previous plan needed
-  pre-rendered video loops that were never produced, so every card showed
-  "no preview" — that path is gone.
-- **Save your own animation presets.** Tweak the timing or properties,
-  save it with a name, and it shows up in the grid with its own live
-  preview, stored in your user folder so it survives updates.
-- **The backend now starts itself.** Previously it only ran if the
-  installer's final "start the service" step fired — after a reboot, a
-  crash, or a manual quit, the panel just said "not running" with no way to
-  recover except finding the executable yourself. It now launches on
-  demand when the panel opens, finds a free port on its own, and the panel
-  discovers wherever it landed.
-- **Precompose, Parent to Controller, and Copy Effects all actually work
-  now.** Each looked functional but silently did nothing (or, for
-  Precompose, actively broke on a second run) until this build.
+- **A silent render was reported as a successful transcription of nothing.**
+  If After Effects handed Capset audio with no sound in it, the pipeline
+  transcribed the silence and cheerfully reported "0 words → 0 captions" —
+  sending you to look for a transcription bug that was really a render
+  setting. Silence is now caught in two places, before and after the render,
+  and says which switch to go and check. Every transcription also reports what
+  it measured (length, level, how the audio was divided), so an empty result
+  explains itself.
+
+- **The animations were not being applied.** This is the big one. Every
+  entrance was built with its range selector sweeping the wrong way, and in
+  After Effects a range selector controls *how much* of an animation reaches
+  each character — so the animator's influence went from nothing, to
+  everything, back to nothing, and each character sat at its normal size and
+  full opacity at both ends of the phase. Scale entrances never started small.
+  Fades never faded. "Pop" did not pop. Every keyframe was real and nothing
+  read them. Fixed, and the test suite now checks the resulting *motion*
+  rather than that keyframes were written.
+
+Also new, once the animations actually ran:
+
+- **A real spring.** Animations settle now — past the target, back short of
+  it, converging — instead of a single overshoot that arrives and leaves at
+  constant speed.
+- **Fourteen presets**, up from seven: Word Pop, Hormozi, Impact, Bounce Up,
+  Flash, Rise, Drop, Squash, Spin, Blur In, Shout, Karaoke Fill, Tighten and
+  Typewriter. The short-form pops are retuned to the timings the styles they
+  imitate actually use.
+- **Animation length in frames or seconds.** The old "resolve within %" slider
+  was a cap rather than a length and did nothing at all on any caption of 1.2
+  seconds or longer, at any position. Length can now be set outright and
+  applies identically to every caption, while still being shortened on a
+  caption too short to hold it.
+- **Apply to all captions now uses your settings.** It was falling back to
+  built-in defaults and ignoring the panel entirely.
+- **Removing every caption asks first**, and changing a setting while a
+  transcription is running no longer silently changes the result you get.
 
 ## What's in it
 
@@ -76,10 +86,11 @@ Also new:
   characters per line, following Netflix practice), and smart, which reads
   the comp's aspect ratio and picks a layout: a vertical comp gets short
   punchy captions, a horizontal one gets traditional two-line subtitles.
-- **Duration-adaptive animations**, with a real short-form preset library
-  and live previews in the panel — see "What's new" above. Each animation
-  scales to the caption it is on, so a 0.3s word resolves early instead of
-  a fixed animation still moving after the word has gone.
+- **Fourteen animation presets** with live previews in the panel, each
+  settling on a spring rather than a single overshoot — see "What's new"
+  above. Set a length in frames or seconds to give every caption the same
+  timing, or leave it on Auto to scale each animation to its own caption so a
+  0.3s word resolves early instead of still moving after the word has gone.
 - **Save and reuse your own presets**, alongside the built-in library.
 - **Swap animations freely.** Replace on selected layers or on all of them.
   Everything Capset creates is prefixed, so a swap is an exact teardown and
@@ -123,10 +134,13 @@ enables unsigned extensions, since this build is not code-signed.
 
 ## Known limitations
 
-- **Not run in real After Effects yet.** Extensive testing against a
-  simulated host caught real bugs (see "What's new"), but match names,
-  precompose semantics, and Character panel behaviour in an actual host
-  remain unverified. This is the biggest remaining unknown.
+- **Only just run in real After Effects.** The four failures above were
+  found in the first sessions, and each one hid the next: nothing could be
+  learned about the animations until Add Captions ran at all. Expect more of
+  the same. Precompose semantics, Character panel behaviour and several
+  render-queue settings remain unverified against a real host, and the fix for
+  audio output uses a setting name that is documented by the community rather
+  than by Adobe.
 - **Unsigned.** Windows SmartScreen will warn — *More info* → *Run anyway*.
   Some antivirus may flag the PyInstaller binary; this is a known
   false-positive pattern for unsigned Python bundles.

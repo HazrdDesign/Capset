@@ -35,15 +35,30 @@ current decisions and supersedes the original scaffold where they conflict.
 
 | Component | State |
 |---|---|
-| Backend (Parakeet, chunking, job API) | Implemented, 59 tests |
-| Panel (UI, segmentation, timing, animations) | Implemented, 48 tests |
-| Installer (Windows + macOS scripts, CI) | Implemented, unbuilt |
-| **Verified inside After Effects** | **Not yet** |
+| Backend (Parakeet, chunking, job API) | Implemented, 148 tests |
+| Panel (UI, segmentation, timing, animations) | Implemented, 262 tests |
+| Installer (Windows + macOS scripts, CI) | Implemented, shipping |
+| **Verified inside After Effects** | **Partly — see below** |
 
-107 automated tests, green in CI. The After Effects integration has not been
-run in After Effects — the ExtendScript follows Adobe's scripting reference
-rather than a live host. That is the next thing worth doing, and it will
-shake out more than additional code will.
+410 automated tests, green in CI.
+
+The plugin now runs in real After Effects, and the first sessions there found
+four failures in a row that no amount of testing had caught: a one-character
+typo that stopped the host script parsing at all, a project sample rate the
+speech engine rejects outright, a silent render reported as a successful
+transcription of nothing, and — once the rest worked — animations that were
+never being applied, because the range selector was sweeping the wrong way.
+
+Each of those hid the next, which is the thing to expect from here: nothing
+could be learned about the animations until Add Captions ran at all. What has
+run in a real host now works; what has not run is still unproven, and the list
+of what falls in that second group is in
+[`docs/RELEASE-NOTES-v0.1.md`](docs/RELEASE-NOTES-v0.1.md).
+
+The pattern behind all four is worth naming, because it is the one that keeps
+biting: each was verified by reading documentation rather than by running the
+code, against a test suite that shared the code's own assumptions. The fakes
+in `panel/tests/` have since been taught the semantics they were missing.
 
 To cut a release, see [`docs/RELEASING.md`](docs/RELEASING.md).
 
