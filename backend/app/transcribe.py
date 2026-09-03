@@ -72,10 +72,10 @@ class Transcriber:
         if peak < SILENT_PEAK:
             raise AudioError(
                 "The audio After Effects rendered is silent (%s over %.1fs). "
-                "Capset transcribed it but there was nothing to hear. Check "
-                "that the layer's audio is switched on, that it is not muted "
-                "by another layer's solo, and that Render Settings > Audio "
-                "Output is not set to Off."
+                "There was nothing to transcribe. Check that the layer's "
+                "audio is switched on and not muted by another layer's solo, "
+                "and that audio output is enabled in the Render Queue's "
+                "Output Module and Render Settings."
                 % (describe_level(peak), duration)
             )
 

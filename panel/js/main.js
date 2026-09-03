@@ -676,6 +676,15 @@
           log("Select just the voice layer for better accuracy — music mixed " +
               "into the audio costs recognition quality.", "warn");
         }
+        // Uncompressed PCM is ~176 KB/s at 44.1kHz stereo 16-bit, so a real
+        // take is orders of magnitude larger than this. Saying the size out
+        // loud makes a bad render visible at the moment it happens, rather
+        // than as an empty transcript two steps later.
+        // ExtendScript reports -1 for a file it cannot stat; that is "unknown",
+        // not "empty", and printing "-0 KB" would be worse than saying nothing.
+        if (rendered.bytes > 0) {
+          log("Rendered " + Math.round(rendered.bytes / 1024) + " KB of audio.");
+        }
         return rendered;
       });
   }

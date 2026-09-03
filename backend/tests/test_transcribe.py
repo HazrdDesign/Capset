@@ -180,9 +180,10 @@ def test_silent_audio_is_an_error_not_an_empty_success(monkeypatch):
 
     message = str(excinfo.value)
     assert "silent" in message.lower()
-    # The message has to name what to go and check, or it is just a nicer way
+    # The message has to name where to go and look, or it is just a nicer way
     # of saying "0 words".
-    assert "Audio Output" in message
+    assert "Render Queue" in message
+    assert "audio output" in message.lower()
     assert engine.calls == [], "silent audio should not reach the engine at all"
 
 

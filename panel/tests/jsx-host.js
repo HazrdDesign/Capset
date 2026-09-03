@@ -32,6 +32,16 @@ function makeFile() {
   Object.defineProperty(File.prototype, "exists", {
     get() { return fake.writtenFiles.has(this.fsName); }
   });
+  // ExtendScript's File.length is the size in bytes. The host script uses it
+  // to reject a render that produced a header and no samples, so the fake has
+  // to answer it or that check is untestable.
+  Object.defineProperty(File.prototype, "length", {
+    configurable: true,   // so a test can simulate a file it cannot stat
+    get() {
+      const bytes = fake.writtenFiles.get(this.fsName);
+      return bytes === undefined ? -1 : bytes;
+    }
+  });
   File.prototype.open = function () { return false; };
   File.prototype.read = function () { return ""; };
   File.prototype.close = function () {};

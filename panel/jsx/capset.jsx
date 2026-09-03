@@ -511,6 +511,26 @@ function capsetAudibleLayers(comp) {
  * templates include "AIFF 48kHz" and may not include WAV at all, so AIFF is
  * a likely outcome rather than an edge case. app/audio.py reads both.
  */
+/**
+ * Re-read an output module after its settings have been changed.
+ *
+ * After Effects invalidates the OutputModule object when a setting is
+ * modified -- applyTemplate() and setSetting() both count -- so a reference
+ * taken beforehand is stale, and assigning `.file` on a stale one sends the
+ * render somewhere we never look for it. Adobe's scripting reference
+ * documents this as a bug and says to retrieve the module again.
+ *
+ * Falls back to the caller's reference: a host where this fails is still
+ * better served by the old object than by nothing.
+ */
+function capsetRefetchOutputModule(item, fallback) {
+    try {
+        return item.outputModule(1) || fallback;
+    } catch (e) {
+        return fallback;
+    }
+}
+
 function capsetFindAudioTemplate(outputModule) {
     var available;
     try {
@@ -640,6 +660,24 @@ function capsetRenderAudio(payloadJson) {
             );
         }
         om.applyTemplate(template.name);
+        om = capsetRefetchOutputModule(item, om);
+
+        // Ask for audio explicitly. A render that writes a valid file with no
+        // samples in it is the failure this is guarding against, and it is
+        // invisible until a transcription comes back empty.
+        //
+        // Confidence here is lower than the rest of this function: the key is
+        // documented by the community as "Output Audio" on the OUTPUT MODULE
+        // (values "On"/"Off"/"Auto"), not in Adobe's own reference, and
+        // setSetting itself only exists from CC 2014. A wrong key throws,
+        // which is why this is wrapped and advisory -- if it does not take, we
+        // still catch the empty file below rather than shipping silence.
+        try {
+            om.setSetting("Output Audio", "On");
+            om = capsetRefetchOutputModule(item, om);
+        } catch (e) {
+            // Older host, different key, or a format with no audio switch.
+        }
 
         var target = new File(
             Folder.temp.fsName + "/capset_" + new Date().getTime() + template.extension
@@ -669,12 +707,34 @@ function capsetRenderAudio(payloadJson) {
             );
         }
 
+        // Catch a failed render HERE, before uploading it and waiting for a
+        // transcription to come back empty. A WAV header alone is 44 bytes,
+        // and an AIFF header is smaller than 128, so anything at or under
+        // that carries no samples at all -- which is what a render with audio
+        // switched off produces. A real user lost an evening to this arriving
+        // as "0 words" several steps downstream.
+        var bytes = 0;
+        try { bytes = produced.length; } catch (e) { bytes = 0; }
+        if (bytes > 0 && bytes <= 128) {
+            throw new Error(
+                "After Effects rendered an empty audio file (" + bytes +
+                " bytes) — a header with no sound in it. Audio output is " +
+                "switched off somewhere in the render: open the Render Queue " +
+                "and check both the Output Module (Audio Output should be on) " +
+                "and Render Settings, then try again."
+            );
+        }
+
         return capsetOk({
             path: produced.fsName,
             start: start,
             duration: duration,
             template: template.name,
             layers: audible,
+            // Surfaced so the panel can say how much audio it actually got
+            // before it uploads. An implausibly small file for the requested
+            // duration is the earliest visible sign of a silent render.
+            bytes: bytes,
             // So the panel can say WHAT it transcribed. Getting captions for
             // the wrong layer with no indication of which one was used is a
             // confusing failure to debug.
