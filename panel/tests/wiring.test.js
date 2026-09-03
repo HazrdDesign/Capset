@@ -222,3 +222,35 @@ test("capture refreshes the comp it is capturing from", () => {
     "capture() reads the comp info after capturing, which is too late"
   );
 });
+
+test("re-applying an animation sends real timings, not an empty map", () => {
+  // applyAnimation used to post `timingsById: {}`, so the host fell through to
+  // a hardcoded copy of the fraction rules and the length chosen in the panel
+  // was ignored on every layer. That is most of why the timing controls
+  // appeared to do nothing.
+  const src = functionBody("applyAnimation");
+  assert.ok(
+    /capsetCaptionLayerTimes/.test(src),
+    "applyAnimation does not ask the host for layer durations, so it cannot " +
+    "compute real timings"
+  );
+  assert.ok(
+    /timingsFor\(/.test(src),
+    "applyAnimation does not use timingsFor(), the one tested implementation"
+  );
+  assert.ok(
+    !/timingsById:\s*\{\s*\}/.test(src),
+    "applyAnimation still sends an empty timings map"
+  );
+});
+
+test("the host's fallback timing rules are a last resort, not the norm", () => {
+  // A second copy of the fraction rules lives in capset.jsx for layers the
+  // panel knows nothing about. It is allowed to exist, but nothing in the
+  // normal path should be relying on it.
+  const jsx = fs.readFileSync(path.join(ROOT, "jsx", "capset.jsx"), "utf8");
+  assert.ok(
+    /capsetCaptionLayerTimes/.test(jsx),
+    "the host cannot report layer durations, so the panel cannot avoid the fallback"
+  );
+});

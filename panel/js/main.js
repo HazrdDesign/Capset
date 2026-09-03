@@ -573,9 +573,20 @@
         "so they survive updates.";
   }
 
-  function timingsFor(caption, animation, resolvePercent) {
+  /**
+   * Turn the length control into an explicit duration in seconds, or 0 for
+   * "auto", which leaves the per-animation fraction rules in charge.
+   */
+  function explicitLength(settings) {
+    if (!settings || settings.lengthMode === "auto") return 0;
+    var rate = state.compInfo ? state.compInfo.frameRate : 30;
+    return timing.toSeconds(settings.lengthValue, settings.lengthMode, rate);
+  }
+
+  function timingsFor(caption, animation, resolvePercent, lengthSeconds) {
     var duration = caption.end - caption.start;
     var spec = { maxInFraction: Number(resolvePercent) / 100 };
+    if (lengthSeconds > 0) spec.inSeconds = lengthSeconds;
     // A karaoke fill is supposed to run the length of the caption — that IS
     // the effect. The resolve-early cap exists so an entrance is not still
     // moving when the word disappears, which is a different thing, so an
@@ -646,6 +657,8 @@
       scope: radio("duration"),
       mode: $("opt-split").checked ? "word" : $("mode").value,
       resolve: Number($("resolve").value),
+      lengthMode: $("length-mode").value,
+      lengthValue: Number($("length-value").value),
       animation: state.selectedAnimation,
       options: {
         precompose: $("opt-precompose").checked,
@@ -767,13 +780,14 @@
       .then(function (payload) {
         setProgress(0.94, "Building layers…");
         var animation = settings.animation;
+        var lengthSeconds = explicitLength(settings);
         var captions = payload.captions.map(function (caption) {
           return {
             text: caption.text,
             lines: caption.lines,
             start: caption.start,
             end: caption.end,
-            timings: timingsFor(caption, animation, settings.resolve)
+            timings: timingsFor(caption, animation, settings.resolve, lengthSeconds)
           };
         });
         return host("capsetBuildCaptions(" + arg({
@@ -878,12 +892,32 @@
 
   function applyAnimation(scope) {
     if (!state.selectedAnimation) { log("Pick an animation first.", "err"); return; }
+    var settings = captureSettings();
+    var animation = settings.animation;
+    var target = scope === "all" ? "all" : "selected";
     setBusy(true);
-    host("capsetReplaceAnimation(" + arg({
-      animation: state.selectedAnimation,
-      scope: scope === "all" ? "all" : "selected",
-      timingsById: {}
-    }) + ")")
+
+    // Ask the host for each layer's duration and compute the timings HERE.
+    // This used to send an empty map, so the host fell back to a hardcoded
+    // copy of the fraction rules and the length chosen in the panel was
+    // silently ignored on every layer -- which is most of why changing the
+    // timing settings appeared to do nothing.
+    host("capsetCaptionLayerTimes(" + arg({ scope: target }) + ")")
+      .then(function (info) {
+        var lengthSeconds = explicitLength(settings);
+        var timingsById = {};
+        (info.layers || []).forEach(function (entry) {
+          timingsById[entry.name] = timingsFor(
+            { start: 0, end: entry.duration },
+            animation, settings.resolve, lengthSeconds
+          );
+        });
+        return host("capsetReplaceAnimation(" + arg({
+          animation: animation,
+          scope: target,
+          timingsById: timingsById
+        }) + ")");
+      })
       .then(function (data) {
         log("Animated " + data.changed + " layer(s).", "ok");
       })
@@ -941,6 +975,29 @@
   $("resolve").addEventListener("input", function () {
     $("resolve-value").textContent = $("resolve").value;
   });
+
+  function refreshLengthControl() {
+    var mode = $("length-mode").value;
+    $("length-row").hidden = mode === "auto";
+    if (mode === "auto") return;
+    // Frames and seconds want completely different numbers in the box; a "12"
+    // left over from frames means twelve SECONDS of animation on every
+    // caption, which is not a setting anyone intends.
+    var input = $("length-value");
+    if (mode === "frames") {
+      input.step = "1";
+      input.value = String(Math.max(1, Math.round(Number(input.value) || 8)));
+    } else {
+      input.step = "0.05";
+      var rate = state.compInfo ? state.compInfo.frameRate : 30;
+      var seconds = Number(input.value) || 0;
+      if (seconds > 5) seconds = seconds / (rate || 30);   // came from frames
+      input.value = String(Math.round((seconds || 0.35) * 100) / 100);
+    }
+  }
+
+  $("length-mode").addEventListener("change", refreshLengthControl);
+  refreshLengthControl();
   $("mode").addEventListener("change", function () {
     var hints = {
       smart: "Reads the comp's aspect ratio and picks a layout.",

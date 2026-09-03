@@ -857,3 +857,72 @@ test("solo is restored even when the render fails", () => {
   assert.throws(() => h.call("capsetRenderAudio", { scope: "composition" }));
   assert.strictEqual(voice.solo, false);
 });
+
+// --- re-applying an animation to existing layers ----------------------------
+//
+// "Apply to all captions" used to send an empty timings map, so the host fell
+// through to a hardcoded copy of the fraction rules and the length chosen in
+// the panel was ignored on every layer. The panel now asks for each layer's
+// duration and computes timings with the one tested implementation.
+
+test("caption layer times are reported for the whole comp", () => {
+  const h = load();
+  h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+
+  const info = h.call("capsetCaptionLayerTimes", { scope: "all" });
+
+  assert.strictEqual(info.layers.length, CAPTIONS.length);
+  info.layers.forEach((entry) => {
+    assert.ok(entry.duration > 0, "every layer needs a usable duration");
+    assert.ok(entry.name, "timings are keyed by name, so it must be present");
+  });
+});
+
+test("reported names match the keys replaceAnimation looks up", () => {
+  // These are two separate host calls and the map between them is by name; a
+  // mismatch would silently fall back to the defaults for every layer.
+  const h = load();
+  h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+
+  const reported = h.call("capsetCaptionLayerTimes", { scope: "all" })
+    .layers.map((l) => l.name).sort();
+  const actual = captionLayers(h.comp).map((l) => l.name).sort();
+
+  assert.deepStrictEqual(reported, actual);
+});
+
+test("the comp frame rate comes back so frames can be converted", () => {
+  const h = load({ frameRate: 24 });
+  h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+  const info = h.call("capsetCaptionLayerTimes", { scope: "all" });
+  assert.strictEqual(info.frameRate, 24);
+});
+
+test("supplied timings are used instead of the built-in fallback", () => {
+  const h = load();
+  h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+  const names = captionLayers(h.comp).map((l) => l.name);
+
+  const timingsById = {};
+  // A length nothing in the fallback rules would ever produce.
+  names.forEach((n) => {
+    timingsById[n] = { inStart: 0, inDuration: 0.123, outStart: 0.5, outDuration: 0 };
+  });
+
+  h.call("capsetReplaceAnimation", {
+    animation: { id: "pop", basedOn: "characters",
+      in: { properties: [{ type: "opacity", from: 0, to: 100 }] } },
+    scope: "all",
+    timingsById: timingsById
+  });
+
+  const layer = captionLayers(h.comp)[0];
+  const animators = layer.property("ADBE Text Properties").property("ADBE Text Animators");
+  const prop = animators.property(1)
+    .property("ADBE Text Animator Properties").property(1);
+  const span = prop.keyTime(prop.numKeys) - prop.keyTime(1);
+  assert.ok(
+    Math.abs(span - 0.123) < 1e-6,
+    "the supplied 0.123s was ignored; the phase ran for " + span.toFixed(3) + "s"
+  );
+});
