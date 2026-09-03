@@ -1,0 +1,1503 @@
+<title>Capset Motion Bench</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+  /* Deliberately single-theme. Caption motion is judged against video, and a
+     light ground would flatter animations that vanish on real footage. Every
+     colour is painted explicitly so the page holds on either host ground. */
+  :root {
+    --ground:  #101216;
+    --stage:   #0A0B0E;
+    --panel:   #191D24;
+    --raised:  #1F242D;
+    --line:    #2A303B;
+    --ink:     #E8EBF0;
+    --muted:   #868FA0;
+    --dim:     #5B6373;
+    --punch:   #FFC947;   /* the yellow these captions actually use */
+    --travel:  #5EC8F2;
+    --settle:  #7BE0A5;
+    --font-ui: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    --font-num: "IBM Plex Mono", ui-monospace, monospace;
+    --font-cap: "Anton", "Arial Black", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .masthead {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px 16px;
+    padding: 20px 24px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .masthead h1 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .masthead p { margin: 0; color: var(--muted); font-size: 13px; max-width: 62ch; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 340px;
+    gap: 1px;
+    background: var(--line);
+    min-height: calc(100vh - 74px);
+  }
+  @media (max-width: 900px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+
+  .left, .right { background: var(--ground); min-width: 0; }
+  .right { padding: 16px; display: flex; flex-direction: column; gap: 18px; }
+
+  /* --- stage --------------------------------------------------------- */
+
+  .stage {
+    background: var(--stage);
+    aspect-ratio: 16 / 9;
+    max-height: 46vh;
+    display: grid;
+    place-items: center;
+    position: relative;
+    overflow: hidden;
+    border-bottom: 1px solid var(--line);
+  }
+  .stage::after {
+    /* A faint safe-area guide, the way a comp shows one. */
+    content: "";
+    position: absolute;
+    inset: 10%;
+    border: 1px dashed rgba(134, 143, 160, 0.16);
+    pointer-events: none;
+  }
+  #caption {
+    font-family: var(--font-cap);
+    font-size: clamp(28px, 6vw, 62px);
+    text-transform: uppercase;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    -webkit-text-stroke: 3px #000;
+    paint-order: stroke fill;
+    display: flex;
+    gap: 0.28em;
+  }
+  #caption .unit { display: inline-block; will-change: transform, opacity; }
+  #caption .ch { display: inline-block; }
+
+  .scrub {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--font-num);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .scrub input[type=range] { flex: 1; accent-color: var(--punch); }
+  .frame-read { font-variant-numeric: tabular-nums; color: var(--ink); min-width: 12ch; }
+
+  .graph-wrap { padding: 14px 16px 18px; }
+  .graph-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 8px; gap: 12px; flex-wrap: wrap;
+  }
+  .graph-head h2 {
+    margin: 0; font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted);
+  }
+  .legend { display: flex; gap: 14px; font-size: 11px; color: var(--dim); font-family: var(--font-num); }
+  .legend b { font-weight: 500; }
+  .swatch { display: inline-block; width: 10px; height: 2px; vertical-align: middle; margin-right: 5px; }
+  canvas { width: 100%; height: 190px; display: block; }
+
+  .keys { margin-top: 14px; }
+  table { width: 100%; border-collapse: collapse; font-family: var(--font-num); font-size: 12px; }
+  th {
+    text-align: left; font-weight: 500; color: var(--dim); font-family: var(--font-ui);
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+    padding: 0 10px 6px 0; border-bottom: 1px solid var(--line);
+  }
+  td { padding: 5px 10px 5px 0; color: var(--ink); font-variant-numeric: tabular-nums; }
+  td.label { color: var(--muted); }
+  tbody tr + tr td { border-top: 1px solid rgba(42, 48, 59, 0.55); }
+
+  /* --- controls ------------------------------------------------------- */
+
+  .group { border: 1px solid var(--line); border-radius: 4px; background: var(--panel); }
+  .group > h2 {
+    margin: 0; padding: 9px 12px;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.09em;
+    text-transform: uppercase; color: var(--muted);
+    border-bottom: 1px solid var(--line);
+  }
+  .group .body { padding: 12px; display: flex; flex-direction: column; gap: 11px; }
+
+  label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  select, input[type=text], input[type=number] {
+    width: 100%; background: var(--raised); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 3px;
+    padding: 6px 8px; font-family: var(--font-ui); font-size: 13px;
+  }
+  input[type=number] { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+  select:focus-visible, input:focus-visible, button:focus-visible {
+    outline: 2px solid var(--punch); outline-offset: 1px;
+  }
+
+  .row { display: flex; align-items: center; gap: 10px; }
+  .row label { margin: 0; flex: 1; }
+  .row .val {
+    font-family: var(--font-num); font-size: 12px; color: var(--ink);
+    font-variant-numeric: tabular-nums; min-width: 6ch; text-align: right;
+  }
+  input[type=range] { flex: 1.4; accent-color: var(--punch); min-width: 0; }
+
+  .prop {
+    border: 1px solid var(--line); border-radius: 3px;
+    background: var(--raised); padding: 10px; display: flex;
+    flex-direction: column; gap: 9px;
+  }
+  .prop-head {
+    display: flex; justify-content: space-between; align-items: center;
+    font-family: var(--font-num); font-size: 12px; color: var(--punch);
+  }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+  button {
+    background: var(--raised); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 3px;
+    padding: 7px 12px; font-family: var(--font-ui); font-size: 12px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--punch); color: #16181D; border-color: var(--punch); font-weight: 600; }
+  button.primary:hover { filter: brightness(1.08); }
+
+  /* --- output --------------------------------------------------------- */
+
+  .out { padding: 0 16px 24px; }
+  .out-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .out-head h2 {
+    margin: 0; font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted);
+  }
+  pre {
+    margin: 0; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 4px; padding: 12px; overflow-x: auto;
+    font-family: var(--font-num); font-size: 12px; line-height: 1.55;
+    color: var(--ink);
+  }
+  .note { color: var(--dim); font-size: 12px; margin: 10px 0 0; max-width: 68ch; }
+  code { font-family: var(--font-num); color: var(--muted); }
+
+  @media (prefers-reduced-motion: reduce) {
+    #caption .unit { transition: none !important; }
+  }
+</style>
+
+<header class="masthead">
+  <h1>Capset Motion Bench</h1>
+  <p>
+    Tune a caption animation against the same maths the panel and After Effects
+    use, then paste the result straight into <code>animations.json</code>.
+  </p>
+</header>
+
+<div class="layout">
+  <div class="left">
+    <div class="stage">
+      <div id="caption" aria-live="off"></div>
+    </div>
+
+    <div class="scrub">
+      <button id="play" type="button">Pause</button>
+      <input id="time" type="range" min="0" max="1000" value="0" aria-label="Scrub through the phase">
+      <span class="frame-read" id="frameRead">frame 0 / 12</span>
+    </div>
+
+    <div class="graph-wrap">
+      <div class="graph-head">
+        <h2>Value through the phase</h2>
+        <div class="legend">
+          <span><i class="swatch" style="background:var(--travel)"></i><b>first unit</b></span>
+          <span><i class="swatch" style="background:var(--settle)"></i><b>last unit</b></span>
+          <span><i class="swatch" style="background:var(--dim)"></i><b>rest</b></span>
+        </div>
+      </div>
+      <canvas id="graph" width="1200" height="380"></canvas>
+
+      <div class="keys">
+        <table>
+          <thead>
+            <tr><th>Keyframe</th><th>Frame</th><th>Time</th><th id="valHead">Value</th></tr>
+          </thead>
+          <tbody id="keyRows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="out">
+      <div class="out-head">
+        <h2>animations.json</h2>
+        <button id="copy" type="button">Copy</button>
+      </div>
+      <pre id="json"></pre>
+      <p class="note">
+        Overshoot is measured against the <em>travel</em>, not the target: scaling
+        12&nbsp;&rarr;&nbsp;100 at 1.15 peaks at 113.2, and a position sliding
+        &minus;74&nbsp;&rarr;&nbsp;0 at 1.30 passes +22 before coming back. Multiplying
+        the target instead would do nothing whenever the target is zero, which is
+        every position animation.
+      </p>
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="group">
+      <h2>Preset</h2>
+      <div class="body">
+        <div>
+          <label for="preset">Start from</label>
+          <select id="preset"></select>
+        </div>
+        <div>
+          <label for="name">Name</label>
+          <input id="name" type="text" autocomplete="off">
+        </div>
+        <div class="pair">
+          <div>
+            <label for="basedOn">Stagger by</label>
+            <select id="basedOn">
+              <option value="characters">Characters</option>
+              <option value="words">Words</option>
+              <option value="lines">Lines</option>
+            </select>
+          </div>
+          <div>
+            <label for="sample">Preview text</label>
+            <input id="sample" type="text" value="THIS CHANGED EVERYTHING" autocomplete="off">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>Timing</h2>
+      <div class="body">
+        <div class="row">
+          <label for="frames">Length</label>
+          <input id="frames" type="range" min="2" max="40" step="1" value="10">
+          <span class="val" id="framesVal">10f</span>
+        </div>
+        <div class="row">
+          <label for="fps">Comp rate</label>
+          <select id="fps">
+            <option>23.976</option><option>24</option><option>25</option>
+            <option selected>30</option><option>50</option><option>60</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="easeIn">Ease in <small>influence</small></label>
+          <input id="easeIn" type="range" min="0" max="100" step="1" value="72">
+          <span class="val" id="easeInVal">72</span>
+        </div>
+        <div class="row">
+          <label for="easeOut">Ease out</label>
+          <input id="easeOut" type="range" min="0" max="100" step="1" value="8">
+          <span class="val" id="easeOutVal">8</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>Properties</h2>
+      <div class="body" id="props"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // These three mirror capsetSpringKeys in panel/jsx/capset.jsx and
+  // springStops in panel/js/lib/preview.js. If they drift, this bench starts
+  // lying about what After Effects will do — which is the exact failure that
+  // let a broken range selector ship for a whole release.
+  var OVERSHOOT_PEAK = 0.65;
+  var MAX_BOUNCES = 4;
+  var DEFAULT_DAMPING = 0.5;
+  var STAGGER = 0.7;
+
+  var REST = {
+    scale: [100, 100], opacity: 100, position: [0, 0], rotation: 0,
+    blur: [0, 0], tracking: 0, fillColor: null
+  };
+  var UNITS = {
+    scale: "%", opacity: "%", position: "px", rotation: "°",
+    blur: "px", tracking: "", fillColor: ""
+  };
+
+  var PRESETS = [
+    {
+      "id": "word-pop",
+      "name": "Word Pop",
+      "description": "Scale punch with a spring settle. The short-form default — reads instantly at speed.",
+      "tags": [
+        "capcut",
+        "tiktok",
+        "word-by-word"
+      ],
+      "basedOn": "characters",
+      "in": {
+        "fraction": 0.34,
+        "min": 0.2,
+        "max": 0.38,
+        "properties": [
+          {
+            "type": "scale",
+            "from": [
+              12,
+              12
+            ],
+            "to": [
+              100,
+              100
+            ],
+            "overshoot": 1.15,
+            "bounces": 3,
+            "damping": 0.45
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 72,
+          "out": 8
+        }
+      }
+    },
+    {
+      "id": "hormozi",
+      "name": "Hormozi",
+      "description": "Punches in from an accent colour and settles into yours, with a rotation kick.",
+      "tags": [
+        "capcut",
+        "tiktok",
+        "word-by-word",
+        "colour"
+      ],
+      "basedOn": "characters",
+      "in": {
+        "fraction": 0.34,
+        "min": 0.2,
+        "max": 0.4,
+        "properties": [
+          {
+            "type": "scale",
+            "from": [
+              10,
+              10
+            ],
+            "to": [
+              100,
+              100
+            ],
+            "overshoot": 1.2,
+            "bounces": 3,
+            "damping": 0.45
+          },
+          {
+            "type": "rotation",
+            "from": -7,
+            "to": 0,
+            "overshoot": 1.3
+          },
+          {
+            "type": "fillColor",
+            "from": [
+              1,
+              0.84,
+              0.16
+            ],
+            "to": "$textColor"
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 75,
+          "out": 8
+        }
+      }
+    },
+    {
+      "id": "karaoke",
+      "name": "Karaoke Fill",
+      "description": "Colour sweeps word by word across the caption as it is spoken.",
+      "tags": [
+        "karaoke",
+        "phrase",
+        "colour"
+      ],
+      "basedOn": "words",
+      "spansLayer": true,
+      "in": {
+        "fraction": 1,
+        "min": 0.3,
+        "max": 30,
+        "properties": [
+          {
+            "type": "fillColor",
+            "from": [
+              0.42,
+              1,
+              0.44
+            ],
+            "to": "$textColor"
+          }
+        ],
+        "ease": {
+          "in": 0,
+          "out": 0
+        }
+      }
+    },
+    {
+      "id": "impact",
+      "name": "Impact",
+      "description": "Slams in oversized and snaps to size through a blur. Heavy hits.",
+      "tags": [
+        "capcut",
+        "tiktok",
+        "word-by-word"
+      ],
+      "basedOn": "characters",
+      "in": {
+        "fraction": 0.3,
+        "min": 0.18,
+        "max": 0.34,
+        "properties": [
+          {
+            "type": "scale",
+            "from": [
+              168,
+              168
+            ],
+            "to": [
+              100,
+              100
+            ],
+            "overshoot": 1.06,
+            "bounces": 2,
+            "damping": 0.4
+          },
+          {
+            "type": "blur",
+            "from": [
+              46,
+              46
+            ],
+            "to": [
+              0,
+              0
+            ]
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 78,
+          "out": 8
+        }
+      }
+    },
+    {
+      "id": "bounce-up",
+      "name": "Bounce Up",
+      "description": "Springs up from below and overshoots before settling.",
+      "tags": [
+        "capcut",
+        "phrase",
+        "word-by-word"
+      ],
+      "basedOn": "words",
+      "in": {
+        "fraction": 0.36,
+        "min": 0.24,
+        "max": 0.48,
+        "properties": [
+          {
+            "type": "position",
+            "from": [
+              0,
+              96
+            ],
+            "to": [
+              0,
+              0
+            ],
+            "overshoot": 1.32,
+            "bounces": 3,
+            "damping": 0.55
+          },
+          {
+            "type": "scale",
+            "from": [
+              82,
+              82
+            ],
+            "to": [
+              100,
+              100
+            ],
+            "overshoot": 1.08,
+            "bounces": 2,
+            "damping": 0.5
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 70,
+          "out": 8
+        }
+      },
+      "out": {
+        "fraction": 0.16,
+        "min": 0.07,
+        "max": 0.22,
+        "properties": [
+          {
+            "type": "scale",
+            "from": [
+              100,
+              100
+            ],
+            "to": [
+              88,
+              88
+            ]
+          },
+          {
+            "type": "opacity",
+            "from": 100,
+            "to": 0
+          }
+        ],
+        "ease": {
+          "in": 12,
+          "out": 78
+        }
+      }
+    },
+    {
+      "id": "tracking-in",
+      "name": "Tighten",
+      "description": "Letters draw together into place. Clean, editorial, not shouty.",
+      "tags": [
+        "phrase",
+        "editorial"
+      ],
+      "basedOn": "characters",
+      "in": {
+        "fraction": 0.32,
+        "min": 0.14,
+        "max": 0.42,
+        "properties": [
+          {
+            "type": "tracking",
+            "from": 26,
+            "to": 0
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 62,
+          "out": 8
+        }
+      }
+    },
+    {
+      "id": "typewriter",
+      "name": "Typewriter",
+      "description": "Characters appear one at a time, hard cut, no fade.",
+      "tags": [
+        "phrase"
+      ],
+      "basedOn": "characters",
+      "in": {
+        "fraction": 0.55,
+        "min": 0.2,
+        "max": 1.2,
+        "properties": [
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 0,
+          "out": 0
+        }
+      }
+    },
+    {
+      "id": "flash",
+      "name": "Flash",
+      "description": "Every word lands at once on a spring. MrBeast-style: no cascade, all impact.",
+      "tags": [
+        "mrbeast",
+        "tiktok",
+        "phrase"
+      ],
+      "basedOn": "lines",
+      "in": {
+        "fraction": 0.3,
+        "min": 0.18,
+        "max": 0.34,
+        "properties": [
+          {
+            "type": "scale",
+            "from": [
+              80,
+              80
+            ],
+            "to": [
+              100,
+              100
+            ],
+            "overshoot": 1.12,
+            "bounces": 3,
+            "damping": 0.5
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 74,
+          "out": 6
+        }
+      }
+    },
+    {
+      "id": "rise",
+      "name": "Rise",
+      "description": "Lifts into place from below without scaling. Calm, and never covers the shot.",
+      "tags": [
+        "editorial",
+        "phrase",
+        "word-by-word"
+      ],
+      "basedOn": "words",
+      "in": {
+        "fraction": 0.32,
+        "min": 0.2,
+        "max": 0.42,
+        "properties": [
+          {
+            "type": "position",
+            "from": [
+              0,
+              42
+            ],
+            "to": [
+              0,
+              0
+            ],
+            "overshoot": 1.18,
+            "bounces": 2,
+            "damping": 0.45
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 70,
+          "out": 8
+        }
+      }
+    },
+    {
+      "id": "drop",
+      "name": "Drop",
+      "description": "Falls in from above and bounces on landing. Playful, reads big.",
+      "tags": [
+        "capcut",
+        "tiktok",
+        "word-by-word"
+      ],
+      "basedOn": "words",
+      "in": {
+        "fraction": 0.36,
+        "min": 0.24,
+        "max": 0.46,
+        "properties": [
+          {
+            "type": "position",
+            "from": [
+              0,
+              -74
+            ],
+            "to": [
+              0,
+              0
+            ],
+            "overshoot": 1.3,
+            "bounces": 3,
+            "damping": 0.5
+          },
+          {
+            "type": "scale",
+            "from": [
+              88,
+              88
+            ],
+            "to": [
+              100,
+              100
+            ],
+            "overshoot": 1.08,
+            "bounces": 2,
+            "damping": 0.5
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 68,
+          "out": 8
+        }
+      }
+    },
+    {
+      "id": "squash",
+      "name": "Squash",
+      "description": "Squashes wide then snaps tall. The most cartoon-physical of the set.",
+      "tags": [
+        "capcut",
+        "tiktok",
+        "word-by-word"
+      ],
+      "basedOn": "characters",
+      "in": {
+        "fraction": 0.32,
+        "min": 0.2,
+        "max": 0.38,
+        "properties": [
+          {
+            "type": "scale",
+            "from": [
+              138,
+              62
+            ],
+            "to": [
+              100,
+              100
+            ],
+            "overshoot": 1.16,
+            "bounces": 3,
+            "damping": 0.5
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 72,
+          "out": 8
+        }
+      }
+    },
+    {
+      "id": "spin",
+      "name": "Spin",
+      "description": "Twists in with a scale punch. Energetic without moving position.",
+      "tags": [
+        "tiktok",
+        "word-by-word"
+      ],
+      "basedOn": "characters",
+      "in": {
+        "fraction": 0.32,
+        "min": 0.2,
+        "max": 0.4,
+        "properties": [
+          {
+            "type": "rotation",
+            "from": -24,
+            "to": 0,
+            "overshoot": 1.25,
+            "bounces": 3,
+            "damping": 0.45
+          },
+          {
+            "type": "scale",
+            "from": [
+              46,
+              46
+            ],
+            "to": [
+              100,
+              100
+            ],
+            "overshoot": 1.12,
+            "bounces": 2,
+            "damping": 0.5
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 74,
+          "out": 8
+        }
+      }
+    },
+    {
+      "id": "blur-in",
+      "name": "Blur In",
+      "description": "Resolves out of a blur at full size. Soft, and never fights the footage.",
+      "tags": [
+        "editorial",
+        "phrase"
+      ],
+      "basedOn": "words",
+      "in": {
+        "fraction": 0.34,
+        "min": 0.22,
+        "max": 0.46,
+        "properties": [
+          {
+            "type": "blur",
+            "from": [
+              38,
+              38
+            ],
+            "to": [
+              0,
+              0
+            ]
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 66,
+          "out": 10
+        }
+      }
+    },
+    {
+      "id": "shout",
+      "name": "Shout",
+      "description": "Overshoots hard and settles slowly. The loudest thing in the library.",
+      "tags": [
+        "mrbeast",
+        "tiktok",
+        "word-by-word"
+      ],
+      "basedOn": "characters",
+      "in": {
+        "fraction": 0.36,
+        "min": 0.24,
+        "max": 0.44,
+        "properties": [
+          {
+            "type": "scale",
+            "from": [
+              8,
+              8
+            ],
+            "to": [
+              100,
+              100
+            ],
+            "overshoot": 1.34,
+            "bounces": 4,
+            "damping": 0.55
+          },
+          {
+            "type": "rotation",
+            "from": 6,
+            "to": 0,
+            "overshoot": 1.2,
+            "bounces": 3,
+            "damping": 0.5
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 76,
+          "out": 6
+        }
+      }
+    }
+  ];
+
+  // --- maths, kept identical to the panel -----------------------------
+
+  function lerp(from, to, k) {
+    if (Array.isArray(from) || Array.isArray(to)) {
+      var a = Array.isArray(from) ? from : [from, from];
+      var b = Array.isArray(to) ? to : [to, to];
+      var out = [];
+      for (var i = 0; i < Math.max(a.length, b.length); i++) {
+        out.push(lerp(a[i] === undefined ? 0 : a[i], b[i] === undefined ? 0 : b[i], k));
+      }
+      return out;
+    }
+    return from + (to - from) * k;
+  }
+
+  function overshootValue(from, to, overshoot) {
+    var extra = overshoot - 1;
+    if (Array.isArray(to)) {
+      var out = [];
+      for (var i = 0; i < to.length; i++) {
+        var start = Array.isArray(from) ? from[i] : from;
+        out.push(to[i] + (to[i] - start) * extra);
+      }
+      return out;
+    }
+    return to + (to - from) * extra;
+  }
+
+  function springStops(from, to, overshoot, bounces, damping) {
+    var stops = [{ at: 0, value: from }];
+    if (overshoot > 1) {
+      var count = bounces > 0 ? Math.floor(bounces) : 1;
+      if (count > MAX_BOUNCES) count = MAX_BOUNCES;
+      var decay = (damping > 0 && damping < 1) ? damping : DEFAULT_DAMPING;
+      var amplitude = overshoot - 1;
+      for (var i = 0; i < count; i++) {
+        var signed = 1 + amplitude * (i % 2 === 0 ? 1 : -1);
+        stops.push({
+          at: OVERSHOOT_PEAK + (1 - OVERSHOOT_PEAK) * (i / (count + 1)),
+          value: overshootValue(from, to, signed)
+        });
+        amplitude *= decay;
+      }
+    }
+    stops.push({ at: 1, value: to });
+    return stops;
+  }
+
+  function clamp01(v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
+
+  function bezierX(t, x1, x2) {
+    var u = 1 - t;
+    return 3 * u * u * t * x1 + 3 * u * t * t * x2 + t * t * t;
+  }
+  function bezierY(t) { var u = 1 - t; return 3 * u * t * t + t * t * t; }
+
+  function easing(easeIn, easeOut) {
+    var x1 = clamp01((easeOut === undefined ? 66 : easeOut) / 100);
+    var x2 = 1 - clamp01((easeIn === undefined ? 33 : easeIn) / 100);
+    return function (x) {
+      var t = clamp01(x), i;
+      for (i = 0; i < 8; i++) {
+        var err = bezierX(t, x1, x2) - x;
+        if (Math.abs(err) < 1e-5) return bezierY(t);
+        var slope = 3 * (1 - t) * (1 - t) * x1 + 6 * (1 - t) * t * (x2 - x1) + 3 * t * t * (1 - x2);
+        if (Math.abs(slope) < 1e-6) break;
+        t = clamp01(t - err / slope);
+      }
+      var lo = 0, hi = 1;
+      for (i = 0; i < 20; i++) {
+        t = (lo + hi) / 2;
+        if (bezierX(t, x1, x2) < x) lo = t; else hi = t;
+      }
+      return bezierY(t);
+    };
+  }
+
+  function sampleStops(stops, local, ease) {
+    for (var i = 0; i < stops.length - 1; i++) {
+      var a = stops[i], b = stops[i + 1];
+      if (local <= b.at || i === stops.length - 2) {
+        var span = b.at - a.at;
+        var k = span <= 0 ? 1 : clamp01((local - a.at) / span);
+        var shaped = (i === 0 || i === stops.length - 2) ? ease(k) : k;
+        return lerp(a.value, b.value, shaped);
+      }
+    }
+    return stops[stops.length - 1].value;
+  }
+
+  /** A unit's own progress, given the stagger across units. */
+  function staggered(progress, index, count, share) {
+    if (count <= 1) return clamp01(progress);
+    var slot = (index / (count - 1)) * share;
+    var span = 1 - share;
+    if (span <= 0) return progress >= slot ? 1 : 0;
+    return clamp01((progress - slot) / span);
+  }
+
+  // --- state -----------------------------------------------------------
+
+  var state = null;      // the animation being tuned
+  var playing = true;
+  var manualT = 0;
+  var started = performance.now();
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  function currentFps() { return parseFloat($("fps").value) || 30; }
+  function currentFrames() { return parseInt($("frames").value, 10) || 10; }
+  function phaseSeconds() { return currentFrames() / currentFps(); }
+
+  // --- building the controls -------------------------------------------
+
+  function propControl(prop, index) {
+    var wrap = document.createElement("div");
+    wrap.className = "prop";
+
+    var head = document.createElement("div");
+    head.className = "prop-head";
+    head.innerHTML = "<span>" + prop.type + "</span><span>" + (UNITS[prop.type] || "") + "</span>";
+    wrap.appendChild(head);
+
+    var isVec = Array.isArray(prop.from);
+    var fromWrap = document.createElement("div");
+    fromWrap.className = isVec ? "pair" : "";
+    (isVec ? prop.from : [prop.from]).forEach(function (v, dim) {
+      var field = document.createElement("div");
+      var id = "p" + index + "from" + dim;
+      field.innerHTML = '<label for="' + id + '">from ' + (isVec ? "xy"[dim] || dim : "") + '</label>';
+      var input = document.createElement("input");
+      input.type = "number"; input.id = id; input.step = "1"; input.value = v;
+      input.addEventListener("input", function () {
+        var n = parseFloat(input.value);
+        if (!isFinite(n)) return;
+        if (isVec) prop.from[dim] = n; else prop.from = n;
+        render();
+      });
+      field.appendChild(input);
+      fromWrap.appendChild(field);
+    });
+    wrap.appendChild(fromWrap);
+
+    if (prop.overshoot !== undefined || prop.type === "scale" ||
+        prop.type === "position" || prop.type === "rotation") {
+      wrap.appendChild(slider("Overshoot", prop.overshoot || 1, 1, 1.6, 0.01,
+        function (v) { prop.overshoot = v; }, function (v) { return v.toFixed(2) + "×"; }));
+      wrap.appendChild(slider("Bounces", prop.bounces || 1, 1, MAX_BOUNCES, 1,
+        function (v) { prop.bounces = v; }, function (v) { return String(v); }));
+      wrap.appendChild(slider("Damping", prop.damping || DEFAULT_DAMPING, 0.2, 0.85, 0.05,
+        function (v) { prop.damping = v; }, function (v) { return v.toFixed(2); }));
+    }
+    return wrap;
+  }
+
+  function slider(label, value, min, max, step, onChange, format) {
+    var row = document.createElement("div");
+    row.className = "row";
+    var lab = document.createElement("label");
+    lab.textContent = label;
+    var input = document.createElement("input");
+    input.type = "range"; input.min = min; input.max = max; input.step = step; input.value = value;
+    var out = document.createElement("span");
+    out.className = "val";
+    out.textContent = format(parseFloat(value));
+    input.addEventListener("input", function () {
+      var v = parseFloat(input.value);
+      out.textContent = format(v);
+      onChange(v);
+      render();
+    });
+    row.appendChild(lab); row.appendChild(input); row.appendChild(out);
+    return row;
+  }
+
+  function loadPreset(id) {
+    var found = PRESETS.filter(function (p) { return p.id === id; })[0];
+    state = JSON.parse(JSON.stringify(found));
+    $("name").value = state.name;
+    $("basedOn").value = state.basedOn || "characters";
+    var seconds = state["in"].max || 0.35;
+    $("frames").value = String(Math.max(2, Math.round(seconds * currentFps())));
+    $("framesVal").textContent = $("frames").value + "f";
+    $("easeIn").value = (state["in"].ease && state["in"].ease["in"]) || 70;
+    $("easeOut").value = (state["in"].ease && state["in"].ease.out) || 8;
+    $("easeInVal").textContent = $("easeIn").value;
+    $("easeOutVal").textContent = $("easeOut").value;
+
+    var props = $("props");
+    props.innerHTML = "";
+    state["in"].properties.forEach(function (p, i) {
+      if (p.from === "$textColor" || p.to === "$textColor") return;  // colour is not tuned here
+      props.appendChild(propControl(p, i));
+    });
+    if (!props.children.length) {
+      props.innerHTML = '<p class="note" style="margin:0">This preset animates colour only, ' +
+        'which resolves to the caption’s own fill at apply time and has nothing ' +
+        'numeric to tune.</p>';
+    }
+    buildUnits();
+    render();
+  }
+
+  // --- the stage --------------------------------------------------------
+
+  var units = [];
+
+  function buildUnits() {
+    var text = ($("sample").value || "CAPSET").toUpperCase();
+    var basedOn = $("basedOn").value;
+    var caption = $("caption");
+    caption.innerHTML = "";
+    units = [];
+
+    var pieces = basedOn === "words" ? text.split(/\s+/).filter(Boolean)
+               : basedOn === "lines" ? [text]
+               : text.split(/\s+/).filter(Boolean);
+
+    pieces.forEach(function (piece) {
+      var word = document.createElement("span");
+      word.className = "unit";
+      if (basedOn === "characters") {
+        // Characters stagger individually but still sit inside their word.
+        piece.split("").forEach(function (ch) {
+          var span = document.createElement("span");
+          span.className = "ch unit";
+          span.textContent = ch;
+          word.appendChild(span);
+          units.push(span);
+        });
+        word.classList.remove("unit");
+      } else {
+        word.textContent = piece;
+        units.push(word);
+      }
+      caption.appendChild(word);
+    });
+  }
+
+  function valuesAt(local) {
+    var out = {};
+    if (!state || !state["in"]) return out;
+    var ease = easing(parseFloat($("easeIn").value), parseFloat($("easeOut").value));
+    state["in"].properties.forEach(function (spec) {
+      if (spec.from === "$textColor" || spec.to === "$textColor") return;
+      var stops = springStops(spec.from, spec.to, Number(spec.overshoot),
+                              Number(spec.bounces), Number(spec.damping));
+      out[spec.type] = sampleStops(stops, local, ease);
+    });
+    return out;
+  }
+
+  function paint(progress) {
+    var count = units.length || 1;
+    units.forEach(function (el, i) {
+      var local = staggered(progress, i, count, STAGGER);
+      var v = valuesAt(local);
+      var t = [];
+      if (v.position) t.push("translate(" + v.position[0].toFixed(1) + "px," + v.position[1].toFixed(1) + "px)");
+      if (v.scale) t.push("scale(" + (v.scale[0] / 100).toFixed(3) + "," + (v.scale[1] / 100).toFixed(3) + ")");
+      if (v.rotation !== undefined) t.push("rotate(" + v.rotation.toFixed(1) + "deg)");
+      el.style.transform = t.join(" ") || "none";
+      el.style.opacity = v.opacity === undefined ? 1 : (v.opacity / 100);
+      el.style.filter = v.blur ? "blur(" + Math.max(0, v.blur[0] / 6).toFixed(2) + "px)" : "none";
+      el.style.letterSpacing = v.tracking === undefined ? "" : (v.tracking / 12) + "px";
+      el.style.color = "#fff";
+    });
+  }
+
+  // --- the graph --------------------------------------------------------
+
+  function primarySpec() {
+    if (!state || !state["in"]) return null;
+    var list = state["in"].properties.filter(function (p) {
+      return p.from !== "$textColor" && p.to !== "$textColor";
+    });
+    return list[0] || null;
+  }
+
+  function scalarOf(value, spec) {
+    if (Array.isArray(value)) {
+      // Report the axis that actually moves: every position animation in the
+      // library travels on Y, so showing X would draw a flat line.
+      var from = Array.isArray(spec.from) ? spec.from : [spec.from, spec.from];
+      var to = Array.isArray(spec.to) ? spec.to : [spec.to, spec.to];
+      var dim = Math.abs(to[1] - from[1]) > Math.abs(to[0] - from[0]) ? 1 : 0;
+      return value[dim];
+    }
+    return value;
+  }
+
+  function drawGraph() {
+    var canvas = $("graph");
+    var spec = primarySpec();
+    var ctx = canvas.getContext("2d");
+    var w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    if (!spec) return;
+
+    var pad = { l: 54, r: 14, t: 16, b: 26 };
+    var ease = easing(parseFloat($("easeIn").value), parseFloat($("easeOut").value));
+    var stops = springStops(spec.from, spec.to, Number(spec.overshoot),
+                            Number(spec.bounces), Number(spec.damping));
+    var count = units.length || 1;
+
+    var series = [0, count - 1].map(function (index) {
+      var pts = [];
+      for (var i = 0; i <= 240; i++) {
+        var p = i / 240;
+        var local = staggered(p, index, count, STAGGER);
+        pts.push({ x: p, y: scalarOf(sampleStops(stops, local, ease), spec) });
+      }
+      return pts;
+    });
+
+    var restVal = scalarOf(REST[spec.type] === null ? 0 : REST[spec.type], spec);
+    var all = series[0].concat(series[1]).map(function (p) { return p.y; }).concat([restVal]);
+    var lo = Math.min.apply(null, all), hi = Math.max.apply(null, all);
+    if (hi - lo < 1e-6) { hi += 1; lo -= 1; }
+    var padY = (hi - lo) * 0.14;
+    lo -= padY; hi += padY;
+
+    var X = function (x) { return pad.l + x * (w - pad.l - pad.r); };
+    var Y = function (y) { return pad.t + (1 - (y - lo) / (hi - lo)) * (h - pad.t - pad.b); };
+
+    // gridlines at values the axis actually reaches
+    ctx.font = "500 15px 'IBM Plex Mono', monospace";
+    ctx.textBaseline = "middle";
+    var ticks = 4;
+    for (var g = 0; g <= ticks; g++) {
+      var val = lo + (hi - lo) * (g / ticks);
+      var y = Y(val);
+      ctx.strokeStyle = "rgba(42,48,59,0.85)";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke();
+      ctx.fillStyle = "#5B6373";
+      ctx.textAlign = "right";
+      ctx.fillText(val.toFixed(0), pad.l - 8, y);
+    }
+
+    // the rest pose
+    ctx.strokeStyle = "#5B6373";
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(pad.l, Y(restVal)); ctx.lineTo(w - pad.r, Y(restVal)); ctx.stroke();
+    ctx.setLineDash([]);
+
+    [["#5EC8F2", series[0]], ["#7BE0A5", series[1]]].forEach(function (pair) {
+      if (count <= 1 && pair[0] === "#7BE0A5") return;
+      ctx.strokeStyle = pair[0];
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      pair[1].forEach(function (p, i) {
+        var px = X(p.x), py = Y(p.y);
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+    });
+
+    // playhead
+    var pt = playing ? ((performance.now() - started) / 1000 % (phaseSeconds() + 0.55)) / phaseSeconds()
+                     : manualT;
+    if (pt >= 0 && pt <= 1) {
+      ctx.strokeStyle = "#FFC947";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(X(pt), pad.t); ctx.lineTo(X(pt), h - pad.b); ctx.stroke();
+    }
+
+    ctx.fillStyle = "#5B6373";
+    ctx.textAlign = "left";
+    ctx.fillText("0f", pad.l, h - pad.b + 12);
+    ctx.textAlign = "right";
+    ctx.fillText(currentFrames() + "f", w - pad.r, h - pad.b + 12);
+  }
+
+  function drawKeys() {
+    var spec = primarySpec();
+    var body = $("keyRows");
+    body.innerHTML = "";
+    $("valHead").textContent = spec ? spec.type : "Value";
+    if (!spec) return;
+
+    var stops = springStops(spec.from, spec.to, Number(spec.overshoot),
+                            Number(spec.bounces), Number(spec.damping));
+    var fps = currentFps(), frames = currentFrames();
+    var names = ["from-pose"];
+    for (var i = 1; i < stops.length - 1; i++) names.push(i === 1 ? "peak" : "settle " + (i - 1));
+    names.push("target");
+
+    stops.forEach(function (stop, i) {
+      var tr = document.createElement("tr");
+      var frame = stop.at * frames;
+      var val = scalarOf(stop.value, spec);
+      tr.innerHTML =
+        '<td class="label">' + names[i] + "</td>" +
+        "<td>" + frame.toFixed(1) + "</td>" +
+        "<td>" + (frame / fps).toFixed(3) + "s</td>" +
+        "<td>" + val.toFixed(1) + (UNITS[spec.type] || "") + "</td>";
+      body.appendChild(tr);
+    });
+  }
+
+  // --- output -----------------------------------------------------------
+
+  function outputJson() {
+    if (!state) return "";
+    var seconds = phaseSeconds();
+    var out = {
+      id: state.id,
+      name: $("name").value || state.name,
+      description: state.description,
+      tags: state.tags,
+      basedOn: $("basedOn").value,
+      "in": {
+        fraction: state["in"].fraction,
+        min: Math.round(seconds * 0.7 * 100) / 100,
+        max: Math.round(seconds * 100) / 100,
+        properties: state["in"].properties.map(function (p) {
+          var clean = { type: p.type, from: p.from, to: p.to };
+          if (p.overshoot > 1) {
+            clean.overshoot = Math.round(p.overshoot * 100) / 100;
+            if (p.bounces > 1) clean.bounces = Math.floor(p.bounces);
+            if (p.damping) clean.damping = Math.round(p.damping * 100) / 100;
+          }
+          return clean;
+        }),
+        ease: {
+          "in": parseInt($("easeIn").value, 10),
+          out: parseInt($("easeOut").value, 10)
+        }
+      }
+    };
+    if (state.out) out.out = state.out;
+    if (state.spansLayer) out.spansLayer = true;
+    return JSON.stringify(out, null, 2);
+  }
+
+  function render() {
+    drawGraph();
+    drawKeys();
+    $("json").textContent = outputJson();
+  }
+
+  // --- loop --------------------------------------------------------------
+
+  function frame() {
+    var cycle = phaseSeconds() + 0.55;
+    var p;
+    if (playing) {
+      p = ((performance.now() - started) / 1000 % cycle) / phaseSeconds();
+      if (p > 1) p = 1;
+      $("time").value = String(Math.round(clamp01(p) * 1000));
+    } else {
+      p = manualT;
+    }
+    paint(clamp01(p));
+    $("frameRead").textContent =
+      "frame " + (clamp01(p) * currentFrames()).toFixed(1) + " / " + currentFrames();
+    drawGraph();
+    requestAnimationFrame(frame);
+  }
+
+  // --- wiring -------------------------------------------------------------
+
+  PRESETS.forEach(function (p) {
+    var opt = document.createElement("option");
+    opt.value = p.id;
+    opt.textContent = p.name;
+    $("preset").appendChild(opt);
+  });
+
+  $("preset").addEventListener("change", function () { loadPreset($("preset").value); });
+  $("basedOn").addEventListener("change", function () { buildUnits(); render(); });
+  $("sample").addEventListener("input", function () { buildUnits(); render(); });
+  $("name").addEventListener("input", render);
+  $("fps").addEventListener("change", render);
+
+  $("frames").addEventListener("input", function () {
+    $("framesVal").textContent = $("frames").value + "f";
+    render();
+  });
+  ["easeIn", "easeOut"].forEach(function (id) {
+    $(id).addEventListener("input", function () {
+      $(id + "Val").textContent = $(id).value;
+      render();
+    });
+  });
+
+  $("play").addEventListener("click", function () {
+    playing = !playing;
+    $("play").textContent = playing ? "Pause" : "Play";
+    if (playing) started = performance.now();
+  });
+
+  $("time").addEventListener("input", function () {
+    playing = false;
+    $("play").textContent = "Play";
+    manualT = parseInt($("time").value, 10) / 1000;
+  });
+
+  $("copy").addEventListener("click", function () {
+    var text = outputJson();
+    var done = function () {
+      $("copy").textContent = "Copied";
+      setTimeout(function () { $("copy").textContent = "Copy"; }, 1400);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, done);
+    } else { done(); }
+  });
+
+  loadPreset(PRESETS[0].id);
+  frame();
+})();
+</script>
