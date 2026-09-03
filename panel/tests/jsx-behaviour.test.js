@@ -926,3 +926,124 @@ test("supplied timings are used instead of the built-in fallback", () => {
     "the supplied 0.123s was ignored; the phase ran for " + span.toFixed(3) + "s"
   );
 });
+
+// --- every preset in the shipped library actually animates -------------------
+//
+// The library is data, so a preset can be syntactically perfect and do
+// nothing: a typo'd property type is skipped silently, and a from-pose equal
+// to the rest pose is a no-op. Both look exactly like a working preset in the
+// JSON, and the whole library was in that state until the range selector was
+// fixed. This walks the real library through the real host and checks each
+// entry produces motion.
+
+const LIBRARY = require("../animations/animations.json");
+
+const REST = {
+  scale: [100, 100, 100], opacity: 100, position: [0, 0, 0], rotation: 0,
+  blur: [0, 0, 0], tracking: 0, fillColor: [1, 1, 1], strokeColor: [1, 1, 1],
+  strokeWidth: 0
+};
+const MATCH = {
+  scale: "ADBE Text Scale 3D", opacity: "ADBE Text Opacity",
+  position: "ADBE Text Position 3D", rotation: "ADBE Text Rotation",
+  blur: "ADBE Text Blur", tracking: "ADBE Text Tracking Amount",
+  fillColor: "ADBE Text Fill Color", strokeColor: "ADBE Text Stroke Color",
+  strokeWidth: "ADBE Text Stroke Width"
+};
+
+/**
+ * Distance over the dimensions the definition actually declares.
+ *
+ * Two traps here, both of which produced a test that could not fail:
+ *
+ * - Position animations move on Y, so comparing only component 0 says nothing.
+ * - capsetToValue pads a 2D value to [x, y, 0], but the resting Z of a scale
+ *   is 100, so a padded scale always sits 100 away from rest on Z alone. That
+ *   swamped the comparison and made every preset look like it animated, even
+ *   one whose from-pose was identical to its rest pose.
+ *
+ * So: compare exactly the components the spec provides, and no more.
+ */
+function distance(a, b, dims) {
+  const A = Array.isArray(a) ? a : [a];
+  const B = Array.isArray(b) ? b : [b];
+  const n = dims || Math.max(A.length, B.length);
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const d = (A[i] || 0) - (B[i] || 0);
+    sum += d * d;
+  }
+  return Math.sqrt(sum);
+}
+
+/** How many components a from/to value declares. */
+function dimsOf(value) {
+  return Array.isArray(value) ? value.length : 1;
+}
+
+function applyLibraryAnimation(animation) {
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: [{ text: "one two", start: 0, end: 2,
+      timings: { inStart: 0, inDuration: 0.4, outStart: 1.8, outDuration: 0.2 } }],
+    style: {}, options: {}, animation
+  });
+  const layer = captionLayers(h.comp)[0];
+  const animators = layer.property("ADBE Text Properties").property("ADBE Text Animators");
+  let entrance = null;
+  for (let i = 1; i <= animators.numProperties; i++) {
+    if (/__in$/.test(animators.property(i).name)) entrance = animators.property(i);
+  }
+  return entrance;
+}
+
+LIBRARY.animations.forEach((animation) => {
+  if (animation.id === "none") return;      // the deliberate opt-out
+
+  test(`the "${animation.name}" preset actually animates`, () => {
+    const entrance = applyLibraryAnimation(animation);
+    assert.ok(entrance, animation.id + " built no entrance animator at all");
+
+    const spec = animation["in"].properties[0];
+    const matchName = MATCH[spec.type];
+    assert.ok(matchName, animation.id + ' animates unknown property "' + spec.type + '"');
+    const rest = REST[spec.type];
+    const tolerance = spec.type === "fillColor" ? 0.02 : 0.5;
+    const dims = dimsOf(spec.from);
+
+    const atStart = ae.effectiveValue(entrance, matchName, 0, 0, 6, rest);
+    assert.ok(
+      distance(atStart, rest, dims) > tolerance,
+      animation.id + " starts at its resting pose (" + JSON.stringify(atStart) +
+      "), so the entrance is invisible"
+    );
+
+    // NOT asserted by sampling the end of the phase: at that point the
+    // selector covers nothing, so the character is at its resting pose
+    // whatever the animator says. That check passes for every possible
+    // definition and proves nothing. The real requirement is on the data --
+    // an entrance has to TARGET the resting pose, or characters resolve
+    // towards the wrong value on their way through the sweep.
+    const target = spec.to === "$textColor" ? rest : spec.to;
+    assert.ok(
+      distance(target, rest, dims) < tolerance,
+      animation.id + " is an entrance that targets " + JSON.stringify(spec.to) +
+      " instead of the resting pose " + JSON.stringify(rest) +
+      ", so its characters resolve to the wrong value"
+    );
+  });
+});
+
+test("every property type the library uses is one the host can apply", () => {
+  // addProperty is wrapped in try/catch and skips on failure, so a typo'd type
+  // is silently dropped and the preset just does less than it claims.
+  const used = new Set();
+  LIBRARY.animations.forEach((a) => {
+    ["in", "out"].forEach((phase) => {
+      (a[phase] && a[phase].properties ? a[phase].properties : [])
+        .forEach((p) => used.add(p.type));
+    });
+  });
+  const unknown = [...used].filter((t) => !MATCH[t]);
+  assert.deepStrictEqual(unknown, [], "property types the host cannot apply");
+});
