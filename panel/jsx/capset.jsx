@@ -43,6 +43,19 @@ function capsetActiveComp() {
 }
 
 /** Round to whole frames so layers land on frame boundaries, not between. */
+/**
+ * Whitespace-trim a string.
+ *
+ * String.prototype.trim is ES5 and ExtendScript is ES3, so it is not there --
+ * and panel/tests/jsx.test.js bans it outright, because reaching for it does
+ * not fail loudly at the call site, it fails at PARSE time and takes the whole
+ * file with it.
+ */
+function capsetTrim(value) {
+    return String(value === undefined || value === null ? "" : value)
+        .replace(/^\s+/, "").replace(/\s+$/, "");
+}
+
 function capsetSnap(comp, seconds) {
     if (!comp.frameDuration) return seconds;
     return Math.round(seconds / comp.frameDuration) * comp.frameDuration;
@@ -1322,10 +1335,31 @@ function capsetBuildCaptions(payloadJson) {
             var caption = captions[i];
             var text = caption.lines ? caption.lines.join("\r") : caption.text;
 
+            // Nothing to show. An empty text layer is invisible but real: it
+            // sits in the timeline, gets counted as a caption, and is one more
+            // thing to delete by hand. Transcripts do produce these.
+            if (!text || !capsetTrim(text).length) continue;
+
             var layer = comp.layers.addText(text);
             layer.name = CAPSET_PREFIX + "cap_" + (i + 1);
-            layer.inPoint = capsetSnap(comp, offset + caption.start);
-            layer.outPoint = capsetSnap(comp, offset + caption.end);
+
+            var inPoint = capsetSnap(comp, offset + caption.start);
+            var outPoint = capsetSnap(comp, offset + caption.end);
+            // Guarantee at least one frame. Two ways to get here, and the
+            // second is the common one:
+            //
+            //   - the recogniser emitted a word whose end is at or before its
+            //     start, which it does at chunk boundaries;
+            //   - a genuinely short word -- fast speech easily produces 20ms
+            //     -- snapped both ends onto the SAME frame.
+            //
+            // Either way the layer would have zero length and never appear, so
+            // the caption silently goes missing rather than being brief.
+            if (outPoint <= inPoint) {
+                outPoint = inPoint + comp.frameDuration;
+            }
+            layer.inPoint = inPoint;
+            layer.outPoint = outPoint;
 
             capsetStyleText(layer, style, comp);
 

@@ -85,6 +85,9 @@ def merge_chunks(results: list[tuple[Chunk, list[Word]]]) -> list[Word]:
 
     ordered = sorted(results, key=lambda pair: pair[0].start)
     merged: list[Word] = []
+    # Where two chunks overlap, both transcribed the same audio. Recorded so
+    # the de-duplication below can be confined to exactly those windows.
+    overlaps: list[tuple[float, float]] = []
 
     for index, (chunk, words) in enumerate(ordered):
         absolute = offset_words(words, chunk.start)
@@ -94,6 +97,7 @@ def merge_chunks(results: list[tuple[Chunk, list[Word]]]) -> list[Word]:
             previous = ordered[index - 1][0]
             if previous.end > chunk.start:  # overlapping
                 lower = (chunk.start + previous.end) / 2.0
+                overlaps.append((chunk.start, previous.end))
 
         upper = float("inf")
         if index + 1 < len(ordered):
@@ -104,4 +108,44 @@ def merge_chunks(results: list[tuple[Chunk, list[Word]]]) -> list[Word]:
         merged.extend(w for w in absolute if lower <= w.start < upper)
 
     merged.sort(key=lambda w: (w.start, w.end))
-    return merged
+    return _drop_boundary_repeats(merged, overlaps)
+
+
+def _drop_boundary_repeats(
+    words: list[Word], overlaps: list[tuple[float, float]]
+) -> list[Word]:
+    """Remove a word the midpoint split let through twice.
+
+    Splitting an overlap at its midpoint assigns each word to one chunk by
+    where it STARTS, which is exact only while both chunks agree on that time.
+    At a boundary they often do not: the same word, recognised once with the
+    audio before it and once with the audio after it, can be placed tens of
+    milliseconds apart and land either side of the midpoint. Both copies then
+    survive and the caption reads "the the".
+
+    Confined to the overlap windows on purpose. A word genuinely said twice
+    ("very very good") is not at a chunk boundary in general, and removing it
+    would be a worse bug than the one being fixed -- so outside those windows
+    nothing is touched at all.
+    """
+    if not overlaps:
+        return words
+
+    def inside_overlap(word: Word) -> bool:
+        return any(start <= word.start <= end for start, end in overlaps)
+
+    kept: list[Word] = []
+    for word in words:
+        if kept:
+            previous = kept[-1]
+            same_text = previous.text.strip().lower() == word.text.strip().lower()
+            # Touching counts: the two copies meet where the split cut them.
+            adjacent = word.start <= previous.end + 1e-6
+            if same_text and adjacent and inside_overlap(word):
+                # Keep the longer span: the copy clipped by the chunk edge is
+                # the shorter one, and its timing is the less trustworthy.
+                if (word.end - word.start) > (previous.end - previous.start):
+                    kept[-1] = word
+                continue
+        kept.append(word)
+    return kept

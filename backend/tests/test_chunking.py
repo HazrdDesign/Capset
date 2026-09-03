@@ -187,3 +187,75 @@ def test_end_to_end_plan_then_merge_covers_a_long_file():
         assert earlier.start <= later.start
     assert 0.0 <= merged[0].start < 1.0
     assert merged[-1].start <= 90.0
+
+
+# --- duplicates at a chunk boundary ------------------------------------------
+
+def test_a_word_reported_twice_across_a_boundary_appears_once():
+    """The midpoint split assigns a word by where it STARTS, which is exact
+    only while both chunks agree on that time. At a boundary they often do
+    not: the same word, heard once with the audio before it and once with the
+    audio after it, can be placed tens of milliseconds apart and land either
+    side of the midpoint. Both copies survived and the caption read "the the".
+    """
+    first, second = Chunk(0.0, 20.0), Chunk(18.0, 38.0)   # midpoint 19.0
+    words = merge_chunks([
+        (first, [Word(text="the", start=18.9, end=19.1)]),
+        (second, [Word(text="the", start=1.1, end=1.5)]),   # -> 19.1 absolute
+    ])
+
+    assert [w.text for w in words] == ["the"], (
+        "the same word survived twice: %r" % [(w.text, w.start) for w in words]
+    )
+
+
+def test_the_longer_span_wins_at_a_boundary():
+    """The copy clipped by the chunk edge is the shorter one, and its timing
+    is the less trustworthy of the two."""
+    first, second = Chunk(0.0, 20.0), Chunk(18.0, 38.0)
+    words = merge_chunks([
+        (first, [Word(text="the", start=18.9, end=19.1)]),   # 0.2s, clipped
+        (second, [Word(text="the", start=1.1, end=1.5)]),    # 0.4s, complete
+    ])
+
+    assert len(words) == 1
+    assert words[0].end - words[0].start == pytest.approx(0.4)
+
+
+def test_a_word_genuinely_said_twice_at_a_boundary_survives():
+    """The dangerous half of the fix. Removing a real repetition would be a
+    worse bug than the duplication it is guarding against, so a repeat with an
+    actual gap between the two utterances has to come through intact."""
+    first, second = Chunk(0.0, 20.0), Chunk(18.0, 38.0)
+    words = merge_chunks([
+        (first, [Word(text="very", start=18.6, end=18.8)]),
+        (second, [Word(text="very", start=1.0, end=1.2)]),   # -> 19.0, a gap
+    ])
+
+    assert [w.text for w in words] == ["very", "very"], (
+        "a genuine repetition was swallowed: %r" % [(w.text, w.start) for w in words]
+    )
+
+
+def test_a_repeated_word_away_from_any_overlap_is_never_touched():
+    """De-duplication is confined to the overlap windows, where duplication is
+    structurally possible. Everywhere else a repeat is the speaker's.
+
+    Deliberately built with TWO overlapping chunks so the de-duplication pass
+    actually runs. An earlier version of this test used a single chunk, which
+    meant there were no overlap windows at all and the pass returned early --
+    so it passed just as happily with the confinement removed, and proved
+    nothing about the thing it was named after.
+    """
+    first, second = Chunk(0.0, 20.0), Chunk(18.0, 38.0)
+    words = merge_chunks([
+        # Touching repeats at t=5, far from the 18-20 overlap window.
+        (first, [Word(text="very", start=5.0, end=5.2),
+                 Word(text="very", start=5.2, end=5.4)]),
+        (second, [Word(text="later", start=10.0, end=10.4)]),
+    ])
+
+    assert [w.text for w in words] == ["very", "very", "later"], (
+        "a repetition outside the overlap window was swallowed: %r"
+        % [(w.text, w.start) for w in words]
+    )

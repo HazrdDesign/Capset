@@ -11,7 +11,7 @@ import logging
 import numpy as np
 import pytest
 
-from app.vad import MIN_ENERGY_RETAINED, detect_speech
+from app.vad import MIN_ENERGY_RETAINED, _energy_spans, detect_speech
 
 SR = 16_000
 
@@ -105,9 +105,29 @@ def test_continuous_speech_falls_back_to_the_whole_file():
     assert detected(noise(11.0)) == pytest.approx(11.0, abs=0.1)
 
 
-def test_silence_only_input_is_not_reported_as_speech():
+def test_the_energy_gate_finds_no_speech_in_silence():
+    """The gate's own answer, which is the part with content.
+
+    This replaces an assertion that could not fail: it checked that the total
+    detected duration of a 5-second file was <= 5 seconds. detect_speech can
+    only return [] (total 0) or the whole file (total 5.0), so every possible
+    implementation passed. The name claimed the opposite of the behaviour, too
+    -- silence IS reported as one whole-file span, deliberately.
+    """
+    assert _energy_spans(np.zeros(int(5 * SR), dtype=np.float32), SR) == []
+
+
+def test_silence_falls_back_to_the_whole_file():
+    """The deliberate design, stated so a change to it is a visible decision.
+
+    detect_speech never returns nothing: when the gate finds no speech the
+    whole file is transcribed instead. Losing speech costs the user their
+    work, and transcribing silence costs a few seconds -- so the fallback is
+    the safe direction, and the backend now rejects genuinely silent audio
+    before it reaches here anyway.
+    """
     spans = detect_speech(np.zeros(int(5 * SR), dtype=np.float32), SR)
-    assert sum(e - s for s, e in spans) <= 5.0
+    assert spans == [(0.0, 5.0)]
 
 
 def test_empty_input_does_not_raise():

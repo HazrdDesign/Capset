@@ -169,3 +169,23 @@ test("no saved presets leaves the built-in library untouched", () => {
   const builtIns = [{ id: "a" }, { id: "b" }];
   assert.deepStrictEqual(presets.merge(builtIns, []), builtIns);
 });
+
+test("saving over one of two same-named presets keeps the other", () => {
+  // upsert replaced the first match and then SKIPPED every later one, so a
+  // list already holding two presets called "Punch" came back holding one.
+  // A saved preset the user cannot see is gone as soon as the file is
+  // written back.
+  const existing = [
+    { id: "a", name: "Punch", animation: {} },
+    { id: "b", name: "Punch", animation: {} },
+    { id: "c", name: "Slide", animation: {} }
+  ];
+
+  const after = presets.upsert(existing, { id: "new", name: "Punch", animation: {} });
+
+  assert.strictEqual(after.length, 3, "a preset was dropped: " +
+    after.map((p) => p.id).join(", "));
+  assert.ok(after.some((p) => p.id === "new"), "the new preset was not saved");
+  assert.ok(after.some((p) => p.id === "b"), "the second Punch was discarded");
+  assert.ok(after.some((p) => p.id === "c"), "an unrelated preset was lost");
+});

@@ -110,7 +110,12 @@ test("captions never exceed the character budget", () => {
   const out = seg.segment(many, { mode: "phrase" });
   const budget = seg.PHRASE_DEFAULTS.maxCharsPerLine * seg.PHRASE_DEFAULTS.maxLines;
   for (const caption of out.captions) {
-    assert.ok(caption.text.length <= budget + 8, `too long: ${caption.text}`);
+    // No tolerance. This carried "+8" -- a tenth of the budget, unexplained --
+    // which would have let a real overrun through. Measured, the longest
+    // caption this produces is 79 characters against a budget of 84, across
+    // regular fixtures, realistic prose, 15-character words and a
+    // 33-character one. There is nothing for a tolerance to absorb.
+    assert.ok(caption.text.length <= budget, `too long: ${caption.text}`);
   }
 });
 

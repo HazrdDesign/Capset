@@ -110,9 +110,14 @@
     var replaced = false;
     for (var i = 0; i < presets.length; i++) {
       var existing = presets[i];
-      if (existing.id === preset.id ||
-          trim(existing.name).toLowerCase() === trim(preset.name).toLowerCase()) {
-        if (replaced) continue;
+      var matches = existing.id === preset.id ||
+          trim(existing.name).toLowerCase() === trim(preset.name).toLowerCase();
+      // Replace the FIRST match and keep everything else, including any
+      // further entries sharing the name. Skipping them collapsed a list that
+      // already held two presets called "Punch" down to one, silently
+      // discarding the other -- and a saved preset the user cannot see is
+      // gone the moment the file is written back.
+      if (matches && !replaced) {
         out.push(preset);
         replaced = true;
       } else {
