@@ -254,3 +254,41 @@ test("the host's fallback timing rules are a last resort, not the norm", () => {
     "the host cannot report layer durations, so the panel cannot avoid the fallback"
   );
 });
+
+// --- the animation library ---------------------------------------------------
+
+test("every field in animations.json is read by something", () => {
+  // The sibling of "every input in the panel is actually read", and written
+  // for the same reason: `overshoot` sat in every preset for weeks while
+  // nothing read it, so every "pop" and "bounce" in the library was a plain
+  // interpolation. A field nobody reads looks identical to one that works.
+  const lib = JSON.parse(
+    fs.readFileSync(path.join(ROOT, "animations", "animations.json"), "utf8")
+  );
+  const sources = ["jsx/capset.jsx", "js/main.js", "js/lib/preview.js"]
+    .map((f) => fs.readFileSync(path.join(ROOT, f), "utf8")).join("\n");
+
+  const fields = new Set();
+  (function walk(node) {
+    if (Array.isArray(node)) return node.forEach(walk);
+    if (node && typeof node === "object") {
+      Object.keys(node).forEach((k) => { fields.add(k); walk(node[k]); });
+    }
+  })(lib.animations);
+
+  // Descriptive metadata for the grid, not behaviour the definition promises.
+  const metadata = new Set(["tags"]);
+
+  const unread = [...fields].filter((k) =>
+    !k.startsWith("$") && !metadata.has(k) &&
+    !sources.includes("." + k) &&
+    !sources.includes('"' + k + '"') &&
+    !sources.includes("'" + k + "'")
+  );
+
+  assert.deepStrictEqual(
+    unread, [],
+    "animation fields nothing reads — every preset declaring these is lying " +
+    "about what it does: " + unread.join(", ")
+  );
+});
