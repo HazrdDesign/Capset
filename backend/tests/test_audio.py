@@ -241,3 +241,66 @@ def test_slice_clamps_past_the_end():
 def test_slice_of_an_inverted_range_is_empty():
     audio = np.arange(1000, dtype=np.float32)
     assert len(slice_audio(audio, 0.5, 0.1, 48000)) == 0
+
+
+# --- resampling edge cases --------------------------------------------------
+#
+# The resampler is hand-rolled (Fourier method on numpy) rather than scipy, so
+# it carries its own risk and gets its own coverage. Every rate below is one a
+# real After Effects project can be set to.
+
+@pytest.mark.parametrize("rate", [88200, 96000, 176400, 192000, 12000, 6000])
+def test_resampling_preserves_amplitude_at_real_project_rates(tmp_path, rate):
+    seconds = 0.2
+    expected_peak = 0.5
+    path = write_wav(tmp_path / f"{rate}.wav",
+                     tone(seconds, rate, freq=300.0), rate=rate)
+    audio, out_rate = load_audio(path)
+
+    peak, _ = measure(audio)
+    assert out_rate == 16000
+    assert peak == pytest.approx(expected_peak, abs=0.02), (
+        f"{rate} Hz resampled to a peak of {peak:.4f}, not {expected_peak}"
+    )
+
+
+def test_resampling_does_not_alias_high_frequencies_into_speech():
+    """The reason this is an FFT resample and not linear interpolation.
+
+    A 20 kHz tone is far above 16 kHz's 8 kHz Nyquist. Interpolating naively
+    folds it back into the middle of the speech band as a loud tone that was
+    never in the audio -- roughly 4 kHz at 0.31 RMS, measured. A bandlimited
+    resample removes it instead.
+    """
+    from app.audio import _resample
+
+    src = 96000
+    t = np.arange(int(src * 0.5)) / src
+    tone_20k = (0.5 * np.sin(2 * np.pi * 20000 * t)).astype(np.float32)
+
+    resampled = _resample(tone_20k, src, 16000)
+
+    residual = float(np.sqrt(np.mean(resampled.astype(np.float64) ** 2)))
+    assert residual < 0.01, (
+        f"content above the new Nyquist survived at {residual:.4f} RMS, "
+        "which means it aliased into the speech band"
+    )
+
+
+@pytest.mark.parametrize("samples", [1, 2, 3, 4800, 4801])
+def test_resampling_survives_awkward_buffer_lengths(samples):
+    from app.audio import _resample
+
+    audio = np.sin(np.arange(samples) * 0.01).astype(np.float32)
+    out = _resample(audio, 96000, 16000)
+
+    assert out.size == max(1, round(samples * 16000 / 96000))
+    assert np.all(np.isfinite(out)), "resampling produced NaN or infinity"
+
+
+def test_resampling_preserves_a_constant():
+    """A DC offset is the simplest thing a resampler can get wrong."""
+    from app.audio import _resample
+
+    out = _resample(np.full(9600, 0.5, dtype=np.float32), 96000, 16000)
+    assert np.allclose(out, 0.5, atol=1e-4)
