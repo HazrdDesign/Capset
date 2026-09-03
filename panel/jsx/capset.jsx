@@ -282,14 +282,34 @@ function capsetOvershootValue(from, to, overshoot) {
 /**
  * Build one animator phase.
  *
+ * HOW A RANGE SELECTOR ACTUALLY WORKS, because getting this wrong shipped a
+ * build whose entrances barely moved:
+ *
+ * A range selector does NOT delay the animation per character. It scales HOW
+ * MUCH of the animator reaches each character -- Adobe's wording is "At 0%,
+ * the animator properties do not affect the characters." So the selector has
+ * to be animated from FULLY COVERING the text (the animator's pose applies to
+ * everything) to COVERING NOTHING (every character sits at its natural pose),
+ * and the stagger is the edge of that range travelling across the text.
+ *
+ * This previously swept Offset from -100 to +100 with Start/End left at
+ * 0/100. That covers nothing at -100, everything at 0, and nothing again at
+ * +100 -- so coverage went 0% -> 100% -> 0% and the character sat at its
+ * natural pose at BOTH ends of every phase. A scale entrance never started
+ * small and an opacity entrance never faded in; the keyframes were real and
+ * nothing read them. Animating Start instead sweeps the range's leading edge
+ * across the text, which is the canonical construction.
+ *
  * @param layer       the text layer
  * @param name        animator name (prefixed)
  * @param phase       animation definition's in/out block
  * @param startTime   absolute comp time the phase begins
  * @param duration    phase length in seconds
- * @param reverse     true for the out phase (animates away from the hold)
+ * @param basedOn     "characters" | "words" | ... - the stagger unit
+ * @param reverse     true for the out phase, which travels the other way:
+ *                    an exit ENDS in its pose rather than starting in it
  */
-function capsetAddPhase(layer, name, phase, startTime, duration, basedOn) {
+function capsetAddPhase(layer, name, phase, startTime, duration, basedOn, reverse) {
     if (!phase || !phase.properties || !phase.properties.length || duration <= 0) {
         return null;
     }
@@ -373,14 +393,20 @@ function capsetAddPhase(layer, name, phase, startTime, duration, basedOn) {
         }
     }
 
-    // Range selector sweeps 0 -> 100% so characters/words stagger rather
-    // than all moving together.
+    // Sweep the range's leading edge across the text. Start at 0 with End at
+    // 100 covers everything, so every unit begins fully in the animator's
+    // pose; driving Start to 100 retreats the range off the end of the text,
+    // resolving units to their natural pose one after another. An exit runs
+    // the same sweep backwards, so it ENDS in its pose instead of starting
+    // there. See the note on this function.
     try {
-        var offset = selector.property("ADBE Text Percent Offset");
-        offset.setValueAtTime(startTime, -100);
-        offset.setValueAtTime(startTime + duration, 100);
+        var startProp = selector.property("ADBE Text Percent Start");
+        startProp.setValueAtTime(startTime, reverse ? 100 : 0);
+        startProp.setValueAtTime(startTime + duration, reverse ? 0 : 100);
     } catch (e) {
-        // No offset property: the animator still runs, just without stagger.
+        // A host without this property still animates, just without stagger,
+        // and every unit takes the animator's full pose for the phase --
+        // which is the whole animation, not nothing. Better than the reverse.
     }
 
     return animator;
@@ -397,7 +423,7 @@ function capsetApplyAnimation(layer, animation, timings) {
         if (capsetAddPhase(
             layer, CAPSET_PREFIX + animation.id + "__in",
             animation["in"], layer.inPoint + timings.inStart,
-            timings.inDuration, basedOn
+            timings.inDuration, basedOn, false
         )) applied++;
     }
 
@@ -405,7 +431,7 @@ function capsetApplyAnimation(layer, animation, timings) {
         if (capsetAddPhase(
             layer, CAPSET_PREFIX + animation.id + "__out",
             animation.out, layer.inPoint + timings.outStart,
-            timings.outDuration, basedOn
+            timings.outDuration, basedOn, true
         )) applied++;
     }
 
@@ -544,11 +570,28 @@ function capsetFindAudioTemplate(outputModule) {
     for (var p = 0; p < patterns.length; p++) {
         for (var i = 0; i < available.length; i++) {
             if (patterns[p].test(available[i])) {
-                return { name: available[i], extension: p === 1 ? ".aif" : ".wav" };
+                return {
+                    name: available[i],
+                    extension: capsetTemplateExtension(available[i])
+                };
             }
         }
     }
     return null;
+}
+
+/**
+ * Guess a template's file extension from its own name.
+ *
+ * Derived from the NAME, not from which pattern matched it: the generic
+ * /audio/i fallback used to hand back ".wav" for anything it matched, so a
+ * stock "Audio Only" template that writes AIFF was named .wav. The magic-byte
+ * sniffing in the backend and the alternates loop in capsetRenderAudio both
+ * cover the mismatch, but guessing right means neither has to.
+ */
+function capsetTemplateExtension(name) {
+    if (/aif/i.test(name)) return ".aif";
+    return ".wav";
 }
 
 /**

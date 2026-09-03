@@ -470,6 +470,17 @@ test("an AIFF-only install still renders", () => {
   assert.match(result.path, /\.aif$/);
 });
 
+test("an AIFF template found by the generic fallback is still named .aif", () => {
+  // The extension used to come from WHICH pattern matched rather than from the
+  // template's own name, so anything caught by the generic /audio/i fallback
+  // was called .wav no matter what it actually wrote.
+  const h = load({ templates: ["Lossless", "Audio Only AIFF"] });
+  withAudio(h);
+  const result = h.call("capsetRenderAudio", { scope: "composition" });
+  assert.strictEqual(result.template, "Audio Only AIFF");
+  assert.match(result.path, /\.aif$/, "an AIFF template should not be named .wav");
+});
+
 test("no audio template at all is explained, not swallowed", () => {
   const h = load({ templates: ["Lossless", "High Quality"] });
   withAudio(h);
@@ -590,6 +601,114 @@ function animate(h, animation, duration = 2) {
 function firstAnimatorProperty(animators) {
   return animators.property(1).property("ADBE Text Animator Properties").property(1);
 }
+
+// --- does the animation actually animate? -----------------------------------
+//
+// Everything below asserts MOTION, not construction. The tests above this
+// point check that an animator was created carrying certain keyframes, which
+// is not the same thing and is how a build shipped whose entrances barely
+// moved: the range selector's offset swept -100 -> +100, so the animator's
+// influence went 0% -> 100% -> 0% and the character sat at its natural pose
+// at both ends of every phase. See tests/ae-text-animator.js.
+
+const ae = require("./ae-text-animator.js");
+
+/** The in-phase animator of a layer built by animate(). */
+function inAnimator(animators) {
+  for (let i = 1; i <= animators.numProperties; i++) {
+    const a = animators.property(i);
+    if (/__in$/.test(a.name)) return a;
+  }
+  throw new Error("no in-phase animator was created");
+}
+
+test("an entrance begins in its from-pose, not at rest", () => {
+  // The whole point of an entrance. If the animator has no influence at the
+  // start of the phase, the caption simply appears at full size and the
+  // animation is decorative keyframes nothing reads.
+  const h = load();
+  const { layer, animators } = animate(h, {
+    id: "pop",
+    basedOn: "characters",
+    in: { properties: [{ type: "scale", from: [58, 58], to: [100, 100] }] }
+  });
+
+  const animator = inAnimator(animators);
+  const start = layer.inPoint;
+  const scale = ae.effectiveValue(
+    animator, "ADBE Text Scale 3D", start, 0, 4, [100, 100, 100]
+  );
+
+  assert.ok(
+    scale[0] < 70,
+    "at the first instant of the entrance the character should be near 58%, " +
+    "not " + scale[0].toFixed(1) + "% -- the animator has no influence there"
+  );
+});
+
+test("an entrance ends at rest", () => {
+  const h = load();
+  const { layer, animators } = animate(h, {
+    id: "pop",
+    basedOn: "characters",
+    in: { properties: [{ type: "scale", from: [58, 58], to: [100, 100] }] }
+  });
+
+  const animator = inAnimator(animators);
+  const end = layer.inPoint + 0.4;
+  const scale = ae.effectiveValue(
+    animator, "ADBE Text Scale 3D", end, 0, 4, [100, 100, 100]
+  );
+
+  assert.ok(
+    Math.abs(scale[0] - 100) < 2,
+    "the character should have settled at 100%, not " + scale[0].toFixed(1) + "%"
+  );
+});
+
+test("an opacity entrance actually fades in", () => {
+  // opacity 0 -> 100 with no influence at the start means the character is
+  // fully visible on the first frame: there is no fade at all.
+  const h = load();
+  const { layer, animators } = animate(h, {
+    id: "fade",
+    basedOn: "characters",
+    in: { properties: [{ type: "opacity", from: 0, to: 100 }] }
+  });
+
+  const animator = inAnimator(animators);
+  const opacity = ae.effectiveValue(
+    animator, "ADBE Text Opacity", layer.inPoint, 0, 4, 100
+  );
+
+  assert.ok(
+    opacity < 30,
+    "the first character should start near invisible, not at " +
+    opacity.toFixed(1) + "%"
+  );
+});
+
+test("characters do not all animate in lockstep", () => {
+  // The reason to use a range selector at all. Two characters at opposite
+  // ends of the word should be at different points of the entrance partway
+  // through it.
+  const h = load();
+  const { layer, animators } = animate(h, {
+    id: "pop",
+    basedOn: "characters",
+    in: { properties: [{ type: "scale", from: [58, 58], to: [100, 100] }] }
+  });
+
+  const animator = inAnimator(animators);
+  const mid = layer.inPoint + 0.2;
+  const first = ae.amountAt(animator, mid, 0, 4);
+  const last = ae.amountAt(animator, mid, 3, 4);
+
+  assert.notStrictEqual(
+    +first.toFixed(3), +last.toFixed(3),
+    "every character is being animated identically, so there is no stagger"
+  );
+});
 
 test("an overshooting property passes its target before settling", () => {
   const h = load();

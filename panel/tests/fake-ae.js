@@ -164,6 +164,12 @@ function makeTextAnimators() {
         makeChild: () => {
           const selector = new PropertyGroup("Range Selector 1", "ADBE Text Selector");
           selector._add(new Property("Units", "ADBE Text Range Type2", 1));
+          // Start/End default to the whole text, as they do in After Effects.
+          // They are what decide how much of the animator reaches each
+          // character, so a fake without them cannot represent the difference
+          // between an animation that runs and one that cancels itself out.
+          selector._add(new Property("Start", "ADBE Text Percent Start", 0));
+          selector._add(new Property("End", "ADBE Text Percent End", 100));
           selector._add(new Property("Offset", "ADBE Text Percent Offset", 0));
           return selector;
         }

@@ -25,9 +25,12 @@
 (function (root) {
   "use strict";
 
-  // Share of the phase spent staggering across units. The AE range selector
-  // sweeps its offset from -100 to 100, so units overlap heavily rather than
-  // running strictly one after another; this is the visual equivalent.
+  // Share of the phase spent staggering across units. The host sweeps the
+  // range selector's Start from 0 to 100, so the range's edge crosses the
+  // text over the phase and units resolve one after another with heavy
+  // overlap. Modelling that as a per-unit delay is not the same mechanism --
+  // AE scales how much of the animator reaches each unit rather than delaying
+  // it -- but it produces the same read: staggered resolution, front to back.
   var STAGGER = 0.7;
   // Where an overshooting property reaches its peak, matching the host script.
   var OVERSHOOT_PEAK = 0.7;
