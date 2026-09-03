@@ -292,3 +292,39 @@ test("every field in animations.json is read by something", () => {
     "about what it does: " + unread.join(", ")
   );
 });
+
+test("preview cards are timed by the same controls as the build", () => {
+  // A card that plays at a different speed from the captions it produces is
+  // the grid telling the user something untrue about what they are choosing.
+  // That is how the range-selector bug survived a whole release: the previews
+  // looked correct, so the library looked correct.
+  const src = functionBody("previewTimings");
+  assert.ok(
+    /explicitLength\(/.test(src),
+    "previewTimings ignores the animation-length control, so the grid plays " +
+    "at a different speed from the captions"
+  );
+  assert.ok(
+    /\$\("resolve"\)/.test(src),
+    "previewTimings ignores the resolve cap the build applies"
+  );
+});
+
+test("moving a timing control re-times the cards already on screen", () => {
+  // previewTimings is only consulted when a card is built, so without this
+  // the grid keeps playing at whatever the settings were when the panel
+  // opened.
+  assert.ok(
+    /function refreshPreviewTimings/.test(main),
+    "nothing re-times existing preview cards"
+  );
+  ["length-mode", "length-value", "resolve"].forEach((id) => {
+    const listener = main.indexOf('$("' + id + '").addEventListener');
+    assert.notStrictEqual(listener, -1, id + " has no listener at all");
+    const nearby = main.slice(listener, listener + 400);
+    assert.ok(
+      /refreshPreviewTimings/.test(nearby),
+      id + " changes without re-timing the preview cards"
+    );
+  });
+});

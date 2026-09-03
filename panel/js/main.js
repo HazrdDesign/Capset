@@ -319,8 +319,24 @@
   var previews = [];              // {animation, units[], timings, active}
   var previewFrame = null;
 
+  /**
+   * Timings for a preview card.
+   *
+   * Reads the SAME length and cap controls the build does. A card that plays
+   * at a different speed from the captions it produces is the grid telling
+   * the user something untrue about what they are choosing -- which is
+   * exactly how the range-selector bug stayed hidden for a whole release.
+   */
   function previewTimings(animation) {
-    var spec = { hasOut: !!(animation && animation.out) };
+    var spec = {
+      hasOut: !!(animation && animation.out),
+      maxInFraction: Number($("resolve").value) / 100
+    };
+    var lengthSeconds = explicitLength({
+      lengthMode: $("length-mode").value,
+      lengthValue: Number($("length-value").value)
+    });
+    if (lengthSeconds > 0) spec.inSeconds = lengthSeconds;
     if (animation && animation.spansLayer) {
       spec.maxInFraction = 1;
       spec.maxTotalFraction = 1;
@@ -972,9 +988,24 @@
   $("anim-selected").addEventListener("click", function () { applyAnimation("selected"); });
   $("anim-all").addEventListener("click", function () { applyAnimation("all"); });
   $("anim-clear").addEventListener("click", clearAnimation);
+  /**
+   * Re-time every preview card after a timing control moves.
+   *
+   * Cards cache their timings when they are built, so without this the grid
+   * keeps playing at whatever the settings were when the panel opened while
+   * the captions come out at the current ones.
+   */
+  function refreshPreviewTimings() {
+    previews.forEach(function (item) {
+      item.timings = previewTimings(item.animation);
+    });
+  }
+
   $("resolve").addEventListener("input", function () {
     $("resolve-value").textContent = $("resolve").value;
+    refreshPreviewTimings();
   });
+  $("length-value").addEventListener("input", refreshPreviewTimings);
 
   function refreshLengthControl() {
     var mode = $("length-mode").value;
@@ -996,7 +1027,10 @@
     }
   }
 
-  $("length-mode").addEventListener("change", refreshLengthControl);
+  $("length-mode").addEventListener("change", function () {
+    refreshLengthControl();
+    refreshPreviewTimings();
+  });
   refreshLengthControl();
   $("mode").addEventListener("change", function () {
     var hints = {
