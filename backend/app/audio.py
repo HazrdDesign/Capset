@@ -204,6 +204,42 @@ def load_audio(path: str | Path) -> tuple[np.ndarray, int]:
     return samples, rate
 
 
+# Peak below this is not quiet dialogue, it is a file with nothing in it.
+# A 16-bit sample's smallest step is 1/32768 (~3.1e-5), so dither-only noise
+# from a silent render still peaks around there; 1e-5 sits below even that and
+# above exact zero, which is what a truly silent render usually contains.
+SILENT_PEAK = 1e-5
+
+# Peak below this (-60 dBFS) is real signal but far too quiet to recognise.
+# Not an error on its own -- it is reported so that zero words comes with its
+# most likely explanation attached instead of looking like a model failure.
+QUIET_PEAK = 1e-3
+
+
+def measure(audio: np.ndarray) -> tuple[float, float]:
+    """Peak and RMS amplitude, both 0..1.
+
+    Exists because "the transcription found no speech" and "the file we were
+    handed contains no audio" are indistinguishable to the user otherwise, and
+    they call for completely different actions. Shipped after a real run
+    rendered a silent WAV out of After Effects and reported a successful
+    transcription of zero words.
+    """
+    if audio.size == 0:
+        return 0.0, 0.0
+    wide = audio.astype(np.float64)
+    peak = float(np.max(np.abs(wide)))
+    rms = float(np.sqrt(np.mean(wide ** 2)))
+    return peak, rms
+
+
+def describe_level(peak: float) -> str:
+    """Peak as dBFS, for a message a user can act on."""
+    if peak <= 0:
+        return "digital silence"
+    return "%.1f dBFS peak" % (20.0 * np.log10(peak))
+
+
 def slice_audio(audio: np.ndarray, start_s: float, end_s: float,
                 sample_rate: int) -> np.ndarray:
     """Extract [start_s, end_s) as samples, clamped to the array."""

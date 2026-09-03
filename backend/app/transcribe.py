@@ -12,9 +12,16 @@ from pathlib import Path
 from typing import Callable
 
 from . import config
-from .audio import load_audio, slice_audio
+from .audio import (
+    SILENT_PEAK,
+    AudioError,
+    describe_level,
+    load_audio,
+    measure,
+    slice_audio,
+)
 from .chunking import merge_chunks, plan_chunks
-from .models import TranscriptionResult, Word
+from .models import AudioDiagnostics, TranscriptionResult, Word
 from .tokens import merge_tokens_to_words, words_to_text
 from .vad import detect_speech
 
@@ -51,15 +58,48 @@ class Transcriber:
         # rendered file's native rate isn't one of the ones it supports.
         audio, sample_rate = load_audio(audio_path)
         duration = len(audio) / sample_rate
-        log.info("read %.2fs of audio at %d Hz", duration, sample_rate)
+        peak, rms = measure(audio)
+        log.info(
+            "read %.2fs of audio at %d Hz (%s, rms %.5f)",
+            duration, sample_rate, describe_level(peak), rms,
+        )
+
+        # Fail here rather than transcribing nothing and calling it a success.
+        # A silent file is not a transcription that found no speech: it means
+        # After Effects handed us audio with nothing in it, which is something
+        # the user can actually fix -- and which used to surface only as the
+        # baffling "0 words -> 0 captions".
+        if peak < SILENT_PEAK:
+            raise AudioError(
+                "The audio After Effects rendered is silent (%s over %.1fs). "
+                "Capset transcribed it but there was nothing to hear. Check "
+                "that the layer's audio is switched on, that it is not muted "
+                "by another layer's solo, and that Render Settings > Audio "
+                "Output is not set to Off."
+                % (describe_level(peak), duration)
+            )
 
         progress(0.06, "detecting speech")
         spans = detect_speech(audio, sample_rate)
 
         chunks = plan_chunks(spans, config.MAX_CHUNK_S, config.OVERLAP_S)
         log.info("planned %d chunk(s) from %d speech span(s)", len(chunks), len(spans))
+
+        def diagnostics(chunk_count: int) -> AudioDiagnostics:
+            return AudioDiagnostics(
+                duration_sec=duration,
+                sample_rate=sample_rate,
+                peak=peak,
+                rms=rms,
+                speech_spans=len(spans),
+                chunks=chunk_count,
+            )
+
         if not chunks:
-            return TranscriptionResult(duration_sec=duration, words=[], full_text="")
+            return TranscriptionResult(
+                duration_sec=duration, words=[], full_text="",
+                diagnostics=diagnostics(0),
+            )
 
         results: list[tuple] = []
         for index, chunk in enumerate(chunks):
@@ -80,8 +120,18 @@ class Transcriber:
 
         progress(0.99, "stitching")
         words: list[Word] = merge_chunks(results)
+        if not words:
+            # Audible, but nothing recognised. Say what was measured: at this
+            # point the difference between "too quiet" and "no speech in it"
+            # is the only thing that tells the user what to try next.
+            log.warning(
+                "no words recognised in %.2fs of audio (%s, %d span(s), "
+                "%d chunk(s))",
+                duration, describe_level(peak), len(spans), len(chunks),
+            )
         return TranscriptionResult(
             duration_sec=duration,
             words=words,
             full_text=words_to_text(words),
+            diagnostics=diagnostics(len(chunks)),
         )

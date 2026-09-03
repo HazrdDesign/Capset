@@ -25,7 +25,10 @@ def _wait(client, job_id, timeout=10.0):
 
 @pytest.fixture
 def client(monkeypatch):
-    audio = np.zeros(int(30 * config.SAMPLE_RATE), dtype=np.float32)
+    # Signal, not zeros: the transcriber now rejects silent audio outright
+    # rather than reporting a successful transcription of nothing.
+    _t = np.linspace(0, 30, int(30 * config.SAMPLE_RATE), endpoint=False)
+    audio = (0.25 * np.sin(2 * np.pi * 220.0 * _t)).astype(np.float32)
     monkeypatch.setattr(transcribe_mod, "load_audio", lambda *a, **k: (audio, config.SAMPLE_RATE))
     monkeypatch.setattr(transcribe_mod, "detect_speech", lambda *a, **k: [(0.0, 30.0)])
 
@@ -74,12 +77,28 @@ def test_job_completes_with_schema_shaped_result(client):
     result = body["result"]
 
     # Contract from docs/schema.md.
-    assert set(result) == {"duration_sec", "full_text", "words"}
+    assert set(result) == {"duration_sec", "full_text", "words", "diagnostics"}
     assert result["duration_sec"] == pytest.approx(30.0)
     assert result["words"]
     first = result["words"][0]
     assert set(first) == {"text", "start", "end", "confidence"}
     assert isinstance(first["text"], str)
+
+
+def test_diagnostics_reach_the_panel_over_http(client):
+    """The panel can only explain an empty transcript if these survive the
+    serialisation step -- which is where they were dropped before."""
+    job_id = client.post("/jobs", files=_upload()).json()["id"]
+    body = _wait(client, job_id)
+
+    diagnostics = body["result"]["diagnostics"]
+    assert diagnostics is not None
+    assert set(diagnostics) == {
+        "duration_sec", "sample_rate", "peak", "rms", "speech_spans", "chunks"
+    }
+    assert diagnostics["peak"] == pytest.approx(0.25, abs=0.01)
+    assert diagnostics["sample_rate"] == config.SAMPLE_RATE
+    assert diagnostics["chunks"] >= 1
 
 
 def test_result_words_are_ordered_and_absolute(client):

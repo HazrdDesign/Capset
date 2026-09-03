@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from app import config, transcribe as transcribe_mod
+from app.audio import AudioError
 from app.models import Token
 from app.transcribe import Transcriber
 
@@ -44,9 +45,24 @@ class FakeEngine:
         return {"engine": "fake", "loaded": self._loaded}
 
 
+def tone(seconds, rate=config.SAMPLE_RATE, freq=220.0):
+    """A buffer with actual signal in it.
+
+    These tests are about chunk-offset arithmetic, not audio content, and they
+    used to pass np.zeros as filler. That stopped working when the transcriber
+    started rejecting silent audio outright -- a silent file is now an error,
+    because reporting "0 words" for one is what sent a real user chasing a
+    transcription bug that was really an After Effects render setting. Filler
+    with signal in it keeps these tests about what they are testing and leaves
+    that check meaningful.
+    """
+    t = np.linspace(0, seconds, int(seconds * rate), endpoint=False)
+    return (0.25 * np.sin(2 * np.pi * freq * t)).astype(np.float32)
+
+
 @pytest.fixture
-def silence_30s():
-    return np.zeros(int(30 * config.SAMPLE_RATE), dtype=np.float32)
+def audio_30s():
+    return tone(30)
 
 
 def _patch_audio(monkeypatch, audio, spans, rate=config.SAMPLE_RATE):
@@ -55,8 +71,8 @@ def _patch_audio(monkeypatch, audio, spans, rate=config.SAMPLE_RATE):
     monkeypatch.setattr(transcribe_mod, "detect_speech", lambda *a, **k: spans)
 
 
-def test_long_audio_is_split_into_multiple_chunks(monkeypatch, silence_30s):
-    _patch_audio(monkeypatch, silence_30s, [(0.0, 30.0)])
+def test_long_audio_is_split_into_multiple_chunks(monkeypatch, audio_30s):
+    _patch_audio(monkeypatch, audio_30s, [(0.0, 30.0)])
     engine = FakeEngine()
     engine.load()
 
@@ -66,9 +82,9 @@ def test_long_audio_is_split_into_multiple_chunks(monkeypatch, silence_30s):
     assert all(c <= config.MAX_CHUNK_S + 1e-6 for c in engine.calls)
 
 
-def test_words_land_in_absolute_time_not_chunk_time(monkeypatch, silence_30s):
+def test_words_land_in_absolute_time_not_chunk_time(monkeypatch, audio_30s):
     """The drift regression, through the real orchestrator."""
-    _patch_audio(monkeypatch, silence_30s, [(0.0, 30.0)])
+    _patch_audio(monkeypatch, audio_30s, [(0.0, 30.0)])
     engine = FakeEngine()
     engine.load()
 
@@ -81,8 +97,8 @@ def test_words_land_in_absolute_time_not_chunk_time(monkeypatch, silence_30s):
     assert max(w.start for w in result.words) <= 30.0
 
 
-def test_output_is_ordered_and_within_duration(monkeypatch, silence_30s):
-    _patch_audio(monkeypatch, silence_30s, [(0.0, 30.0)])
+def test_output_is_ordered_and_within_duration(monkeypatch, audio_30s):
+    _patch_audio(monkeypatch, audio_30s, [(0.0, 30.0)])
     engine = FakeEngine()
     engine.load()
 
@@ -97,7 +113,7 @@ def test_output_is_ordered_and_within_duration(monkeypatch, silence_30s):
 
 def test_separate_speech_spans_are_offset_independently(monkeypatch):
     """A span starting at 60s must produce words near 60s, not near 0."""
-    audio = np.zeros(int(70 * config.SAMPLE_RATE), dtype=np.float32)
+    audio = tone(70)
     _patch_audio(monkeypatch, audio, [(0.0, 5.0), (60.0, 65.0)])
     engine = FakeEngine()
     engine.load()
@@ -109,8 +125,8 @@ def test_separate_speech_spans_are_offset_independently(monkeypatch):
     assert any(s >= 60.0 for s in starts), "expected words from the second span"
 
 
-def test_progress_is_monotonic_and_bounded(monkeypatch, silence_30s):
-    _patch_audio(monkeypatch, silence_30s, [(0.0, 30.0)])
+def test_progress_is_monotonic_and_bounded(monkeypatch, audio_30s):
+    _patch_audio(monkeypatch, audio_30s, [(0.0, 30.0)])
     engine = FakeEngine()
     engine.load()
     seen = []
@@ -124,8 +140,8 @@ def test_progress_is_monotonic_and_bounded(monkeypatch, silence_30s):
     assert seen == sorted(seen), "progress must never go backwards"
 
 
-def test_cancellation_stops_early(monkeypatch, silence_30s):
-    _patch_audio(monkeypatch, silence_30s, [(0.0, 30.0)])
+def test_cancellation_stops_early(monkeypatch, audio_30s):
+    _patch_audio(monkeypatch, audio_30s, [(0.0, 30.0)])
     engine = FakeEngine()
     engine.load()
 
@@ -134,8 +150,8 @@ def test_cancellation_stops_early(monkeypatch, silence_30s):
     assert engine.calls == [], "no chunk should be transcribed once cancelled"
 
 
-def test_empty_speech_returns_empty_result(monkeypatch, silence_30s):
-    _patch_audio(monkeypatch, silence_30s, [])
+def test_empty_speech_returns_empty_result(monkeypatch, audio_30s):
+    _patch_audio(monkeypatch, audio_30s, [])
     engine = FakeEngine()
     engine.load()
 
@@ -144,6 +160,86 @@ def test_empty_speech_returns_empty_result(monkeypatch, silence_30s):
     assert result.words == []
     assert result.full_text == ""
     assert result.duration_sec == pytest.approx(30.0)
+
+
+# --- silent audio -----------------------------------------------------------
+#
+# A real run rendered a silent WAV out of After Effects and got back a
+# SUCCESSFUL transcription of zero words. The panel printed "0 words -> 0
+# captions" and the user went looking for a transcription bug that was really
+# a render setting. Silence is now an error that says so.
+
+def test_silent_audio_is_an_error_not_an_empty_success(monkeypatch):
+    audio = np.zeros(int(3 * config.SAMPLE_RATE), dtype=np.float32)
+    _patch_audio(monkeypatch, audio, [(0.0, 3.0)])
+    engine = FakeEngine()
+    engine.load()
+
+    with pytest.raises(AudioError) as excinfo:
+        Transcriber(engine).transcribe("ignored.wav")
+
+    message = str(excinfo.value)
+    assert "silent" in message.lower()
+    # The message has to name what to go and check, or it is just a nicer way
+    # of saying "0 words".
+    assert "Audio Output" in message
+    assert engine.calls == [], "silent audio should not reach the engine at all"
+
+
+def test_nearly_silent_audio_is_also_caught(monkeypatch):
+    """Dither-level noise from a silent render is not 'quiet dialogue'."""
+    rng = np.random.default_rng(0)
+    audio = (rng.standard_normal(int(3 * config.SAMPLE_RATE)) * 1e-7).astype(np.float32)
+    _patch_audio(monkeypatch, audio, [(0.0, 3.0)])
+    engine = FakeEngine()
+    engine.load()
+
+    with pytest.raises(AudioError):
+        Transcriber(engine).transcribe("ignored.wav")
+
+
+def test_quiet_but_real_audio_still_transcribes(monkeypatch):
+    """The check must not reject a quiet take. Failing a real recording is a
+    worse outcome than the bug this guards against."""
+    audio = tone(3) * 0.004      # about -48 dBFS: quiet, but genuinely there
+    _patch_audio(monkeypatch, audio, [(0.0, 3.0)])
+    engine = FakeEngine()
+    engine.load()
+
+    result = Transcriber(engine).transcribe("ignored.wav")
+
+    assert result.words, "a quiet but audible take must still be transcribed"
+
+
+def test_results_carry_diagnostics(monkeypatch, audio_30s):
+    """Zero words needs to arrive with the numbers that explain it."""
+    _patch_audio(monkeypatch, audio_30s, [(0.0, 30.0)])
+    engine = FakeEngine()
+    engine.load()
+
+    result = Transcriber(engine).transcribe("ignored.wav")
+
+    assert result.diagnostics is not None
+    assert result.diagnostics.duration_sec == pytest.approx(30.0)
+    assert result.diagnostics.sample_rate == config.SAMPLE_RATE
+    assert result.diagnostics.peak > 0
+    assert result.diagnostics.speech_spans == 1
+    assert result.diagnostics.chunks >= 1
+
+
+def test_diagnostics_survive_a_zero_word_result(monkeypatch, audio_30s):
+    _patch_audio(monkeypatch, audio_30s, [])
+    engine = FakeEngine()
+    engine.load()
+
+    result = Transcriber(engine).transcribe("ignored.wav")
+
+    assert result.words == []
+    assert result.diagnostics is not None, (
+        "the empty path is exactly when diagnostics matter"
+    )
+    assert result.diagnostics.speech_spans == 0
+    assert result.diagnostics.chunks == 0
 
 
 def test_native_sample_rate_is_passed_to_the_engine(monkeypatch):
@@ -160,7 +256,7 @@ def test_native_sample_rate_is_passed_to_the_engine(monkeypatch):
             return super().transcribe_chunk(audio, sample_rate)
 
     native = 48000
-    audio = np.zeros(int(3 * native), dtype=np.float32)
+    audio = tone(3, rate=native)
     _patch_audio(monkeypatch, audio, [(0.0, 3.0)], rate=native)
 
     engine = RateCapturingEngine()

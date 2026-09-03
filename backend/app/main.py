@@ -111,9 +111,24 @@ def health() -> dict:
 
 
 def _result_to_dict(result: TranscriptionResult) -> dict:
+    diagnostics = None
+    if result.diagnostics is not None:
+        d = result.diagnostics
+        diagnostics = {
+            "duration_sec": d.duration_sec,
+            "sample_rate": d.sample_rate,
+            "peak": d.peak,
+            "rms": d.rms,
+            "speech_spans": d.speech_spans,
+            "chunks": d.chunks,
+        }
     return {
         "duration_sec": result.duration_sec,
         "full_text": result.full_text,
+        # Carried even on a successful result: zero words is the case where
+        # the user most needs to know what was actually measured, and that is
+        # exactly when the rest of this payload is empty.
+        "diagnostics": diagnostics,
         "words": [
             {
                 "text": w.text,
