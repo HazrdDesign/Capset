@@ -1047,3 +1047,63 @@ test("every property type the library uses is one the host can apply", () => {
   const unknown = [...used].filter((t) => !MATCH[t]);
   assert.deepStrictEqual(unknown, [], "property types the host cannot apply");
 });
+
+// --- degenerate captions -----------------------------------------------------
+//
+// Real transcripts are not tidy. Parakeet emits words whose end equals their
+// start (particularly at chunk boundaries), and fast speech produces words
+// short enough to snap onto a single frame. Both used to become layers with
+// zero length, which never appear -- so the caption did not look brief, it
+// looked missing.
+
+test("a zero-length caption still gets a visible layer", () => {
+  const h = load({ frameRate: 30 });
+  h.call("capsetBuildCaptions", {
+    captions: [{ text: "blink", start: 1.0, end: 1.0 }], style: {}, options: {}
+  });
+  const layer = captionLayers(h.comp)[0];
+  assert.ok(
+    layer.outPoint > layer.inPoint,
+    "the layer has no duration, so the caption never appears"
+  );
+});
+
+test("a caption shorter than a frame is widened to one frame", () => {
+  // 20ms at 30fps snaps both ends onto the same frame.
+  const h = load({ frameRate: 30 });
+  h.call("capsetBuildCaptions", {
+    captions: [{ text: "fast", start: 1.00, end: 1.02 }], style: {}, options: {}
+  });
+  const layer = captionLayers(h.comp)[0];
+  const frame = 1 / 30;
+  assert.ok(
+    layer.outPoint - layer.inPoint >= frame - 1e-9,
+    "a fast word collapsed to " + (layer.outPoint - layer.inPoint) + "s"
+  );
+});
+
+test("a caption whose end precedes its start does not invert the layer", () => {
+  const h = load({ frameRate: 30 });
+  h.call("capsetBuildCaptions", {
+    captions: [{ text: "backwards", start: 2.0, end: 1.0 }], style: {}, options: {}
+  });
+  const layer = captionLayers(h.comp)[0];
+  assert.ok(layer.outPoint > layer.inPoint,
+            "outPoint " + layer.outPoint + " is not after inPoint " + layer.inPoint);
+});
+
+test("an empty caption creates no layer at all", () => {
+  // An empty text layer is invisible but real: it sits in the timeline, counts
+  // as a caption, and is one more thing to delete by hand.
+  const h = load();
+  const result = h.call("capsetBuildCaptions", {
+    captions: [
+      { text: "real", start: 0, end: 1 },
+      { text: "   ", start: 1, end: 2 },
+      { text: "", start: 2, end: 3 }
+    ],
+    style: {}, options: {}
+  });
+  assert.strictEqual(captionLayers(h.comp).length, 1, "empty captions became layers");
+  assert.strictEqual(result.created, 1, "empty captions were counted as created");
+});
