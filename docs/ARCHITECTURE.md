@@ -136,11 +136,78 @@ With `inFraction=0.25, minIn=0.10, maxIn=0.45, maxInFraction=0.5`:
 | 2.50s (phrase) | 0.45s | 18% |
 
 Always inside the first half, never "resolving way too late" on short words.
-`maxInFraction` is user-exposed as the 20–50% control requested.
+
+**Corrected after first real use.** The fraction model is now the `Auto` option
+rather than the only one, because scaling every animation to its caption has a
+cost that was not obvious until captions were on a timeline: the same preset
+runs for a different length on every caption, so it never has a consistent
+feel. Word Pop ran for 0.105s, 0.180s and 0.220s on captions of 0.35s, 0.6s and
+1.2s. A length set in **frames or seconds** now applies identically everywhere,
+and the clamps above still apply to it — an explicit length is shortened on a
+caption too short to hold it, which is the guarantee this model existed to
+provide.
+
+`maxInFraction` was exposed as a 20–50% "resolve within" slider and **it did
+nothing**. It is a cap, not a length, and `inMax` bound first on almost
+everything: on any caption of 1.2s or longer the slider produced an identical
+duration at every position. It survives as an explicit cap alongside the length
+control; `panel/tests/timing.test.js` pins the old inert behaviour so the
+replacement cannot regress into it.
 
 **Easing** is set per keyframe via `setTemporalEaseAtKey` with `KeyframeEase`
 (speed + influence), so each animation ships its own curve and the user can
 override globally. Marker-driven preset systems cannot offer this.
+
+### How a range selector actually works
+
+The single most important fact about this system, and its absence from these
+docs is why the animations shipped not working at all.
+
+A range selector **does not delay an animation per character**. It scales *how
+much of the animator reaches each character*. Adobe's wording:
+
+> At 0%, the animator properties do not affect the characters.
+
+So an animator whose selector covers nothing has **no effect whatsoever**,
+regardless of what its property keyframes say. Getting the sweep backwards does
+not produce a worse animation; it produces no animation.
+
+`capsetAddPhase` originally swept the selector's **Offset** from -100 to +100
+with Start/End at their 0/100 defaults. That covers nothing at -100, everything
+at 0, and nothing again at +100 — so influence went **0% → 100% → 0%** and every
+character sat at its natural pose at *both ends* of every phase. Scale
+entrances never started small; opacity entrances never faded in. Every keyframe
+was real and nothing read them.
+
+The correct construction, and what is in the code now: leave End at 100 and
+animate **Start from 0 to 100**. At Start=0 the range covers the whole text and
+every unit sits in the animator's pose; as Start travels to 100 the range's
+leading edge crosses the text and units resolve to their natural pose one after
+another. That edge *is* the stagger. Exits run the same sweep backwards, so
+they end in their pose rather than starting there.
+
+Word Pop on the four characters of "word", before and after:
+
+| t | before | after |
+|---|---|---|
+| 0.00 | 100% / 100% | **58% / 0%** — the from-pose, which never appeared |
+| 0.10 | 100% / 100% | 100% / 100% (first character resolved) |
+| 0.30 | 100% / 100% | 105% / 75% (last character mid-punch, overshoot reading) |
+| 0.40 | 100% / 100% | 100% / 100% |
+
+**Why the tests did not catch it.** `panel/tests/fake-ae.js` modelled a range
+selector as a bag with a couple of properties and no semantics, so every
+animation test could assert only that an animator had been *created* carrying
+certain keyframes — never that the resulting motion was the motion intended.
+`panel/tests/ae-text-animator.js` now models the evaluation (per-unit coverage
+blended against the natural pose) and the animation tests assert motion.
+
+**Known limitation, not yet addressed.** Because the animator's property values
+are themselves keyframed, characters the selector edge has not reached yet
+drift together rather than holding the from-pose until their turn. The classic
+construction holds property values static and lets the selector do all the
+work, which punches harder but leaves nowhere to put an overshoot keyframe.
+That is a tuning decision for the library, not a correctness one.
 
 ---
 
