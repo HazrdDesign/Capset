@@ -307,3 +307,48 @@ test("a plain overshoot is still a single peak in both", () => {
   assert.strictEqual(stops.length, 3, "from, one peak, and the target");
   assert.ok(Math.abs(stops[1].value[0] - 115) < 1e-9);
 });
+
+test("the tuning bench computes the same spring as the panel", () => {
+  // tools/animation-tuner.html carries its own copy of the spring maths so it
+  // can be opened as a single file. A copy that drifts is a bench that lies
+  // about what After Effects will do -- which is the failure this whole suite
+  // exists to prevent, so the copy is checked against the original.
+  const html = fs.readFileSync(
+    path.join(__dirname, "..", "tools", "animation-tuner.html"), "utf8"
+  );
+  const consts = html.slice(html.indexOf("var OVERSHOOT_PEAK"), html.indexOf("var REST = {"));
+  const body = html.slice(html.indexOf("function lerp("), html.indexOf("function clamp01("));
+  const bench = new Function(consts + body + "; return { springStops: springStops };")();
+
+  const cases = [
+    [[0, 0], [100, 100], 1.15, 3, 0.45],
+    [[12, 12], [100, 100], 1.15, 3, 0.45],
+    [[0, -74], [0, 0], 1.30, 3, 0.5],
+    [8, 0, 1.2, 4, 0.55],
+    [[80, 80], [100, 100], 1.12, undefined, undefined],
+    [[138, 62], [100, 100], 1.16, 3, 0.5]
+  ];
+
+  cases.forEach(([from, to, overshoot, bounces, damping]) => {
+    assert.deepStrictEqual(
+      bench.springStops(from, to, overshoot, bounces, damping),
+      preview.springStops(from, to, overshoot, bounces, damping),
+      "the bench and the panel disagree for overshoot " + overshoot
+    );
+  });
+});
+
+test("the tuning bench offers every preset in the library", () => {
+  // A bench missing a preset is a preset nobody can tune.
+  const html = fs.readFileSync(
+    path.join(__dirname, "..", "tools", "animation-tuner.html"), "utf8"
+  );
+  const library = require("../animations/animations.json");
+  library.animations.forEach((animation) => {
+    if (animation.id === "none") return;
+    assert.ok(
+      html.includes('"' + animation.id + '"'),
+      animation.id + " is in the library but not in the bench"
+    );
+  });
+});
