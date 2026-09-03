@@ -280,6 +280,45 @@ function capsetOvershootValue(from, to, overshoot) {
 }
 
 /**
+ * The overshoot keys for a property, as a decaying oscillation.
+ *
+ * A single overshoot key gets you past the target and back, but the motion
+ * arrives at the peak and leaves it at a constant speed -- a corner in the
+ * velocity curve, which reads as a hitch rather than a spring. Real short-form
+ * captions settle: they pass the target, come back short of it, and converge.
+ * Breakdowns of the style consistently name exactly this as the difference
+ * between amateur and professional text animation.
+ *
+ * `bounces` is how many times it crosses the target, `damping` how much
+ * amplitude survives each crossing (0.5 halves it). One bounce with no damping
+ * is the old single-overshoot behaviour, so existing definitions are unchanged.
+ *
+ * Returns [{ at: 0..1 through the phase, value: ... }], settling key excluded.
+ */
+function capsetSpringKeys(from, to, overshoot, bounces, damping) {
+    var keys = [];
+    if (!(overshoot > 1)) return keys;
+
+    var count = bounces > 0 ? Math.floor(bounces) : 1;
+    if (count > 4) count = 4;             // beyond this it reads as a wobble
+    var decay = (damping > 0 && damping < 1) ? damping : 0.5;
+
+    // The first peak lands at 65% of the phase: far enough in to read as a
+    // punch, with enough left afterwards for the settle to be visible.
+    var firstAt = 0.65;
+    var amplitude = overshoot - 1;
+
+    for (var i = 0; i < count; i++) {
+        // Alternate sides of the target, shrinking each time.
+        var signed = 1 + amplitude * (i % 2 === 0 ? 1 : -1);
+        var at = firstAt + (1 - firstAt) * (i / (count + 1));
+        keys.push({ at: at, value: capsetOvershootValue(from, to, signed) });
+        amplitude *= decay;
+    }
+    return keys;
+}
+
+/**
  * Build one animator phase.
  *
  * HOW A RANGE SELECTOR ACTUALLY WORKS, because getting this wrong shipped a
@@ -354,14 +393,15 @@ function capsetAddPhase(layer, name, phase, startTime, duration, basedOn, revers
         var to = capsetToValue(spec, "to", layer);
 
         prop.setValueAtTime(startTime, from);
-        // The peak sits at 70% of the phase: far enough in to read as a punch,
-        // late enough that the settle is quick rather than a slow drift back.
         var overshoot = Number(spec.overshoot);
-        var overshot = overshoot > 1 && duration > 0;
-        if (overshot) {
+        var springKeys = duration > 0
+            ? capsetSpringKeys(from, to, overshoot, Number(spec.bounces),
+                               Number(spec.damping))
+            : [];
+        var overshot = springKeys.length > 0;
+        for (var k = 0; k < springKeys.length; k++) {
             prop.setValueAtTime(
-                startTime + duration * 0.7,
-                capsetOvershootValue(from, to, overshoot)
+                startTime + duration * springKeys[k].at, springKeys[k].value
             );
         }
         prop.setValueAtTime(startTime + duration, to);
@@ -371,10 +411,13 @@ function capsetAddPhase(layer, name, phase, startTime, duration, basedOn, revers
         try {
             var n = prop.numKeys;
             var dims = (from instanceof Array) ? from.length : 1;
-            // With an overshoot key in the middle, ease the FIRST and LAST
-            // keys; easing n-1 would land on the peak and leave the settle
-            // linear, which reads as a stutter at the end of the punch.
-            var firstKey = n - (overshot ? 2 : 1);
+            // Ease the FIRST and LAST keys only. The spring keys between them
+            // are deliberately left linear: easing a peak would stop the
+            // motion dead at the top of the bounce, and the whole point of the
+            // oscillation is that it carries through. (This used to be
+            // computed as n - 2, which only ever meant "the first key" back
+            // when there was exactly one overshoot key.)
+            var firstKey = 1;
             var inEase = [];
             var outEase = [];
             for (var d = 0; d < dims; d++) {

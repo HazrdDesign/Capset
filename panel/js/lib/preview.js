@@ -32,8 +32,9 @@
   // AE scales how much of the animator reaches each unit rather than delaying
   // it -- but it produces the same read: staggered resolution, front to back.
   var STAGGER = 0.7;
-  // Where an overshooting property reaches its peak, matching the host script.
-  var OVERSHOOT_PEAK = 0.7;
+  // Where an overshooting property reaches its first peak, matching
+  // capsetSpringKeys in the host script.
+  var OVERSHOOT_PEAK = 0.65;
 
   var REST = {
     opacity: 100,
@@ -129,6 +130,50 @@
     return clamp01((progress - slot) / span);
   }
 
+  /**
+   * The value stops a spring passes through, as {at, value} through the phase.
+   *
+   * Mirrors capsetSpringKeys in the host script, including its caps, so the
+   * card in the grid shows the motion that will actually be applied. The
+   * first and last stops are the from-pose and the target.
+   */
+  function springStops(from, to, overshoot, bounces, damping) {
+    var stops = [{ at: 0, value: from }];
+    var count = bounces > 0 ? Math.floor(bounces) : 1;
+    if (count > 4) count = 4;
+    var decay = (damping > 0 && damping < 1) ? damping : 0.5;
+    var amplitude = overshoot - 1;
+
+    for (var i = 0; i < count; i++) {
+      var signed = 1 + amplitude * (i % 2 === 0 ? 1 : -1);
+      stops.push({
+        at: OVERSHOOT_PEAK + (1 - OVERSHOOT_PEAK) * (i / (count + 1)),
+        value: overshootValue(from, to, signed)
+      });
+      amplitude *= decay;
+    }
+    stops.push({ at: 1, value: to });
+    return stops;
+  }
+
+  /** Interpolate between spring stops at `local` (0-1 through the phase). */
+  function sampleStops(stops, local, ease) {
+    for (var i = 0; i < stops.length - 1; i++) {
+      var a = stops[i];
+      var b = stops[i + 1];
+      if (local <= b.at || i === stops.length - 2) {
+        var span = b.at - a.at;
+        var k = span <= 0 ? 1 : clamp01((local - a.at) / span);
+        // Only the first and last segments are eased, matching the host,
+        // which leaves the spring's own crossings linear so the motion
+        // carries through them instead of stopping dead at each peak.
+        var shaped = (i === 0 || i === stops.length - 2) ? ease(k) : k;
+        return lerp(a.value, b.value, shaped);
+      }
+    }
+    return stops[stops.length - 1].value;
+  }
+
   function applyPhase(state, phase, progress, unitIndex, unitCount, resolveColor) {
     if (!phase || !phase.properties) return;
     var ease = easing(phase.ease && phase.ease["in"], phase.ease && phase.ease.out);
@@ -142,13 +187,12 @@
 
       var value;
       if (overshoot > 1) {
-        var peak = overshootValue(from, to, overshoot);
-        if (local < OVERSHOOT_PEAK) {
-          value = lerp(from, peak, ease(local / OVERSHOOT_PEAK));
-        } else {
-          value = lerp(peak, to,
-                       ease((local - OVERSHOOT_PEAK) / (1 - OVERSHOOT_PEAK)));
-        }
+        // Walk the same spring the host builds: rise to the first peak, then
+        // through each decaying crossing, then settle. With no bounces
+        // declared this is one peak, which is the single-overshoot shape.
+        var stops = springStops(from, to, overshoot,
+                                Number(spec.bounces), Number(spec.damping));
+        value = sampleStops(stops, local, ease);
       } else {
         value = lerp(from, to, ease(local));
       }
@@ -243,6 +287,7 @@
     stylesFor: stylesFor,
     easing: easing,
     overshootValue: overshootValue,
+    springStops: springStops,
     staggered: staggered,
     STAGGER: STAGGER,
     OVERSHOOT_PEAK: OVERSHOOT_PEAK

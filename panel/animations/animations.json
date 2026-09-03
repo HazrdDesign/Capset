@@ -5,106 +5,642 @@
     {
       "id": "word-pop",
       "name": "Word Pop",
-      "description": "Hard scale punch, no fade. The short-form default — reads instantly at speed.",
-      "tags": ["capcut", "tiktok", "word-by-word"],
+      "description": "Scale punch with a spring settle. The short-form default — reads instantly at speed.",
+      "tags": [
+        "capcut",
+        "tiktok",
+        "word-by-word"
+      ],
       "basedOn": "characters",
-      "in": { "fraction": 0.30, "min": 0.08, "max": 0.22,
-              "properties": [
-                { "type": "scale", "from": [58, 58], "to": [100, 100], "overshoot": 1.14 },
-                { "type": "opacity", "from": 0, "to": 100 }
-              ],
-              "ease": { "in": 72, "out": 8 } }
+      "in": {
+        "fraction": 0.34,
+        "min": 0.2,
+        "max": 0.38,
+        "properties": [
+          {
+            "type": "scale",
+            "from": [
+              12,
+              12
+            ],
+            "to": [
+              100,
+              100
+            ],
+            "overshoot": 1.15,
+            "bounces": 3,
+            "damping": 0.45
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 72,
+          "out": 8
+        }
+      }
     },
     {
       "id": "hormozi",
       "name": "Hormozi",
       "description": "Punches in from an accent colour and settles into yours, with a rotation kick.",
-      "tags": ["capcut", "tiktok", "word-by-word", "colour"],
+      "tags": [
+        "capcut",
+        "tiktok",
+        "word-by-word",
+        "colour"
+      ],
       "basedOn": "characters",
-      "in": { "fraction": 0.32, "min": 0.09, "max": 0.26,
-              "properties": [
-                { "type": "scale", "from": [34, 34], "to": [100, 100], "overshoot": 1.22 },
-                { "type": "rotation", "from": -7, "to": 0, "overshoot": 1.3 },
-                { "type": "fillColor", "from": [1, 0.84, 0.16], "to": "$textColor" },
-                { "type": "opacity", "from": 0, "to": 100 }
-              ],
-              "ease": { "in": 75, "out": 8 } }
+      "in": {
+        "fraction": 0.34,
+        "min": 0.2,
+        "max": 0.4,
+        "properties": [
+          {
+            "type": "scale",
+            "from": [
+              10,
+              10
+            ],
+            "to": [
+              100,
+              100
+            ],
+            "overshoot": 1.2,
+            "bounces": 3,
+            "damping": 0.45
+          },
+          {
+            "type": "rotation",
+            "from": -7,
+            "to": 0,
+            "overshoot": 1.3
+          },
+          {
+            "type": "fillColor",
+            "from": [
+              1,
+              0.84,
+              0.16
+            ],
+            "to": "$textColor"
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 75,
+          "out": 8
+        }
+      }
     },
     {
       "id": "karaoke",
       "name": "Karaoke Fill",
       "description": "Colour sweeps word by word across the caption as it is spoken.",
-      "tags": ["karaoke", "phrase", "colour"],
+      "tags": [
+        "karaoke",
+        "phrase",
+        "colour"
+      ],
       "basedOn": "words",
       "spansLayer": true,
-      "in": { "fraction": 1.0, "min": 0.30, "max": 30.0,
-              "properties": [
-                { "type": "fillColor", "from": [0.42, 1, 0.44], "to": "$textColor" }
-              ],
-              "ease": { "in": 0, "out": 0 } }
+      "in": {
+        "fraction": 1.0,
+        "min": 0.3,
+        "max": 30.0,
+        "properties": [
+          {
+            "type": "fillColor",
+            "from": [
+              0.42,
+              1,
+              0.44
+            ],
+            "to": "$textColor"
+          }
+        ],
+        "ease": {
+          "in": 0,
+          "out": 0
+        }
+      }
     },
     {
       "id": "impact",
       "name": "Impact",
       "description": "Slams in oversized and snaps to size through a blur. Heavy hits.",
-      "tags": ["capcut", "tiktok", "word-by-word"],
+      "tags": [
+        "capcut",
+        "tiktok",
+        "word-by-word"
+      ],
       "basedOn": "characters",
-      "in": { "fraction": 0.28, "min": 0.09, "max": 0.24,
-              "properties": [
-                { "type": "scale", "from": [168, 168], "to": [100, 100], "overshoot": 1.06 },
-                { "type": "blur", "from": [46, 46], "to": [0, 0] },
-                { "type": "opacity", "from": 0, "to": 100 }
-              ],
-              "ease": { "in": 78, "out": 8 } }
+      "in": {
+        "fraction": 0.3,
+        "min": 0.18,
+        "max": 0.34,
+        "properties": [
+          {
+            "type": "scale",
+            "from": [
+              168,
+              168
+            ],
+            "to": [
+              100,
+              100
+            ],
+            "overshoot": 1.06,
+            "bounces": 2,
+            "damping": 0.4
+          },
+          {
+            "type": "blur",
+            "from": [
+              46,
+              46
+            ],
+            "to": [
+              0,
+              0
+            ]
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 78,
+          "out": 8
+        }
+      }
     },
     {
       "id": "bounce-up",
       "name": "Bounce Up",
       "description": "Springs up from below and overshoots before settling.",
-      "tags": ["capcut", "phrase", "word-by-word"],
+      "tags": [
+        "capcut",
+        "phrase",
+        "word-by-word"
+      ],
       "basedOn": "words",
-      "in": { "fraction": 0.34, "min": 0.14, "max": 0.40,
-              "properties": [
-                { "type": "position", "from": [0, 96], "to": [0, 0], "overshoot": 1.32 },
-                { "type": "scale", "from": [82, 82], "to": [100, 100], "overshoot": 1.08 },
-                { "type": "opacity", "from": 0, "to": 100 }
-              ],
-              "ease": { "in": 70, "out": 8 } },
-      "out": { "fraction": 0.16, "min": 0.07, "max": 0.22,
-               "properties": [
-                 { "type": "scale", "from": [100, 100], "to": [88, 88] },
-                 { "type": "opacity", "from": 100, "to": 0 }
-               ],
-               "ease": { "in": 12, "out": 78 } }
+      "in": {
+        "fraction": 0.36,
+        "min": 0.24,
+        "max": 0.48,
+        "properties": [
+          {
+            "type": "position",
+            "from": [
+              0,
+              96
+            ],
+            "to": [
+              0,
+              0
+            ],
+            "overshoot": 1.32,
+            "bounces": 3,
+            "damping": 0.55
+          },
+          {
+            "type": "scale",
+            "from": [
+              82,
+              82
+            ],
+            "to": [
+              100,
+              100
+            ],
+            "overshoot": 1.08,
+            "bounces": 2,
+            "damping": 0.5
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 70,
+          "out": 8
+        }
+      },
+      "out": {
+        "fraction": 0.16,
+        "min": 0.07,
+        "max": 0.22,
+        "properties": [
+          {
+            "type": "scale",
+            "from": [
+              100,
+              100
+            ],
+            "to": [
+              88,
+              88
+            ]
+          },
+          {
+            "type": "opacity",
+            "from": 100,
+            "to": 0
+          }
+        ],
+        "ease": {
+          "in": 12,
+          "out": 78
+        }
+      }
     },
     {
       "id": "tracking-in",
       "name": "Tighten",
       "description": "Letters draw together into place. Clean, editorial, not shouty.",
-      "tags": ["phrase", "editorial"],
+      "tags": [
+        "phrase",
+        "editorial"
+      ],
       "basedOn": "characters",
-      "in": { "fraction": 0.32, "min": 0.14, "max": 0.42,
-              "properties": [
-                { "type": "tracking", "from": 26, "to": 0 },
-                { "type": "opacity", "from": 0, "to": 100 }
-              ],
-              "ease": { "in": 62, "out": 8 } }
+      "in": {
+        "fraction": 0.32,
+        "min": 0.14,
+        "max": 0.42,
+        "properties": [
+          {
+            "type": "tracking",
+            "from": 26,
+            "to": 0
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 62,
+          "out": 8
+        }
+      }
     },
     {
       "id": "typewriter",
       "name": "Typewriter",
       "description": "Characters appear one at a time, hard cut, no fade.",
-      "tags": ["phrase"],
+      "tags": [
+        "phrase"
+      ],
       "basedOn": "characters",
-      "in": { "fraction": 0.55, "min": 0.20, "max": 1.20,
-              "properties": [{ "type": "opacity", "from": 0, "to": 100 }],
-              "ease": { "in": 0, "out": 0 } }
+      "in": {
+        "fraction": 0.55,
+        "min": 0.2,
+        "max": 1.2,
+        "properties": [
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 0,
+          "out": 0
+        }
+      }
+    },
+    {
+      "id": "flash",
+      "name": "Flash",
+      "description": "Every word lands at once on a spring. MrBeast-style: no cascade, all impact.",
+      "tags": [
+        "mrbeast",
+        "tiktok",
+        "phrase"
+      ],
+      "basedOn": "lines",
+      "in": {
+        "fraction": 0.3,
+        "min": 0.18,
+        "max": 0.34,
+        "properties": [
+          {
+            "type": "scale",
+            "from": [
+              80,
+              80
+            ],
+            "to": [
+              100,
+              100
+            ],
+            "overshoot": 1.12,
+            "bounces": 3,
+            "damping": 0.5
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 74,
+          "out": 6
+        }
+      }
+    },
+    {
+      "id": "rise",
+      "name": "Rise",
+      "description": "Lifts into place from below without scaling. Calm, and never covers the shot.",
+      "tags": [
+        "editorial",
+        "phrase",
+        "word-by-word"
+      ],
+      "basedOn": "words",
+      "in": {
+        "fraction": 0.32,
+        "min": 0.2,
+        "max": 0.42,
+        "properties": [
+          {
+            "type": "position",
+            "from": [
+              0,
+              42
+            ],
+            "to": [
+              0,
+              0
+            ],
+            "overshoot": 1.18,
+            "bounces": 2,
+            "damping": 0.45
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 70,
+          "out": 8
+        }
+      }
+    },
+    {
+      "id": "drop",
+      "name": "Drop",
+      "description": "Falls in from above and bounces on landing. Playful, reads big.",
+      "tags": [
+        "capcut",
+        "tiktok",
+        "word-by-word"
+      ],
+      "basedOn": "words",
+      "in": {
+        "fraction": 0.36,
+        "min": 0.24,
+        "max": 0.46,
+        "properties": [
+          {
+            "type": "position",
+            "from": [
+              0,
+              -74
+            ],
+            "to": [
+              0,
+              0
+            ],
+            "overshoot": 1.3,
+            "bounces": 3,
+            "damping": 0.5
+          },
+          {
+            "type": "scale",
+            "from": [
+              88,
+              88
+            ],
+            "to": [
+              100,
+              100
+            ],
+            "overshoot": 1.08,
+            "bounces": 2,
+            "damping": 0.5
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 68,
+          "out": 8
+        }
+      }
+    },
+    {
+      "id": "squash",
+      "name": "Squash",
+      "description": "Squashes wide then snaps tall. The most cartoon-physical of the set.",
+      "tags": [
+        "capcut",
+        "tiktok",
+        "word-by-word"
+      ],
+      "basedOn": "characters",
+      "in": {
+        "fraction": 0.32,
+        "min": 0.2,
+        "max": 0.38,
+        "properties": [
+          {
+            "type": "scale",
+            "from": [
+              138,
+              62
+            ],
+            "to": [
+              100,
+              100
+            ],
+            "overshoot": 1.16,
+            "bounces": 3,
+            "damping": 0.5
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 72,
+          "out": 8
+        }
+      }
+    },
+    {
+      "id": "spin",
+      "name": "Spin",
+      "description": "Twists in with a scale punch. Energetic without moving position.",
+      "tags": [
+        "tiktok",
+        "word-by-word"
+      ],
+      "basedOn": "characters",
+      "in": {
+        "fraction": 0.32,
+        "min": 0.2,
+        "max": 0.4,
+        "properties": [
+          {
+            "type": "rotation",
+            "from": -24,
+            "to": 0,
+            "overshoot": 1.25,
+            "bounces": 3,
+            "damping": 0.45
+          },
+          {
+            "type": "scale",
+            "from": [
+              46,
+              46
+            ],
+            "to": [
+              100,
+              100
+            ],
+            "overshoot": 1.12,
+            "bounces": 2,
+            "damping": 0.5
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 74,
+          "out": 8
+        }
+      }
+    },
+    {
+      "id": "blur-in",
+      "name": "Blur In",
+      "description": "Resolves out of a blur at full size. Soft, and never fights the footage.",
+      "tags": [
+        "editorial",
+        "phrase"
+      ],
+      "basedOn": "words",
+      "in": {
+        "fraction": 0.34,
+        "min": 0.22,
+        "max": 0.46,
+        "properties": [
+          {
+            "type": "blur",
+            "from": [
+              38,
+              38
+            ],
+            "to": [
+              0,
+              0
+            ]
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 66,
+          "out": 10
+        }
+      }
+    },
+    {
+      "id": "shout",
+      "name": "Shout",
+      "description": "Overshoots hard and settles slowly. The loudest thing in the library.",
+      "tags": [
+        "mrbeast",
+        "tiktok",
+        "word-by-word"
+      ],
+      "basedOn": "characters",
+      "in": {
+        "fraction": 0.36,
+        "min": 0.24,
+        "max": 0.44,
+        "properties": [
+          {
+            "type": "scale",
+            "from": [
+              8,
+              8
+            ],
+            "to": [
+              100,
+              100
+            ],
+            "overshoot": 1.34,
+            "bounces": 4,
+            "damping": 0.55
+          },
+          {
+            "type": "rotation",
+            "from": 6,
+            "to": 0,
+            "overshoot": 1.2,
+            "bounces": 3,
+            "damping": 0.5
+          },
+          {
+            "type": "opacity",
+            "from": 0,
+            "to": 100
+          }
+        ],
+        "ease": {
+          "in": 76,
+          "out": 6
+        }
+      }
     },
     {
       "id": "none",
       "name": "No Animation",
       "description": "Captions cut in and out on their timings. Nothing is applied.",
-      "tags": ["off"],
+      "tags": [
+        "off"
+      ],
       "basedOn": "characters"
     }
   ]

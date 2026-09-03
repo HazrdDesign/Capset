@@ -248,3 +248,62 @@ test("no animation still references a preview video", () => {
                        animation.id + " still points at a baked preview file");
   });
 });
+
+// --- the preview must not promise motion the host will not produce ----------
+//
+// The grid showing one animation while After Effects renders another is the
+// exact failure that let the range-selector bug go unnoticed: the cards looked
+// right, so the library looked fine. These pin the two implementations
+// together at the points where they could drift.
+
+test("the preview's spring matches the host's spring keys", () => {
+  const { load } = require("./jsx-host.js");
+  const spec = {
+    type: "scale", from: [0, 0], to: [100, 100],
+    overshoot: 1.15, bounces: 3, damping: 0.5
+  };
+
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: [{ text: "p", start: 0, end: 2,
+      timings: { inStart: 0, inDuration: 1.0, outStart: 2, outDuration: 0 } }],
+    style: {}, options: {},
+    animation: { id: "t", basedOn: "characters", in: { properties: [spec] } }
+  });
+
+  const layers = [];
+  for (let i = 1; i <= h.comp.numLayers; i++) layers.push(h.comp.layer(i));
+  const cap = layers.find((l) => /^Capset__cap/.test(l.name));
+  const animators = cap.property("ADBE Text Properties").property("ADBE Text Animators");
+  let animator = null;
+  for (let i = 1; i <= animators.numProperties; i++) {
+    if (/__in$/.test(animators.property(i).name)) animator = animators.property(i);
+  }
+  const prop = animator.property("ADBE Text Animator Properties").property(1);
+
+  const stops = preview.springStops(spec.from, spec.to, spec.overshoot,
+                                    spec.bounces, spec.damping);
+
+  assert.strictEqual(prop.numKeys, stops.length,
+    "the preview and the host disagree on how many stops the spring has");
+
+  stops.forEach((stop, i) => {
+    // The phase runs 0->1.0s, so key times are already normalised.
+    assert.ok(Math.abs(prop.keyTime(i + 1) - stop.at) < 1e-6,
+      "stop " + i + " is at " + prop.keyTime(i + 1) + " in the host, " +
+      stop.at + " in the preview");
+    const hostValue = prop.keyValue(i + 1)[0];
+    const previewValue = Array.isArray(stop.value) ? stop.value[0] : stop.value;
+    assert.ok(Math.abs(hostValue - previewValue) < 1e-6,
+      "stop " + i + " is " + hostValue + " in the host, " + previewValue +
+      " in the preview");
+  });
+});
+
+test("a plain overshoot is still a single peak in both", () => {
+  // Existing presets declare `overshoot` with no bounces; they must keep the
+  // shape they had rather than quietly becoming springs.
+  const stops = preview.springStops([0, 0], [100, 100], 1.15, undefined, undefined);
+  assert.strictEqual(stops.length, 3, "from, one peak, and the target");
+  assert.ok(Math.abs(stops[1].value[0] - 115) < 1e-9);
+});
