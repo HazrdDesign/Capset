@@ -303,12 +303,26 @@ class OutputModule {
     this.templates = templates.slice();
     this.applied = null;
     this.file = null;
+    this.stale = false;
   }
+  /**
+   * Applying a template REPLACES the item's output module.
+   *
+   * After Effects invalidates the OutputModule object when its settings
+   * change, so a reference taken before applyTemplate() is stale afterwards
+   * and writes to it go nowhere. Modelled here because the host script has to
+   * re-read the module, and a fake that quietly kept working would let that
+   * bug ship -- the whole reason this file exists.
+   */
   applyTemplate(name) {
     if (this.templates.indexOf(name) === -1) {
       throw new Error("no output module template named " + name);
     }
     this.applied = name;
+    this.stale = true;
+    const fresh = new OutputModule(this.item, this.templates);
+    fresh.applied = name;
+    this.item._modules[0] = fresh;
   }
 }
 
@@ -335,6 +349,11 @@ class RenderQueue {
   constructor(options = {}) {
     this._items = [];
     this._templates = options.templates || DEFAULT_TEMPLATES;
+    // Set to a header-sized value to simulate a render that produced a valid
+    // but sample-less file — what Render Settings with Audio Output off does.
+    this._renderedBytes = options.renderedBytes === undefined
+      ? DEFAULT_RENDERED_BYTES
+      : options.renderedBytes;
     // Every item render() actually rendered, in order — the whole point of
     // the queue fake, since renderQueue.render() renders EVERYTHING enabled.
     this.rendered = [];
@@ -359,13 +378,24 @@ class RenderQueue {
       this.rendered.push(item);
       item.status = "done";
       const om = item._modules[0];
-      if (om.file) writtenFiles.add(om.file.fsName);
+      if (om.file) writtenFiles.set(om.file.fsName, this._renderedBytes);
     });
   }
 }
 
-/** Files the fake render queue produced, so File.exists can answer. */
-const writtenFiles = new Set();
+/**
+ * Files the fake render queue produced, mapped to their size in bytes.
+ *
+ * A Map rather than a Set because size is the difference between a render
+ * that worked and one that ran with audio switched off: the second still
+ * produces a real, openable file, just a header with no samples after it.
+ * That is what shipped as "0 words -> 0 captions" to a real user, so the
+ * fake has to be able to represent it. `.has()` still works for File.exists.
+ */
+const writtenFiles = new Map();
+
+/** A plausible size for a few seconds of uncompressed PCM. */
+const DEFAULT_RENDERED_BYTES = 1764044;
 
 // --- project ----------------------------------------------------------------
 
@@ -422,7 +452,10 @@ function reset(options = {}) {
   project = {
     items: [comp],
     activeItem: comp,
-    renderQueue: new RenderQueue({ templates: options.templates }),
+    renderQueue: new RenderQueue({
+      templates: options.templates,
+      renderedBytes: options.renderedBytes
+    }),
     expressionEngine: options.expressionEngine || "javascript-1.0",
     numItems: 1,
     item(i) { return project.items[i - 1]; }

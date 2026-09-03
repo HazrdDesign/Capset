@@ -74,6 +74,14 @@ On `done`, a `result` field is present:
 {
   "duration_sec": 12.34,
   "full_text": "hello world",
+  "diagnostics": {
+    "duration_sec": 12.34,
+    "sample_rate": 16000,
+    "peak": 0.63,
+    "rms": 0.08,
+    "speech_spans": 3,
+    "chunks": 1
+  },
   "words": [
     { "text": "hello", "start": 0.12, "end": 0.48, "confidence": 0.98 },
     { "text": "world", "start": 0.52, "end": 0.91, "confidence": 0.95 }
@@ -82,6 +90,22 @@ On `done`, a `result` field is present:
 ```
 
 On `error`, an `error` field carries the message.
+
+### About `diagnostics`
+
+What the backend measured about the audio it was given. Present on every
+successful result and may be `null` only if it could not be computed.
+
+It exists for the case where `words` is empty. "0 words" is indistinguishable
+from a silent render, a mis-selected layer and a genuine absence of speech, and
+a real user lost an evening to that ambiguity — the panel reported a successful
+transcription of nothing after After Effects handed it a silent WAV. `peak` and
+`rms` are 0–1 amplitudes; `speech_spans` and `chunks` say how the audio was
+divided up before the model saw it.
+
+Audio that is *entirely* silent never reaches this shape: it fails the job with
+an explanatory error instead, because it is a problem the user can fix rather
+than a transcription result.
 
 **404** for an unknown id. Finished jobs are retained for one hour, then
 dropped.

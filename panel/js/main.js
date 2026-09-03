@@ -676,6 +676,15 @@
           log("Select just the voice layer for better accuracy — music mixed " +
               "into the audio costs recognition quality.", "warn");
         }
+        // Uncompressed PCM is ~176 KB/s at 44.1kHz stereo 16-bit, so a real
+        // take is orders of magnitude larger than this. Saying the size out
+        // loud makes a bad render visible at the moment it happens, rather
+        // than as an empty transcript two steps later.
+        // ExtendScript reports -1 for a file it cannot stat; that is "unknown",
+        // not "empty", and printing "-0 KB" would be worse than saying nothing.
+        if (rendered.bytes > 0) {
+          log("Rendered " + Math.round(rendered.bytes / 1024) + " KB of audio.");
+        }
         return rendered;
       });
   }
@@ -687,6 +696,36 @@
     if (!parsed.captions.length) throw new Error("No usable cues in that file.");
     log(parsed.captions.length + " cues imported from " + state.srtName);
     return { captions: parsed.captions, offset: 0 };
+  }
+
+  /**
+   * Say why a transcription came back with nothing.
+   *
+   * "0 words → 0 captions" is true and useless: it looks like the model
+   * failed, when the usual cause is that After Effects handed us audio with
+   * nothing in it. Truly silent audio is now rejected in the backend with its
+   * own message, so anything reaching here was audible — which makes the level
+   * and the duration the two numbers worth showing.
+   */
+  function explainEmptyTranscript(diagnostics) {
+    if (!diagnostics) {
+      log("No speech was recognised. Check that the layer you selected is " +
+          "the one with the dialogue.", "warn");
+      return;
+    }
+    var dbfs = diagnostics.peak > 0
+      ? (20 * Math.log10(diagnostics.peak)).toFixed(1) + " dBFS peak"
+      : "digital silence";
+    log("Transcribed " + diagnostics.duration_sec.toFixed(1) + "s at " +
+        diagnostics.sample_rate + " Hz (" + dbfs + ").", "warn");
+    if (diagnostics.peak < 0.01) {
+      log("That audio is very quiet, which is the most likely reason nothing " +
+          "was recognised. Check the layer's audio levels.", "warn");
+    } else {
+      log("The audio is at a healthy level, so the speech itself was not " +
+          "recognised — check you selected the dialogue layer rather than " +
+          "music, and that the language is English.", "warn");
+    }
   }
 
   function captionsFromTranscription(settings) {
@@ -704,6 +743,7 @@
         });
         if (out.layout) log(out.layout.rationale);
         log(result.words.length + " words → " + out.captions.length + " captions");
+        if (!result.words.length) explainEmptyTranscript(result.diagnostics);
         // The render begins at the requested range, so timestamps are
         // relative to that point in comp time.
         return { captions: out.captions, offset: source.start || 0 };

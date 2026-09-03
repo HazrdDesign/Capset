@@ -477,6 +477,66 @@ test("no audio template at all is explained, not swallowed", () => {
                 /set Format to WAV or AIFF/);
 });
 
+// --- a render that produced no samples --------------------------------------
+//
+// The failure that reached a real user: After Effects rendered a valid,
+// openable audio file with nothing in it, the backend transcribed the silence,
+// and the panel reported "0 words -> 0 captions". Nothing in the chain
+// objected. The render is where this is cheapest to catch -- before an upload
+// and a transcription that were never going to find anything.
+
+test("a header-only render is rejected before anything is uploaded", () => {
+  // Render Settings with Audio Output off still writes a file: a WAV header
+  // and no samples after it.
+  const h = load({ renderedBytes: 44 });
+  withAudio(h);
+  assert.throws(() => h.call("capsetRenderAudio", { scope: "composition" }),
+                /empty audio file/);
+});
+
+test("the empty-render message names the setting to change", () => {
+  // "Something went wrong" costs the user an evening; naming the switch does
+  // not. This is the whole point of catching it here.
+  const h = load({ renderedBytes: 44 });
+  withAudio(h);
+  assert.throws(() => h.call("capsetRenderAudio", { scope: "composition" }),
+                /Audio Output/);
+});
+
+test("a real render reports its size so the panel can show it", () => {
+  const h = load();
+  withAudio(h);
+  const result = h.call("capsetRenderAudio", { scope: "composition" });
+  assert.ok(result.bytes > 128, "a real render is far larger than a header");
+});
+
+test("an unknown file size does not block a render", () => {
+  // File.length is -1 when ExtendScript cannot stat the file. That is not
+  // evidence of an empty render, and treating it as one would break a working
+  // install over a missing number.
+  const h = load();
+  withAudio(h);
+  const file = h.sandbox.File;
+  Object.defineProperty(file.prototype, "length", {
+    configurable: true, get() { return -1; }
+  });
+  const result = h.call("capsetRenderAudio", { scope: "composition" });
+  assert.ok(result.path, "the render should still succeed");
+});
+
+test("the output file is set on the output module that actually renders", () => {
+  // Applying a template invalidates the OutputModule object: a reference taken
+  // before applyTemplate() is stale afterwards, and assigning .file on it
+  // sends the render somewhere we never look. The fake replaces the module on
+  // applyTemplate, exactly as After Effects does, so a script that holds the
+  // stale reference renders no file and this fails.
+  const h = load();
+  withAudio(h);
+  const result = h.call("capsetRenderAudio", { scope: "composition" });
+  assert.ok(result.path, "the render produced no file: .file was set on a stale module");
+  assert.ok(h.fake.writtenFiles.has(result.path), "the rendered path was not written");
+});
+
 test("a composition with no audible layer says so", () => {
   const h = load();
   h.comp.layers.addText("just a title");

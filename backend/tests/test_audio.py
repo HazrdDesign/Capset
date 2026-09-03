@@ -12,7 +12,7 @@ import wave
 import numpy as np
 import pytest
 
-from app.audio import AudioError, load_audio, slice_audio
+from app.audio import AudioError, describe_level, load_audio, measure, slice_audio
 
 
 def write_wav(path, samples, rate=48000, channels=1, width=2):
@@ -190,6 +190,40 @@ def test_compressed_aiff_is_rejected_with_a_useful_message(tmp_path):
     path.write_bytes(b"FORM" + struct.pack(">I", len(body)) + body)
     with pytest.raises(AudioError, match="compressed"):
         load_audio(path)
+
+
+# --- signal measurement ---------------------------------------------------
+
+def test_measure_reports_nothing_for_silence():
+    peak, rms = measure(np.zeros(1000, dtype=np.float32))
+    assert peak == 0.0
+    assert rms == 0.0
+
+
+def test_measure_handles_an_empty_buffer():
+    """np.max on an empty array raises; the caller must not have to know that."""
+    assert measure(np.zeros(0, dtype=np.float32)) == (0.0, 0.0)
+
+
+def test_measure_finds_the_peak_regardless_of_sign():
+    audio = np.array([0.0, 0.4, -0.9, 0.2], dtype=np.float32)
+    peak, _ = measure(audio)
+    assert peak == pytest.approx(0.9)
+
+
+def test_measure_rms_of_a_sine_is_amplitude_over_root_two():
+    audio = tone(1.0, rate=48000, freq=100.0)   # amplitude 0.5
+    _, rms = measure(audio)
+    assert rms == pytest.approx(0.5 / np.sqrt(2), rel=1e-3)
+
+
+def test_describe_level_names_digital_silence():
+    assert describe_level(0.0) == "digital silence"
+
+
+def test_describe_level_reports_dbfs():
+    assert "0.0 dBFS" in describe_level(1.0)
+    assert "-6.0 dBFS" in describe_level(0.5)
 
 
 # --- slicing --------------------------------------------------------------

@@ -50,8 +50,27 @@ class Chunk:
         return self.end - self.start
 
 
+@dataclass(frozen=True)
+class AudioDiagnostics:
+    """What the backend measured about the audio it was handed.
+
+    Returned with every result, successful or empty. Zero words used to be
+    indistinguishable from a silent file, a mis-rendered file and a genuine
+    absence of speech -- the panel printed "0 words" for all three and the user
+    had nothing to act on. These are the numbers that tell them apart.
+    """
+
+    duration_sec: float
+    sample_rate: int
+    peak: float
+    rms: float
+    speech_spans: int
+    chunks: int
+
+
 @dataclass
 class TranscriptionResult:
     duration_sec: float
     words: list[Word] = field(default_factory=list)
     full_text: str = ""
+    diagnostics: AudioDiagnostics | None = None
