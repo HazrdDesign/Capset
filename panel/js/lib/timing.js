@@ -39,6 +39,28 @@
     return Math.min(Math.max(value, low), high);
   }
 
+  /** A usable explicit duration: a real number above zero. */
+  function isPositive(value) {
+    return value !== undefined && value !== null && isFinite(value) && Number(value) > 0;
+  }
+
+  /**
+   * Seconds from a length the user typed.
+   *
+   * Frames are what people actually count animation in, and a frame is only
+   * meaningful against a frame rate, so the comp's rate has to come with it.
+   */
+  function toSeconds(value, unit, frameRate) {
+    var amount = Number(value);
+    if (!isFinite(amount) || amount <= 0) return 0;
+    if (unit === "frames") {
+      var rate = Number(frameRate);
+      if (!isFinite(rate) || rate <= 0) rate = 30;
+      return amount / rate;
+    }
+    return amount;
+  }
+
   /**
    * @param {number} layerDuration seconds the caption layer is visible
    * @param {object} [spec] overrides of DEFAULTS; `hasOut: false` disables the
@@ -71,13 +93,28 @@
       };
     }
 
-    var inDur = clamp(duration * s.inFraction, s.inMin, s.inMax);
+    // An explicit length wins over the fraction rules.
+    //
+    // The fraction model scales every animation to its caption, which stops a
+    // long entrance dragging on a short word but also means one preset runs
+    // for a different length on every caption -- so it never has a consistent
+    // feel, and "Word Pop" on a 1.2s caption looks nothing like it does on a
+    // 0.35s one. The caps below still apply, so an explicit length can shorten
+    // itself on a very short caption but can never overrun it.
+    var inDur;
+    if (isPositive(s.inSeconds)) {
+      inDur = Number(s.inSeconds);
+    } else {
+      inDur = clamp(duration * s.inFraction, s.inMin, s.inMax);
+    }
     // The cap wins over inMin: resolving early matters more than a minimum.
     inDur = Math.min(inDur, duration * s.maxInFraction);
 
     var outDur = 0;
     if (spec && spec.hasOut === false) {
       outDur = 0;
+    } else if (isPositive(s.outSeconds)) {
+      outDur = Math.min(Number(s.outSeconds), duration * s.maxOutFraction);
     } else {
       outDur = clamp(duration * s.outFraction, s.outMin, s.outMax);
       outDur = Math.min(outDur, duration * s.maxOutFraction);
@@ -116,6 +153,7 @@
   var api = {
     DEFAULTS: DEFAULTS,
     clamp: clamp,
+    toSeconds: toSeconds,
     computeTimings: computeTimings,
     resolveFraction: resolveFraction
   };

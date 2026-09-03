@@ -148,12 +148,24 @@
 
     <section>
       <h2>Timing</h2>
-      <label for="resolve">Resolve within <span id="resolve-value">50</span>% of each caption</label>
-      <input type="range" id="resolve" min="20" max="50" value="50" style="width:100%">
-      <p class="hint">
-        Animations scale to each caption's length, so short words finish early
-        instead of still moving when the word disappears.
+      <label for="length-mode">Animation length</label>
+      <select id="length-mode">
+        <option value="auto" selected>Auto — scale to each caption</option>
+        <option value="frames">Frames</option>
+        <option value="seconds">Seconds</option>
+      </select>
+      <div id="length-row" hidden>
+        <label for="length-value">Length</label>
+        <input type="number" id="length-value" min="0" step="1" value="8">
+      </div>
+      <p class="hint" id="length-hint">
+        Auto scales each animation to its caption, so short words finish early
+        instead of still moving when the word disappears. Set a length in
+        frames or seconds to give every caption the same timing instead — it
+        is still shortened on a caption too short to hold it.
       </p>
+      <label for="resolve">Never use more than <span id="resolve-value">50</span>% of a caption</label>
+      <input type="range" id="resolve" min="20" max="50" value="50" style="width:100%">
     </section>
 
     <section>

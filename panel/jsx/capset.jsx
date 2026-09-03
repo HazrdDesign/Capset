@@ -1348,6 +1348,51 @@ function capsetIsCapsetLayer(layer) {
 /**
  * @param payloadJson {animation, timingsById?, scope: "selected"|"all"}
  */
+/**
+ * Names and durations of the layers an animation would be applied to.
+ *
+ * The panel needs these so it can compute timings with js/lib/timing.js, the
+ * one tested implementation of the rules. Without it, re-applying an animation
+ * sent no timings at all and fell through to a hardcoded copy of the fraction
+ * rules further down this file -- so the length the user had chosen was
+ * silently ignored on every layer, and the duplicate could drift from the
+ * real one without anything noticing.
+ */
+function capsetCaptionLayerTimes(scopeJson) {
+    try {
+        var payload = JSON.parse(scopeJson || "{}");
+        var scope = payload.scope === "all" ? "all" : "selected";
+        var comp = capsetActiveComp();
+        var out = [];
+        var i;
+
+        if (scope === "all") {
+            for (i = 1; i <= comp.numLayers; i++) {
+                var candidate = comp.layer(i);
+                if (candidate instanceof TextLayer && capsetIsCapsetLayer(candidate)) {
+                    out.push({
+                        name: candidate.name,
+                        duration: candidate.outPoint - candidate.inPoint
+                    });
+                }
+            }
+        } else {
+            var selected = comp.selectedLayers;
+            for (i = 0; i < selected.length; i++) {
+                if (selected[i] instanceof TextLayer) {
+                    out.push({
+                        name: selected[i].name,
+                        duration: selected[i].outPoint - selected[i].inPoint
+                    });
+                }
+            }
+        }
+        return capsetOk({ layers: out, frameRate: comp.frameRate });
+    } catch (e) {
+        return capsetErr(e.message);
+    }
+}
+
 function capsetReplaceAnimation(payloadJson) {
     var undoOpen = false;
     try {
