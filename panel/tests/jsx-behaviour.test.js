@@ -1107,3 +1107,73 @@ test("an empty caption creates no layer at all", () => {
   assert.strictEqual(captionLayers(h.comp).length, 1, "empty captions became layers");
   assert.strictEqual(result.created, 1, "empty captions were counted as created");
 });
+
+
+// --- cleaning up renders ----------------------------------------------------
+
+/**
+ * Nothing used to delete these. Every transcription left a full-size
+ * uncompressed WAV in the temp folder for good — an hour of 48 kHz stereo is
+ * about 690 MB — so a handful of podcasts cost a user gigabytes of disk with
+ * no visible connection to a captioning plugin.
+ *
+ * The deletion is narrow on purpose: the path travels to the backend and back
+ * before it is used, and a plugin that removes whatever path it is handed is
+ * one bug away from deleting somebody's footage.
+ */
+function withRender(fsName) {
+  const host = load();
+  host.fake.writtenFiles.set(fsName, 5_000_000);
+  return host;
+}
+
+test("a Capset render in the temp folder is deleted", () => {
+  const host = withRender("/tmp/capset_1717171717.wav");
+  const result = host.call("capsetDiscardRender", { path: "/tmp/capset_1717171717.wav" });
+  assert.strictEqual(result.removed, true);
+  assert.ok(!host.fake.writtenFiles.has("/tmp/capset_1717171717.wav"));
+});
+
+test("a file outside the temp folder is left alone", () => {
+  // The name deliberately matches ours exactly, so ONLY the folder check can
+  // save this file. A differently-named file would pass this test even with
+  // the folder check deleted, which is no test at all.
+  const victim = "/Users/joe/Footage/capset_1717171717.wav";
+  const host = withRender(victim);
+  assert.strictEqual(host.call("capsetDiscardRender", { path: victim }).removed, false);
+  assert.ok(
+    host.fake.writtenFiles.has(victim),
+    "deleted a file outside the temp folder"
+  );
+});
+
+test("a file in the temp folder that is not ours is left alone", () => {
+  const host = withRender("/tmp/something-else.wav");
+  const result = host.call("capsetDiscardRender", { path: "/tmp/something-else.wav" });
+  assert.strictEqual(result.removed, false);
+  assert.ok(host.fake.writtenFiles.has("/tmp/something-else.wav"));
+});
+
+test("a name that only starts like ours is not enough", () => {
+  // "capset_notes.wav" is not a render; ours are capset_<timestamp>.<ext>.
+  const host = withRender("/tmp/capset_notes.wav");
+  assert.strictEqual(
+    host.call("capsetDiscardRender", { path: "/tmp/capset_notes.wav" }).removed,
+    false
+  );
+  assert.ok(host.fake.writtenFiles.has("/tmp/capset_notes.wav"));
+});
+
+test("a missing file is not an error", () => {
+  const host = load();
+  assert.strictEqual(
+    host.call("capsetDiscardRender", { path: "/tmp/capset_1.wav" }).removed,
+    false
+  );
+});
+
+test("no path at all is not an error", () => {
+  // Cleanup must never be the thing that fails a run that already succeeded.
+  const host = load();
+  assert.strictEqual(host.call("capsetDiscardRender", {}).removed, false);
+});

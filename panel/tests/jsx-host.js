@@ -42,6 +42,24 @@ function makeFile() {
       return bytes === undefined ? -1 : bytes;
     }
   });
+  // ExtendScript's File exposes the basename and the containing Folder, and
+  // both are what capsetDiscardRender checks before it deletes anything.
+  Object.defineProperty(File.prototype, "name", {
+    get() { return this.fsName.split(/[\\/]/).pop(); }
+  });
+  Object.defineProperty(File.prototype, "parent", {
+    get() {
+      const parts = this.fsName.split(/[\\/]/);
+      parts.pop();
+      return { fsName: parts.join("/") || "/" };
+    }
+  });
+  // Returns true on success, false if the file could not be removed —
+  // ExtendScript does NOT throw here, and code that assumes it does would
+  // silently treat a failed delete as a successful one.
+  File.prototype.remove = function () {
+    return fake.writtenFiles.delete(this.fsName);
+  };
   File.prototype.open = function () { return false; };
   File.prototype.read = function () { return ""; };
   File.prototype.close = function () {};

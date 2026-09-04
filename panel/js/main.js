@@ -741,7 +741,14 @@
    * own message, so anything reaching here was audible — which makes the level
    * and the duration the two numbers worth showing.
    */
-  function explainEmptyTranscript(diagnostics) {
+  function explainEmptyTranscript(diagnostics, renderedPath) {
+    if (renderedPath) {
+      // Kept on purpose in this case, and named so it can be listened to.
+      // "Is there actually speech in the file we sent?" is the first question
+      // worth answering and the only one the user can answer directly.
+      log("The audio is still at " + renderedPath + " — play it to hear " +
+          "exactly what was transcribed.", "warn");
+    }
     if (!diagnostics) {
       log("No speech was recognised. Check that the layer you selected is " +
           "the one with the dialogue.", "warn");
@@ -790,6 +797,20 @@
         "Please report this.", "err");
   }
 
+  /**
+   * Throw away the audio After Effects rendered, now that it has been read.
+   *
+   * Fire-and-forget: the captions are already in hand, and a temp file that
+   * outlives its usefulness is not worth failing a run over or interrupting
+   * the user about. The host refuses anything that is not one of our own
+   * renders in the temp folder.
+   */
+  function discardRender(path) {
+    if (!path) return;
+    host("capsetDiscardRender(" + arg({ path: path }) + ")")
+      .then(null, function () { /* a stale temp file is not the user's problem */ });
+  }
+
   function captionsFromTranscription(settings) {
     return renderAudio(settings.scope).then(function (source) {
       setProgress(0.08, "Sending audio to the transcriber…");
@@ -815,7 +836,14 @@
         });
         if (out.layout) log(out.layout.rationale);
         log(result.words.length + " words → " + out.captions.length + " captions");
-        if (!result.words.length) explainEmptyTranscript(result.diagnostics);
+        if (result.words.length) {
+          // Only once there is something to show for it. An empty transcript
+          // is the one case where the rendered audio is worth keeping: it is
+          // the evidence, and explainEmptyTranscript says where to find it.
+          discardRender(source.path);
+        } else {
+          explainEmptyTranscript(result.diagnostics, source.path);
+        }
         // The render begins at the requested range, so timestamps are
         // relative to that point in comp time.
         return { captions: out.captions, offset: source.start || 0 };
