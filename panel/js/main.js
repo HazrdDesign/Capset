@@ -792,10 +792,19 @@
 
   function captionsFromTranscription(settings) {
     return renderAudio(settings.scope).then(function (source) {
-      setProgress(0.08, "Uploading…");
+      setProgress(0.08, "Sending audio to the transcriber…");
       var name = source.path.split(/[\\/]/).pop();
+      // The service runs on this machine, so hand it the path and let it open
+      // the file itself: no read into the panel, no base64 decode, no
+      // multipart body, no second copy on the service's side. An hour of
+      // 48 kHz stereo is ~690 MB, and the upload route holds several copies of
+      // it at once. Reading it in the panel stays as the fallback for a
+      // service that somehow is not local.
+      var payload = backend.isLocal()
+        ? { path: source.path }
+        : readBlob(source.path, source.bytes);
       return backend.transcribe(
-        readBlob(source.path, source.bytes), name,
+        payload, name,
         function (p, stage) { setProgress(0.08 + p * 0.82, stage); }
       ).then(function (result) {
         checkTranscribedDuration(source, result.diagnostics);

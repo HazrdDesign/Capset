@@ -328,3 +328,26 @@ test("moving a timing control re-times the cards already on screen", () => {
     );
   });
 });
+
+// --- reading files out of the host -----------------------------------------
+
+test("main.js does not invent CEP encoding constants", () => {
+  // `cep.fs.NO_ENCODING` does not exist. Passing it gave `undefined`, which
+  // CEP treats as "decode this as UTF-8", which destroyed every audio file
+  // the panel read for four releases. There is no way to unit-test main.js
+  // (it is an IIFE needing a DOM and CSInterface), so this is a source check:
+  // the only encoding argument allowed is cep.encoding.Base64, in cepfile.js.
+  assert.doesNotMatch(main, /NO_ENCODING/,
+    "cep.fs.NO_ENCODING is not a real constant — see js/lib/cepfile.js");
+});
+
+test("binary reads go through cepfile.js, not straight to cep.fs", () => {
+  const raw = main.match(/cep\.fs\.readFile\([^)]*\)/g) || [];
+  raw.forEach((call) => {
+    assert.ok(
+      !/,/.test(call),
+      "main.js passes an encoding to readFile directly (" + call + "); " +
+      "binary reads belong in js/lib/cepfile.js where they are tested"
+    );
+  });
+});

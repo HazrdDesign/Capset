@@ -97,10 +97,43 @@
     return attempt();
   };
 
-  CapsetBackend.prototype.submit = function (file, filename) {
+  /**
+   * Is the service we are talking to on this machine?
+   *
+   * Only then can it open a file by path. The default and every discovered
+   * port is a loopback address, so this is normally true -- but it is checked
+   * rather than assumed, because being wrong means sending the service a path
+   * that means something different on its side.
+   */
+  CapsetBackend.prototype.isLocal = function () {
+    return /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/i.test(this.baseUrl);
+  };
+
+  /**
+   * Start a job.
+   *
+   * `source` is either a Blob to upload or {path: "..."} naming a file the
+   * service can open itself. The path is the fast route and the default: it
+   * skips reading the audio into the panel, base64-decoding it, building a
+   * multipart body and writing the service's own temp copy — four copies of a
+   * file that can be hundreds of megabytes. It also cannot corrupt the audio
+   * on the way, which the upload route spent four releases proving is a real
+   * risk.
+   */
+  CapsetBackend.prototype.submit = function (source, filename) {
     var self = this;
     var form = new FormData();
-    form.append("file", file, filename || "audio.wav");
+    if (source && typeof source.path === "string") {
+      if (!this.isLocal()) {
+        return Promise.reject(new Error(
+          "The transcription service is not on this machine, so it cannot " +
+          "read the rendered file directly."
+        ));
+      }
+      form.append("path", source.path);
+    } else {
+      form.append("file", source, filename || "audio.wav");
+    }
     return this._fetch(this._url("/jobs"), { method: "POST", body: form })
       .then(function (res) {
         return res.json().then(function (body) {
@@ -150,9 +183,9 @@
     return step();
   };
 
-  CapsetBackend.prototype.transcribe = function (file, filename, onProgress) {
+  CapsetBackend.prototype.transcribe = function (source, filename, onProgress) {
     var self = this;
-    return this.submit(file, filename).then(function (job) {
+    return this.submit(source, filename).then(function (job) {
       return self.waitFor(job.id, onProgress);
     });
   };
