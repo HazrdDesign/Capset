@@ -628,13 +628,18 @@
 
   // --- file helpers --------------------------------------------------------
 
-  function readBlob(path) {
-    var read = window.cep.fs.readFile(path, window.cep.fs.NO_ENCODING);
-    if (read.err) throw new Error("Could not read " + path + " (error " + read.err + ")");
-    var binary = read.data;
-    var bytes = new Uint8Array(binary.length);
-    for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i) & 0xff;
-    return new Blob([bytes]);
+  /**
+   * Read a rendered audio file as a Blob.
+   *
+   * `expect` is the size After Effects reported for the file it just wrote.
+   * Passing it is not optional in spirit: a read that silently returns
+   * something other than the file is the failure that cost v0.2.2 through
+   * v0.2.4, and the size check is what makes it impossible to miss again.
+   * The reading itself lives in js/lib/cepfile.js so it can be tested against
+   * a fake host — this function could not be, and was not.
+   */
+  function readBlob(path, expect) {
+    return new Blob([CapsetCepFile.readBinary(window.cep, path, expect)]);
   }
 
   function readText(path) {
@@ -747,6 +752,11 @@
       : "digital silence";
     log("Transcribed " + diagnostics.duration_sec.toFixed(1) + "s at " +
         diagnostics.sample_rate + " Hz (" + dbfs + ").", "warn");
+    if (typeof diagnostics.source_format === "string" && diagnostics.source_format) {
+      log("Source: " + diagnostics.source_format + "; " +
+          diagnostics.speech_spans + " speech span(s), " +
+          diagnostics.chunks + " chunk(s) sent to the model.", "warn");
+    }
     if (diagnostics.peak < 0.01) {
       log("That audio is very quiet, which is the most likely reason nothing " +
           "was recognised. Check the layer's audio levels.", "warn");
@@ -757,14 +767,38 @@
     }
   }
 
+  /**
+   * Did the backend transcribe the audio we actually rendered?
+   *
+   * `capsetRenderAudio` knows how long the render was; the backend reports how
+   * long the file it decoded turned out to be. When those disagree the audio
+   * was damaged between the two, which is exactly what happened in v0.2.4 --
+   * a 30s render arrived as 22.2s and the mismatch sat in the log for four
+   * releases with nobody reading it as a symptom. Now it says so out loud.
+   *
+   * Tolerance is generous on purpose: a frame or two of difference is normal
+   * rounding between AE's timeline and a sample count, and a false alarm here
+   * would train the user to ignore the one message that matters.
+   */
+  function checkTranscribedDuration(source, diagnostics) {
+    if (!diagnostics || !source || !(source.duration > 0)) return;
+    var drift = Math.abs(diagnostics.duration_sec - source.duration);
+    if (drift < Math.max(0.25, source.duration * 0.02)) return;
+    log("After Effects rendered " + source.duration.toFixed(1) + "s but the " +
+        "transcriber read " + diagnostics.duration_sec.toFixed(1) + "s. The " +
+        "audio was damaged on the way in — captions from it would be wrong. " +
+        "Please report this.", "err");
+  }
+
   function captionsFromTranscription(settings) {
     return renderAudio(settings.scope).then(function (source) {
       setProgress(0.08, "Uploading…");
       var name = source.path.split(/[\\/]/).pop();
       return backend.transcribe(
-        readBlob(source.path), name,
+        readBlob(source.path, source.bytes), name,
         function (p, stage) { setProgress(0.08 + p * 0.82, stage); }
       ).then(function (result) {
+        checkTranscribedDuration(source, result.diagnostics);
         var out = segmentation.segment(result.words, {
           mode: settings.mode,
           width: state.compInfo.width,

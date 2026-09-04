@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from app import config, transcribe as transcribe_mod
-from app.audio import AudioError
+from app.audio import AudioError, SourceFormat
 from app.models import Token
 from app.transcribe import Transcriber
 
@@ -66,8 +66,13 @@ def audio_30s():
 
 
 def _patch_audio(monkeypatch, audio, spans, rate=config.SAMPLE_RATE):
-    # load_audio now returns (samples, sample_rate) — no resampling step.
-    monkeypatch.setattr(transcribe_mod, "load_audio", lambda *a, **k: (audio, rate))
+    # read_with_format returns (samples, sample_rate, SourceFormat). The third
+    # value is what the file on disk actually was, and it is reported to the
+    # user -- so the fake supplies a real one rather than None.
+    fmt = SourceFormat("WAV", 1, 16, rate)
+    monkeypatch.setattr(
+        transcribe_mod, "read_with_format", lambda *a, **k: (audio, rate, fmt)
+    )
     monkeypatch.setattr(transcribe_mod, "detect_speech", lambda *a, **k: spans)
 
 

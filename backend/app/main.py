@@ -121,6 +121,7 @@ def _result_to_dict(result: TranscriptionResult) -> dict:
             "rms": d.rms,
             "speech_spans": d.speech_spans,
             "chunks": d.chunks,
+            "source_format": d.source_format,
         }
     return {
         "duration_sec": result.duration_sec,

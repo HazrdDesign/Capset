@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import config, main as main_mod, transcribe as transcribe_mod
+from app.audio import SourceFormat
 from app.jobs import JobState
 from app.transcribe import Transcriber
 from tests.test_transcribe import FakeEngine
@@ -29,7 +30,11 @@ def client(monkeypatch):
     # rather than reporting a successful transcription of nothing.
     _t = np.linspace(0, 30, int(30 * config.SAMPLE_RATE), endpoint=False)
     audio = (0.25 * np.sin(2 * np.pi * 220.0 * _t)).astype(np.float32)
-    monkeypatch.setattr(transcribe_mod, "load_audio", lambda *a, **k: (audio, config.SAMPLE_RATE))
+    fmt = SourceFormat("WAV", 1, 16, config.SAMPLE_RATE)
+    monkeypatch.setattr(
+        transcribe_mod, "read_with_format",
+        lambda *a, **k: (audio, config.SAMPLE_RATE, fmt),
+    )
     monkeypatch.setattr(transcribe_mod, "detect_speech", lambda *a, **k: [(0.0, 30.0)])
 
     engine = FakeEngine()
@@ -94,11 +99,15 @@ def test_diagnostics_reach_the_panel_over_http(client):
     diagnostics = body["result"]["diagnostics"]
     assert diagnostics is not None
     assert set(diagnostics) == {
-        "duration_sec", "sample_rate", "peak", "rms", "speech_spans", "chunks"
+        "duration_sec", "sample_rate", "peak", "rms", "speech_spans",
+        "chunks", "source_format",
     }
     assert diagnostics["peak"] == pytest.approx(0.25, abs=0.01)
     assert diagnostics["sample_rate"] == config.SAMPLE_RATE
     assert diagnostics["chunks"] >= 1
+    # The rate above is always one the model accepts, so it cannot reveal a
+    # mis-decoded file. This is the field that can.
+    assert diagnostics["source_format"] == "WAV, 1ch, 16-bit, 16000 Hz"
 
 
 def test_result_words_are_ordered_and_absolute(client):

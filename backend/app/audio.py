@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import struct
 import wave
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -61,6 +62,33 @@ class AudioError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class SourceFormat:
+    """What the file on disk actually was, before anything was done to it.
+
+    Reported because the rate the model ran at is the WRONG number to show a
+    user chasing an empty transcript: it is always one of a handful of
+    whitelisted values, so it looks reasonable even when the file was
+    nonsense. v0.2.4 logged "16000 Hz" for a 48 kHz render whose header had
+    been destroyed in transit, and the one number that would have given it
+    away -- the rate read off the file -- was never printed.
+    """
+
+    container: str
+    channels: int
+    bits: int
+    sample_rate: int
+    resampled_to: int | None = None
+
+    def describe(self) -> str:
+        text = "%s, %dch, %d-bit, %d Hz" % (
+            self.container, self.channels, self.bits, self.sample_rate
+        )
+        if self.resampled_to:
+            text += " (resampled to %d Hz)" % self.resampled_to
+        return text
+
+
 def _pcm_to_float32(raw: bytes, sample_width: int, channels: int) -> np.ndarray:
     """Interleaved integer PCM -> mono float32 in [-1, 1]."""
     if sample_width == 1:
@@ -86,7 +114,7 @@ def _pcm_to_float32(raw: bytes, sample_width: int, channels: int) -> np.ndarray:
     return np.ascontiguousarray(samples, dtype=np.float32)
 
 
-def _read_wav(path: Path) -> tuple[np.ndarray, int]:
+def _read_wav(path: Path) -> tuple[np.ndarray, int, SourceFormat]:
     with wave.open(str(path), "rb") as handle:
         channels = handle.getnchannels()
         width = handle.getsampwidth()
@@ -94,10 +122,11 @@ def _read_wav(path: Path) -> tuple[np.ndarray, int]:
         raw = handle.readframes(handle.getnframes())
     if not raw:
         raise AudioError("the rendered WAV contains no audio")
-    return _pcm_to_float32(raw, width, channels), rate
+    fmt = SourceFormat("WAV", channels, width * 8, rate)
+    return _pcm_to_float32(raw, width, channels), rate, fmt
 
 
-def _read_aiff(path: Path) -> tuple[np.ndarray, int]:
+def _read_aiff(path: Path) -> tuple[np.ndarray, int, SourceFormat]:
     """Minimal AIFF/AIFF-C reader.
 
     Deliberately not the stdlib `aifc`: it is deprecated and was removed in
@@ -119,7 +148,11 @@ def _read_aiff(path: Path) -> tuple[np.ndarray, int]:
         if chunk_id == b"COMM" and len(body) >= 18:
             channels, _frames, bits = struct.unpack(">HIH", body[0:8])
             width = bits // 8
-            rate = int(_extended_to_float(body[8:18]))
+            # round(), not int(). The rate is an 80-bit extended float, and a
+            # writer whose 48000 decodes to 47999.9999 would truncate to
+            # 47999 -- off the ASR whitelist, forcing a needless resample of a
+            # perfectly good 48 kHz file.
+            rate = int(round(_extended_to_float(body[8:18])))
             if len(body) > 18 and body[18:22] not in (b"NONE", b"sowt", b"twos"):
                 raise AudioError(
                     f"compressed AIFF ({body[18:22].decode('ascii', 'replace')}) "
@@ -151,7 +184,9 @@ def _read_aiff(path: Path) -> tuple[np.ndarray, int]:
         ).reshape(-1, 3)
         samples = triples[:, ::-1].tobytes()
 
-    return _pcm_to_float32(samples, width, channels), rate
+    container = "AIFF-C" if data[8:12] == b"AIFC" else "AIFF"
+    fmt = SourceFormat(container, channels, width * 8, rate)
+    return _pcm_to_float32(samples, width, channels), rate, fmt
 
 
 def _extended_to_float(raw: bytes) -> float:
@@ -165,11 +200,13 @@ def _extended_to_float(raw: bytes) -> float:
     return sign * mantissa * (2.0 ** (exponent - 16383 - 63))
 
 
-def load_audio(path: str | Path) -> tuple[np.ndarray, int]:
-    """Read rendered audio. Returns (mono float32 samples, sample rate).
+def read_with_format(path: str | Path) -> tuple[np.ndarray, int, SourceFormat]:
+    """Read rendered audio, and say what the file actually was.
 
-    The returned rate is always one onnx-asr's numpy-array input accepts --
-    see _ASR_SUPPORTED_RATES above.
+    Returns (mono float32 samples, sample rate, source format). The returned
+    rate is always one onnx-asr's numpy-array input accepts -- see
+    _ASR_SUPPORTED_RATES above -- which is exactly why the third value
+    matters: it is the only record of what was on disk.
     """
     path = Path(path)
     if not path.exists():
@@ -182,16 +219,16 @@ def load_audio(path: str | Path) -> tuple[np.ndarray, int]:
     with open(path, "rb") as handle:
         header = handle.read(12)
     if header[0:4] == b"RIFF":
-        samples, rate = _read_wav(path)
+        samples, rate, fmt = _read_wav(path)
     elif header[0:4] == b"FORM":
-        samples, rate = _read_aiff(path)
+        samples, rate, fmt = _read_aiff(path)
     else:
         # Unrecognised magic: fall back to the extension before giving up.
         suffix = path.suffix.lower()
         if suffix in (".wav", ".wave"):
-            samples, rate = _read_wav(path)
+            samples, rate, fmt = _read_wav(path)
         elif suffix in (".aif", ".aiff", ".aifc"):
-            samples, rate = _read_aiff(path)
+            samples, rate, fmt = _read_aiff(path)
         else:
             raise AudioError(
                 f"unsupported audio format: {path.suffix or 'unknown'}. Capset "
@@ -201,6 +238,14 @@ def load_audio(path: str | Path) -> tuple[np.ndarray, int]:
     if rate not in _ASR_SUPPORTED_RATES:
         samples = _resample(samples, rate, _ASR_FALLBACK_RATE)
         rate = _ASR_FALLBACK_RATE
+        fmt = SourceFormat(fmt.container, fmt.channels, fmt.bits,
+                           fmt.sample_rate, resampled_to=rate)
+    return samples, rate, fmt
+
+
+def load_audio(path: str | Path) -> tuple[np.ndarray, int]:
+    """Read rendered audio. Returns (mono float32 samples, sample rate)."""
+    samples, rate, _ = read_with_format(path)
     return samples, rate
 
 

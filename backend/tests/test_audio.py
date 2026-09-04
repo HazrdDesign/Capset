@@ -161,6 +161,46 @@ def test_aiff_stereo_is_downmixed(tmp_path):
     assert np.allclose(audio, 0.2, atol=1e-3)
 
 
+def _aiff_bytes(rate_ext: bytes, frames: int = 480, channels: int = 1) -> bytes:
+    """A hand-built AIFF, so the sample rate's 80-bit encoding can be chosen.
+
+    `aifc` only ever writes an exact integer rate, which is precisely the case
+    that cannot expose a truncation bug.
+    """
+    comm = struct.pack(">HIH", channels, frames, 16) + rate_ext
+    pcm = np.zeros(frames * channels, dtype=">i2")
+    pcm[::2] = 8000
+    ssnd = struct.pack(">II", 0, 0) + pcm.tobytes()
+    body = (b"AIFF"
+            + b"COMM" + struct.pack(">I", len(comm)) + comm
+            + b"SSND" + struct.pack(">I", len(ssnd)) + ssnd)
+    return b"FORM" + struct.pack(">I", len(body)) + body
+
+
+def test_aiff_rate_just_under_an_integer_is_rounded_not_truncated(tmp_path):
+    """48000 stored as 47999.9999 must still read as 48000.
+
+    Truncating gives 47999, which is not on onnx-asr's whitelist, so a
+    perfectly good 48 kHz render would be resampled for nothing -- losing
+    quality and time to a rounding error in the last bit of an 80-bit float.
+    """
+    # 47999.9999, encoded the way AIFF stores it.
+    ext = bytes.fromhex("400ebb7ffff972474800")
+    path = tmp_path / "almost.aiff"
+    path.write_bytes(_aiff_bytes(ext))
+    _, rate = load_audio(path)
+    assert rate == 48000
+
+
+def test_aiff_rate_is_not_rounded_across_a_real_difference(tmp_path):
+    """Rounding must not paper over a genuinely different rate."""
+    ext = bytes.fromhex("400eac440000000000")  # 44100
+    path = tmp_path / "44k1.aiff"
+    path.write_bytes(_aiff_bytes(ext + b"\x00"))
+    _, rate = load_audio(path)
+    assert rate == 44100
+
+
 # --- format detection and errors -----------------------------------------
 
 def test_content_is_trusted_over_extension(tmp_path):
