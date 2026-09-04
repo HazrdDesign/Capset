@@ -53,9 +53,14 @@ class OnnxAsrEngine:
         model_name: str | None = None,
         quantization: str | None = None,
         providers: str | None = None,
+        model_dir: str | None = None,
     ):
         self.model_name = model_name or config.MODEL_NAME
         self.quantization = quantization or config.MODEL_QUANTIZATION
+        # Explicit for the build-time staging step, which downloads into a
+        # directory that does not exist yet. At runtime this is None and the
+        # configured path (the bundled weights, or the cache) is used.
+        self.model_dir = model_dir or config.MODEL_DIR
         self._providers = _resolve_providers(
             providers if providers is not None else config.PROVIDERS
         )
@@ -86,10 +91,12 @@ class OnnxAsrEngine:
         )
         try:
             kwargs = {}
-            if config.MODEL_DIR:
-                # Only when the caller has genuinely populated it — see the
-                # note in config.py about the resolver's offline behaviour.
-                kwargs["path"] = config.MODEL_DIR
+            if self.model_dir:
+                # A populated directory makes the resolver work offline, which
+                # is what the bundled weights rely on. An EMPTY one makes it
+                # refuse to download at all, so config._bundled_model_dir()
+                # only reports a directory that actually has files in it.
+                kwargs["path"] = self.model_dir
             if self.quantization:
                 kwargs["quantization"] = self.quantization
             if self._providers:
@@ -178,6 +185,9 @@ class OnnxAsrEngine:
             "model": self.model_name,
             "quantization": self.quantization,
             "providers": self._providers or "default",
+            # Surfaced on /health so "did it use the weights we shipped, or go
+            # and download its own?" is answerable without reading a log.
+            "bundled": bool(self.model_dir),
             "loaded": self.is_loaded(),
         }
 

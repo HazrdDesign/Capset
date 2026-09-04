@@ -26,8 +26,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Development-only files that must never reach a user's machine.
-PANEL_EXCLUDE = {"node_modules", "tests", "package.json", "package-lock.json", ".DS_Store"}
+# Development-only files that must never reach a user's machine. "tools" is
+# the animation tuning bench: useful while building the library, not something
+# a customer needs installed into their Adobe CEP folder.
+PANEL_EXCLUDE = {"node_modules", "tests", "tools",
+                 "package.json", "package-lock.json", ".DS_Store"}
 
 
 def clean(path: Path) -> None:
@@ -126,11 +129,40 @@ def copy_backend(dest: Path, dist: Path | None) -> str:
     return "built"
 
 
+def copy_model(dest: Path, source: Path | None) -> str:
+    """Stage the speech model the installer lays down beside the backend.
+
+    Bundling it is what makes a shipped Capset independent of Hugging Face:
+    no download at install, none on first use, and no dependence on a
+    third-party account staying public under the same repository name.
+
+    Staging is allowed to proceed without it so the layout can be validated
+    on a machine that has not downloaded 600 MB, but the result is reported
+    honestly and main() refuses to call that a complete payload.
+    """
+    if source is None or not source.is_dir():
+        return "absent"
+
+    files = [p for p in source.rglob("*") if p.is_file()]
+    total = sum(p.stat().st_size for p in files)
+    if total < 100e6:
+        raise SystemExit(
+            f"model directory {source} holds only {total / 1e6:.0f} MB, which "
+            "is far too small for the speech model. Staging it would produce "
+            "an installer that looks complete and cannot transcribe."
+        )
+
+    shutil.copytree(source, dest, dirs_exist_ok=True)
+    return f"bundled ({total / 1_048_576:.0f} MiB)"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default=str(ROOT / "build" / "payload"))
     parser.add_argument("--backend-dist", default=None,
                         help="PyInstaller onedir output (backend/dist/capset-backend)")
+    parser.add_argument("--model-dir", default=None,
+                        help="Speech model staged by capset-backend --stage-model")
     parser.add_argument("--version", default="0.1.0")
     args = parser.parse_args()
 
@@ -142,6 +174,10 @@ def main() -> int:
         out / "backend",
         Path(args.backend_dist).resolve() if args.backend_dist else None,
     )
+    model_state = copy_model(
+        out / "model",
+        Path(args.model_dir).resolve() if args.model_dir else None,
+    )
 
     total = sum(f.stat().st_size for f in out.rglob("*") if f.is_file())
     (out / "payload.json").write_text(
@@ -149,6 +185,7 @@ def main() -> int:
             {
                 "version": args.version,
                 "backend": backend_state,
+                "model": model_state,
                 "bytes": total,
             },
             indent=2,
@@ -159,7 +196,13 @@ def main() -> int:
     print(f"payload staged at {out}")
     print(f"  panel   : {', '.join(panel_entries)}")
     print(f"  backend : {backend_state}")
+    print(f"  model   : {model_state}")
     print(f"  size    : {total / 1_048_576:.1f} MiB")
+    if model_state == "absent":
+        print("\nNOTE: no speech model staged. The installer built from this "
+              "payload will fall back to downloading it on first use, which is "
+              "the dependency bundling exists to remove. Pass --model-dir.",
+              file=sys.stderr)
     if backend_state == "placeholder":
         print("\nNOTE: no backend binary staged. The installer built from this "
               "payload will NOT work — PyInstaller must run on the target OS.",

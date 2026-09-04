@@ -47,7 +47,7 @@ jobs:
         run: python installer/build_payload.py --version 9.8.7
       - name: Verify no development files leaked
         run: |
-          for f in tests package.json node_modules; do
+          for f in tests tools package.json node_modules; do
             if [ -e "build/payload/panel/$f" ]; then
               echo "development file leaked into payload: $f" >&2
               exit 1
