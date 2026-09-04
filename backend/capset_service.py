@@ -66,6 +66,55 @@ def _selftest() -> int:
     return 0 if ok else 1
 
 
+def _stage_model(target: str) -> int:
+    """`--stage-model DIR`: download the weights into DIR for the installer.
+
+    Run once at BUILD time. The installer lays the result down beside the
+    executable, so a shipped Capset never contacts Hugging Face at all --
+    neither at install nor at first use. That removes a dependency on a
+    third-party account staying public under the same name, and removes the
+    600 MB first-run wait with it.
+
+    Strict on purpose, and exits non-zero on any doubt. The failure this
+    guards against is shipping a gigabyte-sized installer whose model
+    directory is empty: nothing downstream would notice, and the first
+    transcription on a customer's machine would be the thing that found out.
+    """
+    from pathlib import Path
+
+    from app import config
+    from app.engines.onnx_asr_engine import OnnxAsrEngine
+
+    destination = Path(target).resolve()
+    if destination.exists() and any(destination.iterdir()):
+        # onnx_asr treats an existing directory as "go offline", so staging
+        # into one would quietly download nothing and report success.
+        print("FAILED: " + str(destination) + " already exists and is not empty; "
+              "remove it first so the download is known to be fresh")
+        return 1
+
+    print("Downloading " + config.MODEL_NAME + " (" + config.MODEL_QUANTIZATION +
+          ") into " + str(destination))
+    engine = OnnxAsrEngine(model_dir=str(destination))
+    ok, message = engine.fetch_model()
+    if not ok:
+        print("FAILED: " + message)
+        return 1
+
+    files = sorted(p for p in destination.rglob("*") if p.is_file())
+    total = sum(p.stat().st_size for p in files)
+    for path in files:
+        print("  %10.1f MB  %s" % (path.stat().st_size / 1e6, path.relative_to(destination)))
+    print("staged %d file(s), %.0f MB total" % (len(files), total / 1e6))
+
+    # A model this small is a model that did not really arrive.
+    if total < 100e6:
+        print("FAILED: only %.0f MB staged, which is far too small for %s"
+              % (total / 1e6, config.MODEL_NAME))
+        return 1
+    return 0
+
+
 def _fetch_model() -> int:
     """`--fetch-model`: warm the model cache, then exit.
 
@@ -89,4 +138,10 @@ if __name__ == "__main__":
         raise SystemExit(_selftest())
     if "--fetch-model" in sys.argv:
         raise SystemExit(_fetch_model())
+    if "--stage-model" in sys.argv:
+        index = sys.argv.index("--stage-model")
+        if index + 1 >= len(sys.argv):
+            print("FAILED: --stage-model needs a destination directory")
+            raise SystemExit(1)
+        raise SystemExit(_stage_model(sys.argv[index + 1]))
     main()

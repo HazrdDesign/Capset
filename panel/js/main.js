@@ -628,13 +628,18 @@
 
   // --- file helpers --------------------------------------------------------
 
-  function readBlob(path) {
-    var read = window.cep.fs.readFile(path, window.cep.fs.NO_ENCODING);
-    if (read.err) throw new Error("Could not read " + path + " (error " + read.err + ")");
-    var binary = read.data;
-    var bytes = new Uint8Array(binary.length);
-    for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i) & 0xff;
-    return new Blob([bytes]);
+  /**
+   * Read a rendered audio file as a Blob.
+   *
+   * `expect` is the size After Effects reported for the file it just wrote.
+   * Passing it is not optional in spirit: a read that silently returns
+   * something other than the file is the failure that cost v0.2.2 through
+   * v0.2.4, and the size check is what makes it impossible to miss again.
+   * The reading itself lives in js/lib/cepfile.js so it can be tested against
+   * a fake host — this function could not be, and was not.
+   */
+  function readBlob(path, expect) {
+    return new Blob([CapsetCepFile.readBinary(window.cep, path, expect)]);
   }
 
   function readText(path) {
@@ -736,7 +741,14 @@
    * own message, so anything reaching here was audible — which makes the level
    * and the duration the two numbers worth showing.
    */
-  function explainEmptyTranscript(diagnostics) {
+  function explainEmptyTranscript(diagnostics, renderedPath) {
+    if (renderedPath) {
+      // Kept on purpose in this case, and named so it can be listened to.
+      // "Is there actually speech in the file we sent?" is the first question
+      // worth answering and the only one the user can answer directly.
+      log("The audio is still at " + renderedPath + " — play it to hear " +
+          "exactly what was transcribed.", "warn");
+    }
     if (!diagnostics) {
       log("No speech was recognised. Check that the layer you selected is " +
           "the one with the dialogue.", "warn");
@@ -747,6 +759,11 @@
       : "digital silence";
     log("Transcribed " + diagnostics.duration_sec.toFixed(1) + "s at " +
         diagnostics.sample_rate + " Hz (" + dbfs + ").", "warn");
+    if (typeof diagnostics.source_format === "string" && diagnostics.source_format) {
+      log("Source: " + diagnostics.source_format + "; " +
+          diagnostics.speech_spans + " speech span(s), " +
+          diagnostics.chunks + " chunk(s) sent to the model.", "warn");
+    }
     if (diagnostics.peak < 0.01) {
       log("That audio is very quiet, which is the most likely reason nothing " +
           "was recognised. Check the layer's audio levels.", "warn");
@@ -757,14 +774,61 @@
     }
   }
 
+  /**
+   * Did the backend transcribe the audio we actually rendered?
+   *
+   * `capsetRenderAudio` knows how long the render was; the backend reports how
+   * long the file it decoded turned out to be. When those disagree the audio
+   * was damaged between the two, which is exactly what happened in v0.2.4 --
+   * a 30s render arrived as 22.2s and the mismatch sat in the log for four
+   * releases with nobody reading it as a symptom. Now it says so out loud.
+   *
+   * Tolerance is generous on purpose: a frame or two of difference is normal
+   * rounding between AE's timeline and a sample count, and a false alarm here
+   * would train the user to ignore the one message that matters.
+   */
+  function checkTranscribedDuration(source, diagnostics) {
+    if (!diagnostics || !source || !(source.duration > 0)) return;
+    var drift = Math.abs(diagnostics.duration_sec - source.duration);
+    if (drift < Math.max(0.25, source.duration * 0.02)) return;
+    log("After Effects rendered " + source.duration.toFixed(1) + "s but the " +
+        "transcriber read " + diagnostics.duration_sec.toFixed(1) + "s. The " +
+        "audio was damaged on the way in — captions from it would be wrong. " +
+        "Please report this.", "err");
+  }
+
+  /**
+   * Throw away the audio After Effects rendered, now that it has been read.
+   *
+   * Fire-and-forget: the captions are already in hand, and a temp file that
+   * outlives its usefulness is not worth failing a run over or interrupting
+   * the user about. The host refuses anything that is not one of our own
+   * renders in the temp folder.
+   */
+  function discardRender(path) {
+    if (!path) return;
+    host("capsetDiscardRender(" + arg({ path: path }) + ")")
+      .then(null, function () { /* a stale temp file is not the user's problem */ });
+  }
+
   function captionsFromTranscription(settings) {
     return renderAudio(settings.scope).then(function (source) {
-      setProgress(0.08, "Uploading…");
+      setProgress(0.08, "Sending audio to the transcriber…");
       var name = source.path.split(/[\\/]/).pop();
+      // The service runs on this machine, so hand it the path and let it open
+      // the file itself: no read into the panel, no base64 decode, no
+      // multipart body, no second copy on the service's side. An hour of
+      // 48 kHz stereo is ~690 MB, and the upload route holds several copies of
+      // it at once. Reading it in the panel stays as the fallback for a
+      // service that somehow is not local.
+      var payload = backend.isLocal()
+        ? { path: source.path }
+        : readBlob(source.path, source.bytes);
       return backend.transcribe(
-        readBlob(source.path), name,
+        payload, name,
         function (p, stage) { setProgress(0.08 + p * 0.82, stage); }
       ).then(function (result) {
+        checkTranscribedDuration(source, result.diagnostics);
         var out = segmentation.segment(result.words, {
           mode: settings.mode,
           width: state.compInfo.width,
@@ -772,7 +836,14 @@
         });
         if (out.layout) log(out.layout.rationale);
         log(result.words.length + " words → " + out.captions.length + " captions");
-        if (!result.words.length) explainEmptyTranscript(result.diagnostics);
+        if (result.words.length) {
+          // Only once there is something to show for it. An empty transcript
+          // is the one case where the rendered audio is worth keeping: it is
+          // the evidence, and explainEmptyTranscript says where to find it.
+          discardRender(source.path);
+        } else {
+          explainEmptyTranscript(result.diagnostics, source.path);
+        }
         // The render begins at the requested range, so timestamps are
         // relative to that point in comp time.
         return { captions: out.captions, offset: source.start || 0 };

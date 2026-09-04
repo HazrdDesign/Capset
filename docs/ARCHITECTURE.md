@@ -426,6 +426,12 @@ available from VAD chunk counts.
    and which can quarantine silently rather than prompt. Certs total roughly
    $165–250/yr (OV + Apple). Reasonable to ship v1 unsigned and add certs once
    revenue justifies.
-5. **Model download vs. bundle** — bundling gives a ~400 MB installer and
-   offline install; downloading on first run gives a small installer but needs
-   network and progress UI. Captioneer appears to bundle.
+5. **Model download vs. bundle** — *resolved: bundled.* Downloading gives a
+   small installer but needs network, progress UI, and a third-party account
+   that stays public under the same repository name — a dependency on someone
+   else's hosting decisions for a plugin that is otherwise entirely local.
+   Bundling costs a ~1 GB installer and re-ships the weights on every update.
+   The installer lays them beside the executable, where
+   `app/config._bundled_model_dir()` finds them; a source checkout finds
+   nothing there and falls back to the Hugging Face cache. Captioneer appears
+   to bundle too.

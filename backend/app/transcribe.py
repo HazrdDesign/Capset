@@ -16,8 +16,8 @@ from .audio import (
     SILENT_PEAK,
     AudioError,
     describe_level,
-    load_audio,
     measure,
+    read_with_format,
     slice_audio,
 )
 from .chunking import merge_chunks, plan_chunks
@@ -56,12 +56,12 @@ class Transcriber:
         progress(0.02, "reading audio")
         # load_audio already resamples to a rate onnx-asr accepts if the
         # rendered file's native rate isn't one of the ones it supports.
-        audio, sample_rate = load_audio(audio_path)
+        audio, sample_rate, source = read_with_format(audio_path)
         duration = len(audio) / sample_rate
         peak, rms = measure(audio)
         log.info(
-            "read %.2fs of audio at %d Hz (%s, rms %.5f)",
-            duration, sample_rate, describe_level(peak), rms,
+            "read %.2fs of audio [%s] (%s, rms %.5f)",
+            duration, source.describe(), describe_level(peak), rms,
         )
 
         # Fail here rather than transcribing nothing and calling it a success.
@@ -93,6 +93,7 @@ class Transcriber:
                 rms=rms,
                 speech_spans=len(spans),
                 chunks=chunk_count,
+                source_format=source.describe(),
             )
 
         if not chunks:

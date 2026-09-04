@@ -70,12 +70,14 @@ try:
 except Exception:
     pass
 
-# Model weights are laid down by the installer next to the executable rather
-# than embedded here, so a model update does not mean rebuilding the binary.
-# See app/config.py for the frozen-path resolution.
-model_dir = os.environ.get("CAPSET_BUNDLE_MODEL_DIR")
-if model_dir and os.path.isdir(model_dir):
-    datas.append((model_dir, "models"))
+# The model is NOT embedded here. The installer lays it down beside the
+# executable, at the "model" directory app/config._bundled_model_dir() looks
+# for, so a model change does not mean rebuilding the binary.
+#
+# There used to be a CAPSET_BUNDLE_MODEL_DIR hook here that embedded it into
+# the bundle as "models" -- plural, and therefore a directory nothing ever
+# read. Nothing set the variable, so it never fired; had it fired it would
+# have doubled the installer to ship 600 MB to an address with no reader.
 
 a = Analysis(
     # NOT app/main.py: PyInstaller runs the entry script as a top-level

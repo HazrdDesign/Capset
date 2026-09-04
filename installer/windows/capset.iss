@@ -46,11 +46,12 @@ RestartApplications=no
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
-[Tasks]
-; Optional so a user on a metered or offline connection can skip it. The
-; backend downloads on demand anyway; this just moves the wait somewhere
-; visible instead of stalling the first transcription with no explanation.
-Name: "fetchmodel"; Description: "Download the speech model now (about 600 MB, one time)"; GroupDescription: "Setup:"
+; No [Tasks]. The speech model used to be an optional download here, which
+; was both a 600 MB wait and a correctness problem: Setup runs elevated, so
+; the download landed in the ADMINISTRATOR's Hugging Face cache while the
+; backend, started by the panel as the logged-in user, looked in theirs and
+; downloaded it a second time. The weights ship in [Files] now, so there is
+; nothing to opt into and nothing to get wrong.
 
 [Files]
 ; --- CEP extension -------------------------------------------------------
@@ -63,6 +64,20 @@ Source: "{#PayloadDir}\panel\*"; \
 ; --- backend service + model ---------------------------------------------
 Source: "{#PayloadDir}\backend\*"; \
     DestDir: "{app}\backend"; \
+    Flags: ignoreversion recursesubdirs createallsubdirs
+
+; The speech model, laid down NEXT TO the executable rather than embedded in
+; it, so app/config.py finds it and the service never contacts Hugging Face.
+;
+; Bundling it removes a dependency on a third-party account staying public
+; under the same repository name, which is not something this product should
+; rest on: if that repo were deleted or renamed, every new install would fail
+; to transcribe and existing users would be fine, so the first report would
+; come from a customer rather than from us. It also removes the 600 MB
+; first-run download, and with it the per-user cache the elevated installer
+; could not write to correctly in the first place.
+Source: "{#PayloadDir}\model\*"; \
+    DestDir: "{app}\backend\model"; \
     Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; No bundled media tools. After Effects renders the audio and Capset reads
@@ -90,13 +105,6 @@ Filename: "{sys}\reg.exe"; Parameters: "add ""HKCU\Software\Adobe\CSXS.9"" /v Pl
 Filename: "{sys}\reg.exe"; Parameters: "add ""HKCU\Software\Adobe\CSXS.10"" /v PlayerDebugMode /t REG_SZ /d 1 /f"; Flags: runhidden runasoriginaluser
 Filename: "{sys}\reg.exe"; Parameters: "add ""HKCU\Software\Adobe\CSXS.11"" /v PlayerDebugMode /t REG_SZ /d 1 /f"; Flags: runhidden runasoriginaluser
 Filename: "{sys}\reg.exe"; Parameters: "add ""HKCU\Software\Adobe\CSXS.12"" /v PlayerDebugMode /t REG_SZ /d 1 /f"; Flags: runhidden runasoriginaluser
-
-; Warm the model cache during install. onnx_asr checks its cache before the
-; network, so this is a no-op if the model is already on the machine —
-; reinstalling or upgrading will not download it a second time.
-Filename: "{app}\backend\capset-backend.exe"; Parameters: "--fetch-model"; \
-    StatusMsg: "Downloading the speech model (one time, about 600 MB)..."; \
-    Flags: runhidden waituntilterminated; Tasks: fetchmodel
 
 ; runhidden as well as a windowed build: belt and braces, so no console
 ; flashes even if the binary is ever rebuilt with console=True by mistake.

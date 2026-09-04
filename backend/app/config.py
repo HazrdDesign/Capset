@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import os
-import sys  # noqa: F401  (used by the frozen entry point)
-from pathlib import Path  # noqa: F401
+import sys
+from pathlib import Path
 
 HOST = os.environ.get("CAPSET_HOST", "127.0.0.1")
 
@@ -32,19 +32,45 @@ MODEL_QUANTIZATION = os.environ.get("CAPSET_QUANTIZATION", "int8")
 
 # Where model weights live.
 #
-# Deliberately NOT passed to onnx_asr.load_model(). Its resolver treats an
-# existing local_dir as a signal to go offline:
+# onnx_asr's resolver treats an existing local_dir as a signal to go offline:
 #
 #     if self.local_dir.exists(): self.offline = True
 #
-# so handing it a directory we created but have not populated makes it refuse
-# to download at all. The Hugging Face cache default already does the right
-# thing — it checks the cache first (local_files_only=True) and only reaches
-# the network when the files are genuinely absent, so the model downloads
-# once and is reused forever after.
+# That is a trap for an EMPTY directory -- handing it one we created but never
+# populated makes it refuse to download at all -- and exactly the behaviour we
+# want for a POPULATED one. The installer lays the weights down beside the
+# executable, so the shipped build finds them there and never touches the
+# network; a source checkout finds nothing, falls back to the Hugging Face
+# cache, and downloads once.
 #
-# Set CAPSET_MODEL_DIR only if you have already populated that directory.
-MODEL_DIR = os.environ.get("CAPSET_MODEL_DIR") or None
+# Set CAPSET_MODEL_DIR to override, and only ever to a directory that is
+# already populated.
+
+
+def _bundled_model_dir() -> str | None:
+    """The weights the installer laid down next to the executable.
+
+    Returns None unless the directory exists AND has files in it, because an
+    empty directory is the one input that makes the resolver refuse to work at
+    all. Anything unexpected resolves to None and the cache path takes over --
+    a slow first run is a far better failure than a service that cannot load
+    its model.
+    """
+    try:
+        if getattr(sys, "frozen", False):
+            root = Path(sys.executable).resolve().parent
+        else:
+            # Source checkout: backend/model, if someone has populated it.
+            root = Path(__file__).resolve().parent.parent
+        candidate = root / "model"
+        if candidate.is_dir() and any(candidate.iterdir()):
+            return str(candidate)
+    except Exception:
+        pass
+    return None
+
+
+MODEL_DIR = os.environ.get("CAPSET_MODEL_DIR") or _bundled_model_dir()
 
 # ONNX Runtime execution providers, in priority order. CUDA on Windows/Linux
 # with an NVIDIA GPU, CoreML on Apple Silicon, CPU everywhere as the floor.

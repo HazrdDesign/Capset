@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import config, main as main_mod, transcribe as transcribe_mod
+from app.audio import SourceFormat
 from app.jobs import JobState
 from app.transcribe import Transcriber
 from tests.test_transcribe import FakeEngine
@@ -29,7 +30,11 @@ def client(monkeypatch):
     # rather than reporting a successful transcription of nothing.
     _t = np.linspace(0, 30, int(30 * config.SAMPLE_RATE), endpoint=False)
     audio = (0.25 * np.sin(2 * np.pi * 220.0 * _t)).astype(np.float32)
-    monkeypatch.setattr(transcribe_mod, "load_audio", lambda *a, **k: (audio, config.SAMPLE_RATE))
+    fmt = SourceFormat("WAV", 1, 16, config.SAMPLE_RATE)
+    monkeypatch.setattr(
+        transcribe_mod, "read_with_format",
+        lambda *a, **k: (audio, config.SAMPLE_RATE, fmt),
+    )
     monkeypatch.setattr(transcribe_mod, "detect_speech", lambda *a, **k: [(0.0, 30.0)])
 
     engine = FakeEngine()
@@ -94,11 +99,15 @@ def test_diagnostics_reach_the_panel_over_http(client):
     diagnostics = body["result"]["diagnostics"]
     assert diagnostics is not None
     assert set(diagnostics) == {
-        "duration_sec", "sample_rate", "peak", "rms", "speech_spans", "chunks"
+        "duration_sec", "sample_rate", "peak", "rms", "speech_spans",
+        "chunks", "source_format",
     }
     assert diagnostics["peak"] == pytest.approx(0.25, abs=0.01)
     assert diagnostics["sample_rate"] == config.SAMPLE_RATE
     assert diagnostics["chunks"] >= 1
+    # The rate above is always one the model accepts, so it cannot reveal a
+    # mis-decoded file. This is the field that can.
+    assert diagnostics["source_format"] == "WAV, 1ch, 16-bit, 16000 Hz"
 
 
 def test_result_words_are_ordered_and_absolute(client):
@@ -135,6 +144,88 @@ def test_uploads_are_not_left_behind(client, tmp_path, monkeypatch):
 
     leftovers = list(tmp_path.glob("capset-*"))
     assert leftovers == [], f"temp uploads left behind: {leftovers}"
+
+
+def test_local_path_is_transcribed_without_an_upload(client, tmp_path):
+    """The panel names a file the service can already reach.
+
+    After Effects has just written it on this machine, and an hour of 48 kHz
+    stereo is ~690 MB — copying it through the panel's heap and a multipart
+    body is the expensive way to hand over a file that is already there.
+    """
+    source = tmp_path / "capset_render.wav"
+    source.write_bytes(b"RIFF" + b"\x00" * 100)
+
+    # Capture what the transcriber was actually pointed at — "the job
+    # succeeded" would pass even if the path were dropped and a stale temp
+    # file read instead.
+    seen = []
+    real = transcribe_mod.read_with_format
+
+    def spy(target, *a, **k):
+        seen.append(str(target))
+        return real(target, *a, **k)
+
+    transcribe_mod.read_with_format = spy
+    try:
+        body = _wait(
+            client, client.post("/jobs", data={"path": str(source)}).json()["id"]
+        )
+    finally:
+        transcribe_mod.read_with_format = real
+
+    assert body["state"] == "done"
+    assert body["result"]["words"]
+    assert seen == [str(source)], "the named file was not the one transcribed"
+
+
+def test_a_path_submission_leaves_the_users_file_alone(client, tmp_path):
+    """The upload copy is scratch; the render is not ours to delete."""
+    source = tmp_path / "capset_render.wav"
+    source.write_bytes(b"RIFF" + b"\x00" * 100)
+    _wait(client, client.post("/jobs", data={"path": str(source)}).json()["id"])
+    assert source.exists(), "the file After Effects rendered was deleted"
+
+
+def test_a_missing_path_is_refused_before_a_job_starts(client, tmp_path):
+    response = client.post("/jobs", data={"path": str(tmp_path / "gone.wav")})
+    assert response.status_code == 400
+    assert "no such file" in response.json()["detail"]
+
+
+def test_a_non_local_caller_cannot_name_a_path(client, tmp_path, monkeypatch):
+    """Reading an arbitrary path is only safe because the caller is us.
+
+    The service binds to loopback, so this cannot happen today. It is checked
+    anyway: the day someone sets CAPSET_HOST to a LAN address, `path` must not
+    quietly become a remote file-read primitive.
+    """
+    source = tmp_path / "capset_render.wav"
+    source.write_bytes(b"RIFF" + b"\x00" * 100)
+    response = client.post(
+        "/jobs", data={"path": str(source)},
+        headers={"x-forwarded-for": "10.0.0.9"},
+    )
+    assert response.status_code == 200 or response.status_code == 202, (
+        "loopback must still be accepted"
+    )
+
+    # Now actually present as a remote client.
+    import app.main as m
+    original = m._LOOPBACK
+    monkeypatch.setattr(m, "_LOOPBACK", frozenset())
+    try:
+        refused = client.post("/jobs", data={"path": str(source)})
+    finally:
+        monkeypatch.setattr(m, "_LOOPBACK", original)
+    assert refused.status_code == 403
+    assert "this machine" in refused.json()["detail"]
+
+
+def test_neither_a_file_nor_a_path_is_a_clear_error(client):
+    response = client.post("/jobs", data={})
+    assert response.status_code == 422
+    assert "file upload or a local path" in response.json()["detail"]
 
 
 def test_rejects_upload_when_model_not_loaded(monkeypatch):

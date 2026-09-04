@@ -66,6 +66,10 @@ class AudioDiagnostics:
     rms: float
     speech_spans: int
     chunks: int
+    # What was on disk, before resampling. `sample_rate` above is always a
+    # value the model accepts, so it cannot reveal a mis-decoded file; this
+    # can. Empty only when the audio never reached a reader.
+    source_format: str = ""
 
 
 @dataclass

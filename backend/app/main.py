@@ -15,7 +15,7 @@ import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import config
@@ -121,6 +121,7 @@ def _result_to_dict(result: TranscriptionResult) -> dict:
             "rms": d.rms,
             "speech_spans": d.speech_spans,
             "chunks": d.chunks,
+            "source_format": d.source_format,
         }
     return {
         "duration_sec": result.duration_sec,
@@ -141,30 +142,82 @@ def _result_to_dict(result: TranscriptionResult) -> dict:
     }
 
 
+# Callers we will read a local path for. The service binds to 127.0.0.1, so
+# in practice every caller is already on this machine; this is the belt to
+# that pair of braces, and it is what keeps `path` from becoming an arbitrary
+# file read if the bind address is ever widened.
+_LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost", "testclient"})
+
+
+def _local_source(request: Request, path: str) -> str:
+    """Validate a path the panel asked us to read in place.
+
+    After Effects has just written this file, the panel is on this machine,
+    and the file is often hundreds of megabytes of PCM -- an hour of 48 kHz
+    stereo is ~690 MB. Uploading it means holding it in the panel's heap as a
+    base64 string, a binary string and a byte array at once, then again as a
+    multipart body, then again as the service's own temp copy. Reading it
+    where it already is costs none of that and cannot corrupt it in transit.
+    """
+    client = request.client.host if request.client else None
+    if client not in _LOOPBACK:
+        raise HTTPException(
+            status_code=403,
+            detail="path submissions are only accepted from this machine",
+        )
+    source = Path(path)
+    if not source.is_file():
+        raise HTTPException(status_code=400, detail=f"no such file: {path}")
+    try:
+        with source.open("rb") as handle:
+            handle.read(1)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"cannot read {path}: {exc}"
+        ) from exc
+    return str(source)
+
+
 @app.post("/jobs", status_code=202)
-async def create_job(request: Request, file: UploadFile = File(...)) -> dict:
+async def create_job(
+    request: Request,
+    file: UploadFile = File(None),
+    path: str = Form(None),
+) -> dict:
     if not transcriber.is_loaded():
         raise HTTPException(
             status_code=503,
             detail=load_error or "model still loading",
         )
+    if path is None and file is None:
+        raise HTTPException(
+            status_code=422, detail="send either a file upload or a local path"
+        )
 
-    suffix = Path(file.filename or "").suffix or ".wav"
-    fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="capset-")
-    with os.fdopen(fd, "wb") as handle:
-        shutil.copyfileobj(file.file, handle)
+    if path is not None:
+        source = _local_source(request, path)
+        # Not ours: After Effects wrote it and the panel may still want it.
+        ours = False
+    else:
+        suffix = Path(file.filename or "").suffix or ".wav"
+        fd, source = tempfile.mkstemp(suffix=suffix, prefix="capset-")
+        with os.fdopen(fd, "wb") as handle:
+            shutil.copyfileobj(file.file, handle)
+        ours = True
 
     def work(job):
         try:
             result = transcriber.transcribe(
-                tmp_path,
+                source,
                 on_progress=lambda p, stage: _update(job, p, stage),
                 should_cancel=job._cancel.is_set,
             )
             return _result_to_dict(result)
         finally:
-            # The upload is scratch; never leave it behind, even on failure.
-            Path(tmp_path).unlink(missing_ok=True)
+            # An upload is scratch; never leave it behind, even on failure.
+            # A path the caller gave us is theirs and must survive.
+            if ours:
+                Path(source).unlink(missing_ok=True)
 
     job = request.app.state.jobs.submit(work)
     return {"id": job.id, "state": job.state.value}

@@ -104,6 +104,49 @@ function capsetPortFile() {
  * and is replaced wholesale on every upgrade — saved presets would vanish
  * with the first update.
  */
+/**
+ * Delete a render Capset made, once the transcription is finished with it.
+ *
+ * Nothing used to delete these. Every transcription left a full-size
+ * uncompressed WAV in the temp folder forever -- an hour of 48 kHz stereo is
+ * about 690 MB, so a few podcasts quietly cost a user several gigabytes of
+ * disk they had no reason to connect to a captioning plugin.
+ *
+ * Deliberately narrow about WHAT it will delete. The path now travels to the
+ * backend and back, and a plugin that deletes whatever path it is handed is
+ * one bug away from removing somebody's footage. So: it must be inside the
+ * temp folder, and it must carry the name this plugin writes. Anything else
+ * is refused, and a refusal is never an error the user has to care about --
+ * the worst case is a temp file that stays a little longer.
+ */
+function capsetDiscardRender(payloadJson) {
+    try {
+        var payload = JSON.parse(payloadJson || "{}");
+        var path = payload && payload.path;
+        if (!path) return capsetOk({ removed: false, reason: "no path" });
+
+        var file = new File(path);
+        if (!file.exists) return capsetOk({ removed: false, reason: "already gone" });
+
+        var name = decodeURI(file.name);
+        if (!/^capset_\d+\./.test(name)) {
+            return capsetOk({ removed: false, reason: "not a Capset render" });
+        }
+        // fsName so both sides are platform paths; Folder.temp can be a
+        // symlink target whose URI spelling differs from the file's.
+        var temp = Folder.temp.fsName;
+        var parent = file.parent ? file.parent.fsName : "";
+        if (parent.toLowerCase() !== temp.toLowerCase()) {
+            return capsetOk({ removed: false, reason: "not in the temp folder" });
+        }
+
+        return capsetOk({ removed: file.remove() === true });
+    } catch (e) {
+        // Cleanup must never be the thing that fails a run.
+        return capsetOk({ removed: false, reason: e.message });
+    }
+}
+
 function capsetGetUserDataDir() {
     try {
         var dir = capsetUserDataDir();

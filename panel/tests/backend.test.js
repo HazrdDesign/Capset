@@ -201,3 +201,64 @@ test("connect ignores a malformed published port", async () => {
   await b.connect([null, "", "not-a-port", 0]);
   assert.deepStrictEqual(fetch.seen, ["http://127.0.0.1:8756/health"]);
 });
+
+
+// --- handing over the audio -------------------------------------------------
+
+/** stub() drops the request body; this keeps it so the form can be inspected. */
+function bodyCapturingStub(responses) {
+  const bodies = [];
+  const queue = responses.slice();
+  const fn = async (url, init) => {
+    bodies.push(init && init.body);
+    const next = queue.length > 1 ? queue.shift() : queue[0];
+    return {
+      ok: next.status >= 200 && next.status < 300,
+      status: next.status,
+      json: async () => next.body,
+    };
+  };
+  fn.bodies = bodies;
+  return fn;
+}
+
+test("a local path is sent as a path, not uploaded", async () => {
+  const fetch = bodyCapturingStub([{ status: 202, body: { id: "j1", state: "queued" } }]);
+  const b = new CapsetBackend({ fetch, sleep: noSleep });
+  await b.submit({ path: "C:\\Temp\\capset_1.wav" });
+
+  const form = fetch.bodies[0];
+  assert.strictEqual(form.get("path"), "C:\\Temp\\capset_1.wav");
+  assert.strictEqual(form.get("file"), null, "the file was uploaded as well");
+});
+
+test("a blob is still uploaded", async () => {
+  const fetch = bodyCapturingStub([{ status: 202, body: { id: "j1", state: "queued" } }]);
+  const b = new CapsetBackend({ fetch, sleep: noSleep });
+  await b.submit(new Blob([new Uint8Array([1, 2, 3])]), "take.wav");
+
+  const form = fetch.bodies[0];
+  assert.strictEqual(form.get("path"), null);
+  assert.ok(form.get("file"), "no file part in the upload");
+});
+
+test("loopback is recognised, anything else is not", () => {
+  const local = ["http://127.0.0.1:8756", "http://localhost:9000", "http://[::1]:8756"];
+  const remote = ["http://10.0.0.9:8756", "http://example.com", "http://127.0.0.1.evil.com"];
+  local.forEach((u) =>
+    assert.ok(new CapsetBackend({ baseUrl: u }).isLocal(), u + " should be local"));
+  remote.forEach((u) =>
+    assert.ok(!new CapsetBackend({ baseUrl: u }).isLocal(), u + " should NOT be local"));
+});
+
+test("a path is refused when the service is not on this machine", async () => {
+  // The path would name a file on the panel's machine and mean something
+  // else — or nothing — on the service's. Better to say so than to transcribe
+  // whatever happens to be at that path over there.
+  const b = new CapsetBackend({
+    baseUrl: "http://10.0.0.9:8756",
+    fetch: bodyCapturingStub([{ status: 202, body: { id: "j1" } }]),
+    sleep: noSleep,
+  });
+  await assert.rejects(() => b.submit({ path: "/tmp/a.wav" }), /not on this machine/);
+});
