@@ -144,10 +144,13 @@ enables unsigned extensions, since this build is not code-signed.
 - **Unsigned.** Windows SmartScreen will warn — *More info* → *Run anyway*.
   Some antivirus may flag the PyInstaller binary; this is a known
   false-positive pattern for unsigned Python bundles.
-- **The model is downloaded, not bundled** (~600 MB from Hugging Face). The
-  installer offers to fetch it during setup — a tick box you can decline —
-  and it is cached afterwards, so it downloads **once per machine**, not per
-  launch. Skipping it just moves the wait to the first transcription.
+- **The model ships inside the installer** (~600 MB of it). Nothing is
+  downloaded, at install or on first use, so Capset works on a machine that
+  has never had network access and does not depend on a third-party account
+  staying public under the same name. The cost is that the installer is around
+  1 GB and every update re-ships the weights, even when only the panel
+  changed. (Earlier v0.1 builds downloaded the model during setup instead;
+  that is gone.)
 - **Windows only.** The macOS build is written but not yet produced; it needs
   a macOS runner and Apple signing.
 - **CPU speed is unmeasured.** `backend/bench.py` exists to answer this. Until
