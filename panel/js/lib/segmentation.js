@@ -309,10 +309,22 @@
     return captions;
   }
 
-  /** Choose a mode from the comp's shape, then segment. */
+  /**
+   * Choose a shape from the comp, then group on the pauses within it.
+   *
+   * This is the only "smart" mode. It used to be one of two -- comp-aware
+   * phrase pacing, and a separate 2-5 word pause grouping -- which is a
+   * distinction users had no reason to care about. They are the same idea:
+   * read the comp, then cut where the speaker actually stops. The comp
+   * decides how many words fit; the pauses decide where the cut lands.
+   *
+   * The floor is what makes it feel deliberate rather than twitchy: without
+   * it a half-second hesitation after the first word emits a one-word
+   * caption in the middle of a sentence.
+   */
   function segmentSmart(words, width, height, options) {
     var layout = chooseLayout(width, height);
-    var opts = merge(layout.options, options);
+    var opts = merge(merge(layout.options, { minWords: 2 }), options);
     return {
       layout: layout,
       captions: segmentByPhrase(words, opts)

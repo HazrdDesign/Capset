@@ -343,3 +343,46 @@ test("sentence mode still caps runaway unpunctuated speech", () => {
     assert.ok(c.end - c.start <= seg.SENTENCE_DEFAULTS.maxDurationS + 1.0);
   });
 });
+
+
+test("smart never emits a one-word caption mid-sentence", () => {
+  // Smart absorbed the old "smart parts" bounds. Without a floor, a short
+  // hesitation after the first word cuts there and the mode degrades into
+  // word-by-word on exactly the hesitant delivery where pauses are common.
+  const w = [
+    { text: "So", start: 0.0, end: 0.30 },
+    { text: "anyway", start: 0.85, end: 1.20 },   // 0.55s pause
+    { text: "I", start: 1.25, end: 1.35 },
+    { text: "went", start: 1.40, end: 1.70 },
+    { text: "home", start: 1.75, end: 2.10 }
+  ];
+  const out = seg.segment(w, { mode: "smart", width: 1080, height: 1920 });
+  // The final caption is exempt: when the words simply run out, a one-word
+  // tail is correct and merging it backwards would exceed the word budget.
+  // Everything before it was a deliberate cut and must respect the floor.
+  out.captions.slice(0, -1).forEach((c) => assert.ok(c.words.length >= 2,
+    "one-word caption mid-sentence: " + JSON.stringify(c.text)));
+  assert.ok(out.captions.length >= 2, "nothing was split at all");
+});
+
+test("smart still sizes itself to the comp", () => {
+  // The other half of what it merged: a vertical comp gets punchier captions
+  // than a horizontal one from the same words.
+  const words = evenWords(
+    "there is quite a lot of speech here to divide up between the two shapes", 0.28
+  );
+  const tall = seg.segment(words, { mode: "smart", width: 1080, height: 1920 });
+  const wide = seg.segment(words, { mode: "smart", width: 1920, height: 1080 });
+  assert.ok(tall.captions.length > wide.captions.length,
+    "vertical " + tall.captions.length + " vs horizontal " + wide.captions.length);
+});
+
+test("the retired modes still resolve for old presets", () => {
+  // They are gone from the dropdown, not from the code: a preset saved by an
+  // earlier version can still name one.
+  const words = evenWords("one two three four five six");
+  ["two", "parts", "sentence", "phrase", "word"].forEach((mode) => {
+    const out = seg.segment(words, { mode, width: 1080, height: 1920 });
+    assert.ok(out.captions.length > 0, mode + " produced nothing");
+  });
+});
