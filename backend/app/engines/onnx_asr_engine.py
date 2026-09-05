@@ -7,13 +7,16 @@ well under a minute, which is already far below the After Effects audio
 render that precedes it -- ASR is not the bottleneck, so a second codebase
 buys nothing. See docs/ARCHITECTURE.md section 6.4.
 
-NOTE: this module cannot be exercised without the model present. The timing
-logic it feeds (tokens.py, chunking.py) is pure and is covered by tests.
+NOTE: loading and running the model needs the weights present. Parsing its
+OUTPUT does not -- _tokens_from_result is pure, and the absence of tests for
+it is how a completely wrong reading of the result shape shipped three times.
+See tests/test_engine_result.py.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 
 import numpy as np
 
@@ -115,7 +118,10 @@ class OnnxAsrEngine:
         if self._model is None:
             raise EngineUnavailable("engine not loaded")
         result = self._model.recognize(audio, sample_rate=sample_rate)
-        return _tokens_from_result(result)
+        # The chunk's own length bounds the last token, which otherwise has no
+        # end: the model gives each token a START time and nothing else.
+        duration = len(audio) / sample_rate if sample_rate else 0.0
+        return _tokens_from_result(result, duration)
 
     def fetch_model(self) -> tuple[bool, str]:
         """Download the weights now, or confirm they are already cached.
@@ -192,36 +198,73 @@ class OnnxAsrEngine:
         }
 
 
-def _tokens_from_result(result) -> list[Token]:
-    """Normalize an onnx-asr result into our Token list.
+# A token with no following token has no end time. Parakeet's encoder steps
+# 0.01s per frame with a subsampling factor of 8, so a token spans about this
+# long; used only for the final token of a chunk whose duration is unknown.
+_NOMINAL_TOKEN_S = 0.08
 
-    The library's result shape has moved between versions, so this accepts
-    the shapes seen in the wild rather than assuming one. If none match we
-    raise loudly: silently returning no tokens would surface much later as
-    "captions are empty" with no clue why.
+
+def _tokens_from_result(result, duration: float = 0.0) -> list[Token]:
+    """Turn an onnx-asr TimestampedResult into our Token list.
+
+    The real shape, from onnx_asr.asr.TimestampedResult:
+
+        text        str          the whole transcript
+        tokens      list[str]    one vocab piece per token, carrying the
+                                 U+2581 word-boundary marker tokens.py needs
+        timestamps  list[float]  one START TIME per token -- plain numbers,
+                                 not objects, and no end times at all
+        logprobs    list[float]  log probability per token (so negative)
+
+    Getting this wrong is what shipped in v0.2.x through v0.3.0. The previous
+    version iterated `timestamps` treating each entry as an object with
+    `.text`/`.start`/`.end`. Every entry is a float, so `getattr(item, "text",
+    "")` returned "" for all of them, every Token came out blank, and
+    merge_tokens_to_words dropped the lot -- zero captions from a transcript
+    the model had produced perfectly, sitting untouched in `result.text`.
+
+    A token ends where the next one starts; the last ends at the end of the
+    chunk. That is an approximation -- the model does not report ends -- but
+    it is contiguous and monotonic, which is what caption timing needs.
     """
-    timestamps = getattr(result, "timestamps", None)
-    if timestamps is None:
-        timestamps = getattr(result, "tokens", None)
-    if timestamps is None and isinstance(result, (list, tuple)):
-        timestamps = result
+    text = getattr(result, "text", "") or ""
+    pieces = getattr(result, "tokens", None)
+    starts = getattr(result, "timestamps", None)
+    logprobs = getattr(result, "logprobs", None)
 
-    if timestamps is None:
-        raise EngineUnavailable(
-            "onnx-asr result exposed no timestamps -- was the model loaded "
-            "with .with_timestamps()?"
+    if starts is None or pieces is None:
+        # Loud on purpose. Returning [] here is indistinguishable from silence
+        # to everything downstream, which is exactly how the bug above hid for
+        # three releases behind "0 words -> 0 captions".
+        if text.strip():
+            raise EngineUnavailable(
+                "onnx-asr returned text (%r) but no %s, so the words cannot be "
+                "timed. Was the model loaded with .with_timestamps()?"
+                % (text[:60], "timestamps" if starts is None else "tokens")
+            )
+        return []
+
+    if len(pieces) != len(starts):
+        # Pair what we can rather than dropping everything, but never silently.
+        log.warning(
+            "onnx-asr returned %d token(s) and %d timestamp(s); pairing %d",
+            len(pieces), len(starts), min(len(pieces), len(starts)),
         )
 
+    count = min(len(pieces), len(starts))
     tokens: list[Token] = []
-    for item in timestamps:
-        if isinstance(item, (list, tuple)):
-            text, start, end = item[0], float(item[1]), float(item[2])
-            conf = float(item[3]) if len(item) > 3 and item[3] is not None else None
+    for index in range(count):
+        start = float(starts[index])
+        if index + 1 < count:
+            end = float(starts[index + 1])
         else:
-            text = getattr(item, "token", None) or getattr(item, "text", "")
-            start = float(getattr(item, "start", 0.0))
-            end = float(getattr(item, "end", start))
-            raw_conf = getattr(item, "confidence", None)
-            conf = float(raw_conf) if raw_conf is not None else None
-        tokens.append(Token(text=text, start=start, end=end, confidence=conf))
+            end = max(duration, start + _NOMINAL_TOKEN_S)
+        # logprobs are log probabilities and therefore <= 0. Passing one
+        # straight through as "confidence" would report -0.31 for a token the
+        # model was 73% sure of.
+        confidence = None
+        if logprobs is not None and index < len(logprobs):
+            confidence = math.exp(float(logprobs[index]))
+        tokens.append(Token(text=pieces[index], start=start, end=end,
+                            confidence=confidence))
     return tokens

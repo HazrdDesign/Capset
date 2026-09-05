@@ -16,9 +16,17 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install test dependencies
-        # Not requirements.txt: onnx-asr and onnxruntime pull ~200 MB and the
-        # suite deliberately fakes the engine, so they buy nothing here.
-        run: pip install pytest fastapi "uvicorn[standard]" python-multipart httpx numpy
+        # The real requirements, not a hand-picked subset. This used to skip
+        # onnx-asr and onnxruntime on the grounds that "the suite deliberately
+        # fakes the engine, so they buy nothing here" -- which is precisely how
+        # a completely wrong reading of the engine's output shape shipped three
+        # times. tests/test_engine_result.py pins our assumptions against the
+        # real onnx_asr.TimestampedResult, and that pin SKIPS unless the
+        # library is installed, so a subset would leave the one test that
+        # checks reality quietly doing nothing.
+        run: |
+          pip install -r backend/requirements.txt
+          pip install pytest httpx
       - name: Run tests
         working-directory: backend
         run: python -m pytest tests -q
