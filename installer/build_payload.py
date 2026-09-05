@@ -74,6 +74,43 @@ def stamp_manifest(manifest: Path, version: str) -> None:
     manifest.write_text(stamped, encoding="utf-8")
 
 
+# Files the panel cannot run without, named one by one because each is
+# individually load-bearing and a typo in one of these names should fail the
+# build rather than silently ship a broken extension.
+#
+# The js/lib/ modules are NOT listed here — see _library_files().
+REQUIRED_PANEL_FILES = (
+    "index.html", "css/panel.css",
+    "jsx/capset.jsx", "jsx/json2.jsx",
+    "js/vendor/CSInterface.js", "js/main.js",
+    "capset.config.json",
+    "animations/animations.json",
+)
+
+
+def _library_files(source: Path) -> list[str]:
+    """Every module in panel/js/lib/, read from the source tree.
+
+    Derived rather than typed. This list used to be spelled out by hand and
+    drifted four files behind: cepfile.js, launcher.js, presets.js and
+    preview.js were all missing from it, cepfile.js being the one that reads
+    the rendered audio. copytree copies the whole directory regardless, so
+    nothing shipped broken — but a check that has silently stopped covering
+    the thing it was written for is worse than no check, because it still
+    reads like protection.
+
+    index.html loads all of these (panel/tests/wiring.test.js enforces that),
+    so a missing one is a panel that throws on load and shows nothing.
+    """
+    lib = source / "js" / "lib"
+    names = sorted(p.name for p in lib.glob("*.js"))
+    if not names:
+        # An empty result would make the check below vacuously pass, which is
+        # exactly the failure mode being fixed here.
+        raise SystemExit(f"no panel libraries found in {lib} — is the source tree intact?")
+    return [f"js/lib/{name}" for name in names]
+
+
 def copy_panel(dest: Path, version: str) -> list[str]:
     source = ROOT / "panel"
     if not source.is_dir():
@@ -91,18 +128,8 @@ def copy_panel(dest: Path, version: str) -> list[str]:
         raise SystemExit("payload is missing CSXS/manifest.xml")
     stamp_manifest(manifest, version)
 
-    missing = [
-        rel for rel in (
-            "index.html", "css/panel.css",
-            "jsx/capset.jsx", "jsx/json2.jsx",
-            "js/vendor/CSInterface.js", "js/main.js",
-            "js/lib/timing.js", "js/lib/segmentation.js",
-            "js/lib/srt.js", "js/lib/backend.js", "js/lib/updates.js",
-            "capset.config.json",
-            "animations/animations.json",
-        )
-        if not (dest / rel).is_file()
-    ]
+    required = list(REQUIRED_PANEL_FILES) + _library_files(source)
+    missing = [rel for rel in required if not (dest / rel).is_file()]
     if missing:
         raise SystemExit(f"payload is missing required files: {missing}")
 
