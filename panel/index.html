@@ -53,7 +53,11 @@
         <label for="mode">Segmentation</label>
         <select id="mode">
           <option value="smart">Smart — match the comp shape</option>
-          <option value="word">Word by word</option>
+          <option value="one">One word</option>
+          <option value="two">Two words</option>
+          <option value="three">Three words</option>
+          <option value="parts">Smart parts (2–5 words)</option>
+          <option value="sentence">Sentences</option>
           <option value="phrase">Phrase (broadcast style)</option>
         </select>
         <p class="hint" id="mode-hint">Reads the comp's aspect ratio and picks a layout.</p>
@@ -74,7 +78,6 @@
       <div class="opts">
         <label class="check"><input type="checkbox" id="opt-precompose"> Precompose captions</label>
         <label class="check"><input type="checkbox" id="opt-parent"> Parent to Controller</label>
-        <label class="check"><input type="checkbox" id="opt-split"> Split by words</label>
         <label class="check"><input type="checkbox" id="opt-titlesafe" checked> Keep inside title-safe</label>
       </div>
 
