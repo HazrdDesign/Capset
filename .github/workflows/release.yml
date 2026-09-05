@@ -136,13 +136,27 @@ jobs:
           exe="dist/Capset-Setup-${{ steps.version.outputs.value }}.exe"
           test -f "$exe" || { echo "Inno Setup produced no installer"; exit 1; }
 
-          # The model is most of the installer, so its absence is visible in
-          # the size alone. Without this check a build that silently staged no
-          # weights would still produce a plausible-looking release.
+          # Ask the staging step what it did, rather than inferring it from a
+          # compressed file size. build_payload.py records this, and knows the
+          # answer for certain; the .exe only hints at it.
+          staged=$(python -c "import json;print(json.load(open('build/payload/payload.json'))['model'])")
+          echo "payload reports model: $staged"
+          if [ "$staged" = "absent" ]; then
+            echo "::error::no speech model was staged — the installer cannot transcribe" >&2
+            exit 1
+          fi
+
+          # Second line of defence: Inno could drop files from a payload that
+          # staged correctly. Measured, not guessed — v0.2.4 without the
+          # bundled model was 38,106,093 bytes and v0.3.0 with it was
+          # 493,037,673, so 300 MB sits far from both. The previous threshold
+          # here was a guessed 500 MB, which rejected that 493 MB build: the
+          # first one that ever bundled the model properly.
           size=$(stat -c%s "$exe")
-          echo "installer is $((size / 1048576)) MiB"
-          if [ "$size" -lt 500000000 ]; then
-            echo "::error::installer is only $((size / 1048576)) MiB — the speech model is missing" >&2
+          floor=300000000
+          echo "installer is $size bytes ($((size / 1048576)) MiB)"
+          if [ "$size" -lt "$floor" ]; then
+            echo "::error::installer is $size bytes, below the $floor byte floor for a build carrying the speech model" >&2
             exit 1
           fi
 
