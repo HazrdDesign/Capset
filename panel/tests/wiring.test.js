@@ -16,6 +16,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const ROOT = path.join(__dirname, "..");
+const REPO = path.join(ROOT, "..");
 const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
 const main = fs.readFileSync(path.join(ROOT, "js", "main.js"), "utf8");
 
@@ -350,4 +351,47 @@ test("binary reads go through cepfile.js, not straight to cep.fs", () => {
       "binary reads belong in js/lib/cepfile.js where they are tested"
     );
   });
+});
+
+// --- what the installer ships ----------------------------------------------
+
+test("the installer's file check does not keep its own copy of js/lib", () => {
+  // installer/build_payload.py refuses to build a payload that is missing a
+  // required file. That list used to name the js/lib modules by hand and
+  // drifted four files behind — cepfile.js, launcher.js, presets.js and
+  // preview.js were all absent, cepfile.js being the one that reads the
+  // rendered audio. Nothing shipped broken (copytree copies the directory
+  // regardless), but the check had quietly stopped covering what it was
+  // written for.
+  //
+  // It now derives them from the directory. This fails if anyone types one
+  // back in, because a second hand-maintained list drifts exactly the same
+  // way the first one did.
+  const payload = fs.readFileSync(
+    path.join(REPO, "installer", "build_payload.py"), "utf8"
+  );
+  // Literal filenames only — the f-string template that BUILDS the list
+  // ("js/lib/{name}") is the fix, not a violation of it.
+  const explicit = [...payload.matchAll(/"(js\/lib\/[^"{}]+\.js)"/g)].map((m) => m[1]);
+  assert.deepStrictEqual(
+    explicit, [],
+    "build_payload.py names js/lib files literally: " + explicit.join(", ") +
+    " — let _library_files() read the directory instead"
+  );
+});
+
+test("every js/lib module is required by the installer's check", () => {
+  // The derivation is only worth anything if it actually covers the
+  // directory. Reads the same source of truth build_payload.py does.
+  const payload = fs.readFileSync(
+    path.join(REPO, "installer", "build_payload.py"), "utf8"
+  );
+  assert.match(
+    payload, /def _library_files\(/,
+    "build_payload.py no longer derives the library list from js/lib/"
+  );
+  assert.match(
+    payload, /list\(REQUIRED_PANEL_FILES\) \+ _library_files\(/,
+    "the derived library list is not being used in the payload check"
+  );
 });
