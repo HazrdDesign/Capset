@@ -676,7 +676,7 @@
     return {
       source: radio("source"),
       scope: radio("duration"),
-      mode: $("opt-split").checked ? "word" : $("mode").value,
+      mode: $("mode").value,
       resolve: Number($("resolve").value),
       lengthMode: $("length-mode").value,
       lengthValue: Number($("length-value").value),
@@ -1106,6 +1106,13 @@
   $("mode").addEventListener("change", function () {
     var hints = {
       smart: "Reads the comp's aspect ratio and picks a layout.",
+      one: "One caption per word. Punchy; best for vertical/social.",
+      two: "Two words per caption — balanced rhythm and readability.",
+      three: "Three words per caption — smoother pacing, fewer cuts.",
+      parts: "Groups 2–5 words on the pauses in the speech.",
+      sentence: "One caption per sentence, split where the speaker stops.",
+      // "word" is the old identifier for "one"; a preset saved by an earlier
+      // version still selects it, so it still needs a hint.
       word: "One caption per word. Punchy; best for vertical/social.",
       phrase: "Broadcast style — 42 characters per line, up to 2 lines."
     };

@@ -129,7 +129,7 @@ test("the run path reads no live controls after the click", () => {
   // Controls whose value decides what a run produces. Reading any of these
   // after the click means the result can disagree with what was clicked.
   const settingIds = [
-    "mode", "opt-split", "resolve",
+    "mode", "resolve",
     "opt-precompose", "opt-parent", "opt-titlesafe"
   ];
 
@@ -156,7 +156,7 @@ test("captureSettings covers every control the run depends on", () => {
   // The snapshot is only worth having if it is complete: a setting left out of
   // it is a setting still read live, or one silently dropped from the run.
   const src = functionBody("captureSettings");
-  ["mode", "opt-split", "resolve", "opt-precompose", "opt-parent", "opt-titlesafe"]
+  ["mode", "resolve", "opt-precompose", "opt-parent", "opt-titlesafe"]
     .forEach((id) => {
       assert.ok(
         src.includes('$("' + id + '")'),

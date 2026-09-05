@@ -203,3 +203,143 @@ test("reading speed flags captions that are too fast to read", () => {
   assert.ok(seg.readingSpeed(fast) > 20, "should exceed the 20 CPS guideline");
   assert.ok(seg.readingSpeed(ok) < 20);
 });
+
+
+// --- pacing modes -----------------------------------------------------------
+
+/** Evenly spaced words, no meaningful pauses. */
+function evenWords(text, step) {
+  const gap = step || 0.4;
+  return text.split(" ").map((t, i) => ({
+    text: t, start: i * gap, end: i * gap + gap * 0.85
+  }));
+}
+
+const texts = (result) => result.captions.map((c) => c.text);
+
+test("two-word mode puts exactly two words in every full caption", () => {
+  const words = evenWords("the quick brown fox jumps over the lazy dog");
+  const out = seg.segment(words, { mode: "two" });
+  assert.deepStrictEqual(texts(out), [
+    "the quick", "brown fox", "jumps over", "the lazy", "dog"
+  ]);
+});
+
+test("three-word mode groups in threes and keeps the remainder", () => {
+  const words = evenWords("one two three four five six seven");
+  const out = seg.segment(words, { mode: "three" });
+  assert.deepStrictEqual(texts(out), ["one two three", "four five six", "seven"]);
+  // The tail must survive: dropping it loses the end of every sentence.
+  assert.strictEqual(
+    out.captions[out.captions.length - 1].text, "seven",
+    "the leftover word was dropped"
+  );
+});
+
+test("count modes ignore pauses entirely", () => {
+  // The whole point of a fixed count is a metronomic rhythm. A pause must
+  // NOT split it, or "two words" silently becomes "one or two words".
+  const words = [
+    { text: "a", start: 0.0, end: 0.2 },
+    { text: "b", start: 3.0, end: 3.2 },   // a 2.8s chasm
+    { text: "c", start: 3.3, end: 3.5 },
+    { text: "d", start: 3.6, end: 3.8 }
+  ];
+  assert.deepStrictEqual(texts(seg.segment(words, { mode: "two" })),
+    ["a b", "c d"]);
+});
+
+test("count timings come from the words, not the grouping", () => {
+  const words = evenWords("alpha bravo charlie delta");
+  const out = seg.segment(words, { mode: "two" });
+  assert.strictEqual(out.captions[0].start, words[0].start);
+  assert.strictEqual(out.captions[0].end, words[1].end);
+  assert.strictEqual(out.captions[1].start, words[2].start);
+  assert.strictEqual(out.captions[1].end, words[3].end);
+});
+
+test("one and word are the same mode", () => {
+  // "word" is the identifier presets saved before the rename use.
+  const words = evenWords("keep old presets working");
+  assert.deepStrictEqual(
+    texts(seg.segment(words, { mode: "one" })),
+    texts(seg.segment(words, { mode: "word" }))
+  );
+});
+
+test("smart parts never emits a caption below two words on hesitation", () => {
+  // A short pause after the first word used to produce a one-word caption,
+  // degrading the mode into word-by-word on exactly the hesitant delivery
+  // where pauses are most common.
+  const words = [
+    { text: "So", start: 0.0, end: 0.30 },
+    { text: "anyway", start: 0.85, end: 1.20 },   // 0.55s — above maxGapS
+    { text: "I", start: 1.25, end: 1.35 },
+    { text: "went", start: 1.40, end: 1.70 },
+    { text: "home", start: 1.75, end: 2.10 }
+  ];
+  const out = seg.segment(words, { mode: "parts" });
+  out.captions.forEach((c) => {
+    assert.ok(c.words.length >= 2,
+      "emitted a " + c.words.length + "-word caption: " + JSON.stringify(c.text));
+  });
+});
+
+test("smart parts holds captions to at most five words", () => {
+  const words = evenWords("one two three four five six seven eight nine ten", 0.25);
+  seg.segment(words, { mode: "parts" }).captions.forEach((c) => {
+    assert.ok(c.words.length <= 5, "emitted " + c.words.length + " words");
+  });
+});
+
+test("a real stop still breaks smart parts below the floor", () => {
+  // The floor must not glue the start of a new thought onto the end of the
+  // old one. A pause this long is punctuation, not hesitation.
+  const words = [
+    { text: "Yeah", start: 0.0, end: 0.30 },
+    { text: "So", start: 1.60, end: 1.80 },       // 1.30s — a full stop
+    { text: "I", start: 1.85, end: 1.95 },
+    { text: "went", start: 2.00, end: 2.30 },
+    { text: "home", start: 2.35, end: 2.70 }
+  ];
+  assert.deepStrictEqual(
+    texts(seg.segment(words, { mode: "parts" })),
+    ["Yeah", "So I went home"]
+  );
+});
+
+test("sentence mode splits only on punctuation", () => {
+  const words = evenWords("I went to the store. It was closed. So I left.");
+  assert.deepStrictEqual(
+    texts(seg.segment(words, { mode: "sentence" })),
+    ["I went to the store.", "It was closed.", "So I left."]
+  );
+});
+
+test("sentence mode ignores the line budget when cutting", () => {
+  // A long sentence stays ONE caption — it wraps for display, it does not
+  // get cut. Phrase mode would break this into several.
+  const long = "this is a deliberately long sentence that runs well past " +
+               "forty two characters and keeps going for a while yet.";
+  const words = evenWords(long, 0.2);
+  const out = seg.segment(words, { mode: "sentence" });
+  assert.strictEqual(out.captions.length, 1, texts(out).join(" | "));
+  assert.ok(out.captions[0].lines.length > 1, "a long caption should wrap");
+  assert.ok(
+    seg.segment(words, { mode: "phrase" }).captions.length > 1,
+    "phrase mode should still cut it — otherwise this proves nothing"
+  );
+});
+
+test("sentence mode still caps runaway unpunctuated speech", () => {
+  // ASR punctuation is imperfect. Without a duration cap a speaker who never
+  // lands a full stop produces one caption spanning the whole clip.
+  const words = evenWords(
+    "and then and then and then and then and then and then and then and then", 1.0
+  );
+  const out = seg.segment(words, { mode: "sentence" });
+  assert.ok(out.captions.length > 1, "no cap applied: " + texts(out).join(" | "));
+  out.captions.forEach((c) => {
+    assert.ok(c.end - c.start <= seg.SENTENCE_DEFAULTS.maxDurationS + 1.0);
+  });
+});
