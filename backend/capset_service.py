@@ -66,6 +66,12 @@ def _selftest() -> int:
     return 0 if ok else 1
 
 
+# Kept in step with installer/build_payload.py, which enforces the same floor
+# on the staged copy. See the comment there for where the number comes from.
+MIN_MODEL_BYTES = 400_000_000
+EXPECTED_MODEL_MB = 600
+
+
 def _stage_model(target: str) -> int:
     """`--stage-model DIR`: download the weights into DIR for the installer.
 
@@ -102,16 +108,32 @@ def _stage_model(target: str) -> int:
         return 1
 
     files = sorted(p for p in destination.rglob("*") if p.is_file())
-    total = sum(p.stat().st_size for p in files)
-    for path in files:
+    # Hugging Face's .cache/huggingface tree is download bookkeeping for this
+    # machine. It should neither ship nor count toward the model's size.
+    weights = [p for p in files
+               if ".cache" not in p.relative_to(destination).parts]
+    total = sum(p.stat().st_size for p in weights)
+    for path in weights:
         print("  %10.1f MB  %s" % (path.stat().st_size / 1e6, path.relative_to(destination)))
-    print("staged %d file(s), %.0f MB total" % (len(files), total / 1e6))
+    print("staged %d file(s), %.0f MB (%d bytes) total"
+          % (len(weights), total / 1e6, total))
 
-    # A model this small is a model that did not really arrive.
-    if total < 100e6:
-        print("FAILED: only %.0f MB staged, which is far too small for %s"
-              % (total / 1e6, config.MODEL_NAME))
+    # A model this small did not really arrive. The floor is measured, not
+    # guessed: the model contributes ~455 MB compressed to the installer, and
+    # compression never grows a file, so on disk it is at least that. The
+    # 100 MB this replaced only ever caught an empty directory -- a download
+    # that died halfway through would have sailed past it and shipped an
+    # installer that cannot transcribe.
+    if total < MIN_MODEL_BYTES:
+        print("FAILED: only %.0f MB staged. %s is around %d MB and never "
+              "less than %.0f MB, so this download is incomplete."
+              % (total / 1e6, config.MODEL_NAME, EXPECTED_MODEL_MB,
+                 MIN_MODEL_BYTES / 1e6))
         return 1
+
+    # Named on its own line so the release workflow's log shows the real size
+    # without anyone reconstructing it from installer arithmetic afterwards.
+    print("MODEL_BYTES=%d" % total)
     return 0
 
 

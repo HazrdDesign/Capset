@@ -156,7 +156,29 @@ def copy_backend(dest: Path, dist: Path | None) -> str:
     return "built"
 
 
-def copy_model(dest: Path, source: Path | None) -> str:
+# What the bundled speech model actually weighs. Measured, not guessed: the
+# v0.2.4 installer without it was 38,106,093 bytes and the v0.3.0 installer
+# with it was 493,037,673, so the model contributes ~455 MB *compressed* --
+# and compression never grows a file, so on disk it cannot be smaller than
+# that. 400 MB therefore sits safely under any real model while being four
+# times tighter than the 100 MB floor this replaced, which only ever caught a
+# completely empty directory.
+MIN_MODEL_BYTES = 400_000_000
+EXPECTED_MODEL_MB = 600
+
+
+def _is_download_bookkeeping(path: Path, root: Path) -> bool:
+    """Hugging Face's own cache metadata, which is for the build machine.
+
+    snapshot_download leaves a .cache/huggingface tree of etags, lock files
+    and download metadata beside the weights. It was being compressed into
+    every installer -- small, but it is our bookkeeping, not the customer's,
+    and it should not count toward the model's size either.
+    """
+    return ".cache" in path.relative_to(root).parts
+
+
+def copy_model(dest: Path, source: Path | None) -> tuple[str, int]:
     """Stage the speech model the installer lays down beside the backend.
 
     Bundling it is what makes a shipped Capset independent of Hugging Face:
@@ -168,19 +190,23 @@ def copy_model(dest: Path, source: Path | None) -> str:
     honestly and main() refuses to call that a complete payload.
     """
     if source is None or not source.is_dir():
-        return "absent"
+        return "absent", 0
 
-    files = [p for p in source.rglob("*") if p.is_file()]
+    files = [p for p in source.rglob("*")
+             if p.is_file() and not _is_download_bookkeeping(p, source)]
     total = sum(p.stat().st_size for p in files)
-    if total < 100e6:
+    if total < MIN_MODEL_BYTES:
         raise SystemExit(
-            f"model directory {source} holds only {total / 1e6:.0f} MB, which "
-            "is far too small for the speech model. Staging it would produce "
-            "an installer that looks complete and cannot transcribe."
+            f"model directory {source} holds only {total / 1e6:.0f} MB. The "
+            f"speech model is around {EXPECTED_MODEL_MB} MB and never less "
+            f"than {MIN_MODEL_BYTES / 1e6:.0f} MB, so this download is "
+            "incomplete. Staging it would produce an installer that looks "
+            "complete and cannot transcribe."
         )
 
-    shutil.copytree(source, dest, dirs_exist_ok=True)
-    return f"bundled ({total / 1_048_576:.0f} MiB)"
+    shutil.copytree(source, dest, dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns(".cache"))
+    return f"bundled ({total / 1_048_576:.0f} MiB)", total
 
 
 def main() -> int:
@@ -201,7 +227,7 @@ def main() -> int:
         out / "backend",
         Path(args.backend_dist).resolve() if args.backend_dist else None,
     )
-    model_state = copy_model(
+    model_state, model_bytes = copy_model(
         out / "model",
         Path(args.model_dir).resolve() if args.model_dir else None,
     )
@@ -213,6 +239,9 @@ def main() -> int:
                 "version": args.version,
                 "backend": backend_state,
                 "model": model_state,
+                # A number, so the release workflow can compare it rather
+                # than parse the human-readable string above.
+                "model_bytes": model_bytes,
                 "bytes": total,
             },
             indent=2,
@@ -223,7 +252,8 @@ def main() -> int:
     print(f"payload staged at {out}")
     print(f"  panel   : {', '.join(panel_entries)}")
     print(f"  backend : {backend_state}")
-    print(f"  model   : {model_state}")
+    print(f"  model   : {model_state}" +
+          (f" [{model_bytes:,} bytes]" if model_bytes else ""))
     print(f"  size    : {total / 1_048_576:.1f} MiB")
     if model_state == "absent":
         print("\nNOTE: no speech model staged. The installer built from this "
