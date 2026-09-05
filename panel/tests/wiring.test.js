@@ -395,3 +395,41 @@ test("every js/lib module is required by the installer's check", () => {
     "the derived library list is not being used in the payload check"
   );
 });
+
+// --- what the panel offers, and what it inserts -----------------------------
+
+test("every segmentation option is a mode the library understands", () => {
+  const seg = require("../js/lib/segmentation.js");
+  const block = html.match(/<select id="mode">([\s\S]*?)<\/select>/);
+  assert.ok(block, "the segmentation select is gone");
+  const offered = [...block[1].matchAll(/value="([^"]+)"/g)].map((m) => m[1]);
+
+  assert.deepStrictEqual(offered, ["smart", "one", "three"],
+    "the segmentation list changed; keep it short and keep this in step");
+
+  // A value the library does not know silently falls through to phrase
+  // pacing, which looks like the mode simply not working.
+  const words = [
+    { text: "a", start: 0, end: 0.2 }, { text: "b", start: 0.3, end: 0.5 },
+    { text: "c", start: 0.6, end: 0.8 }, { text: "d", start: 0.9, end: 1.1 }
+  ];
+  offered.forEach((mode) => {
+    const out = seg.segment(words, { mode, width: 1080, height: 1920 });
+    assert.strictEqual(out.mode, mode,
+      "\"" + mode + "\" is offered but segment() resolved it as " + out.mode);
+  });
+});
+
+test("captions are inserted without an animation", () => {
+  // Inserting captions and choosing how they move are separate decisions.
+  // This used to pass whichever preset happened to be selected in the Motion
+  // tab, so every insert arrived pre-animated with something unasked for.
+  // main.js cannot be executed under node, so this is a source check.
+  const at = main.indexOf("capsetBuildCaptions");
+  assert.notStrictEqual(at, -1, "the capsetBuildCaptions call has moved");
+  const call = main.slice(at, at + 900);
+  const animationArg = call.match(/^\s*animation:\s*(.+?),\s*$/m);
+  assert.ok(animationArg, "no animation argument found in the build payload");
+  assert.strictEqual(animationArg[1], "null",
+    "the insert path passes " + animationArg[1] + "; the Motion tab applies those");
+});

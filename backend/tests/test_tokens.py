@@ -88,3 +88,59 @@ def test_words_to_text():
         [tok(f"{B}hello", 0.0, 0.4), tok(f"{B}world", 0.5, 0.9)]
     )
     assert words_to_text(words) == "hello world"
+
+
+# --- what onnx_asr actually hands us ----------------------------------------
+
+def test_space_marked_tokens_split_into_words():
+    """onnx_asr replaces U+2581 with a plain space when loading its vocab.
+
+        int(id): token.replace("\u2581", " ")      # onnx_asr/asr.py
+
+    So real tokens carry a LEADING SPACE, not the SentencePiece marker.
+    Splitting only on U+2581 never split anything: every token appended to the
+    word in progress, each chunk became one giant "word" holding its whole
+    transcript, and a 30s podcast reported "2 words -> 2 captions".
+    """
+    raw = [" On", " this", " episode", ",", " I", " sat", " down"]
+    tokens = [Token(text=t, start=i * 0.2, end=i * 0.2 + 0.18)
+              for i, t in enumerate(raw)]
+    words = merge_tokens_to_words(tokens)
+    assert [w.text for w in words] == ["On", "this", "episode,", "I", "sat", "down"]
+
+
+def test_the_old_marker_still_works():
+    """A raw SentencePiece vocabulary still uses U+2581. Both are accepted."""
+    raw = ["\u2581On", "\u2581this", "\u2581episode", ","]
+    tokens = [Token(text=t, start=i * 0.2, end=i * 0.2 + 0.18)
+              for i, t in enumerate(raw)]
+    assert [w.text for w in merge_tokens_to_words(tokens)] == ["On", "this", "episode,"]
+
+
+def test_a_whole_transcript_does_not_collapse_into_one_word():
+    """The shape of the bug, asserted directly.
+
+    Thirty tokens of ordinary speech must not come back as one or two words.
+    """
+    sentence = ("On this episode I sat down with a guest to talk about "
+                "identity authenticity and the work of showing up")
+    raw = [" " + w for w in sentence.split()]
+    tokens = [Token(text=t, start=i * 0.3, end=i * 0.3 + 0.25)
+              for i, t in enumerate(raw)]
+    words = merge_tokens_to_words(tokens)
+    assert len(words) == len(sentence.split()), (
+        "got %d word(s) from %d tokens" % (len(words), len(raw))
+    )
+    for word in words:
+        assert " " not in word.text, "a word swallowed its neighbours: %r" % word.text
+
+
+def test_subword_pieces_still_join():
+    """Continuations have no marker and must attach to the word in progress."""
+    raw = [" auth", "ent", "icity", " matters"]
+    tokens = [Token(text=t, start=i * 0.1, end=i * 0.1 + 0.09)
+              for i, t in enumerate(raw)]
+    words = merge_tokens_to_words(tokens)
+    assert [w.text for w in words] == ["authenticity", "matters"]
+    assert words[0].start == 0.0
+    assert words[0].end == pytest.approx(0.29)

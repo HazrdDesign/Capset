@@ -879,7 +879,13 @@
         });
         return host("capsetBuildCaptions(" + arg({
           captions: captions,
-          animation: animation,
+          // Deliberately none. Inserting captions and choosing how they move
+          // are separate decisions, and the Motion tab is where the second
+          // one is made -- baking in whatever preset happened to be selected
+          // meant every insert arrived pre-animated with something the user
+          // had not asked for. capsetBuildCaptions already guards on this
+          // being null.
+          animation: null,
           style: { titleSafe: settings.options.titleSafe },
           options: settings.options,
           timeOffset: payload.offset
@@ -1104,15 +1110,15 @@
   });
   refreshLengthControl();
   $("mode").addEventListener("change", function () {
+    // Only three are offered. The rest still resolve, because a preset saved
+    // by an earlier version can name one and should not break.
     var hints = {
-      smart: "Reads the comp's aspect ratio and picks a layout.",
+      smart: "Sizes captions to the comp, cutting where the speaker pauses.",
       one: "One caption per word. Punchy; best for vertical/social.",
-      two: "Two words per caption — balanced rhythm and readability.",
       three: "Three words per caption — smoother pacing, fewer cuts.",
+      two: "Two words per caption — balanced rhythm and readability.",
       parts: "Groups 2–5 words on the pauses in the speech.",
       sentence: "One caption per sentence, split where the speaker stops.",
-      // "word" is the old identifier for "one"; a preset saved by an earlier
-      // version still selects it, so it still needs a hint.
       word: "One caption per word. Punchy; best for vertical/social.",
       phrase: "Broadcast style — 42 characters per line, up to 2 lines."
     };

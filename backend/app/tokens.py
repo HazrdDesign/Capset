@@ -1,9 +1,21 @@
-"""Reassemble SentencePiece BPE tokens into whole words.
+"""Reassemble subword tokens into whole words.
 
-Parakeet emits token-level timestamps, not word-level. SentencePiece marks
-the start of a word with U+2581 (LOWER ONE EIGHTH BLOCK), so words are
-recovered by starting a new word at each marked token and appending the
-unmarked ones that follow.
+Parakeet emits token-level timestamps, not word-level, so words are recovered
+by starting a new word wherever a token is marked as beginning one and
+appending the unmarked ones that follow.
+
+WHAT MARKS A WORD START depends on who hands us the tokens, and getting it
+wrong is silent. SentencePiece itself uses U+2581 (LOWER ONE EIGHTH BLOCK) --
+but onnx_asr rewrites it while loading its vocabulary:
+
+    int(id): token.replace("\u2581", " ")          # onnx_asr/asr.py
+
+so the tokens that actually reach us look like " On", " this", " episode,"
+with an ordinary LEADING SPACE, and U+2581 never appears at all. Splitting
+only on U+2581 therefore never split anything: every token appended to the
+one word in progress, each chunk collapsed into a single "word" holding its
+whole transcript, and a 30-second podcast came out as "2 words -> 2 captions"
+with two enormous captions. Both markers are accepted now.
 
 A word's start is its first token's start; its end is its last token's end.
 """
@@ -12,10 +24,25 @@ from __future__ import annotations
 
 from .models import Token, Word
 
-# U+2581. Written as an escape rather than the literal glyph: it is visually
+# U+2581, written as an escape rather than the literal glyph: it is visually
 # near-identical to an underscore in many fonts, and survives any tool in the
 # pipeline that might normalize or mangle it.
 WORD_BOUNDARY = "\u2581"
+
+
+def _split_marker(raw: str) -> tuple[bool, str]:
+    """Does this token start a word, and what is its text without the marker?
+
+    Accepts either marker. onnx_asr gives us a leading space; a raw
+    SentencePiece vocabulary gives U+2581. Neither is more correct than the
+    other -- they are the same information spelled two ways -- so both are
+    honoured rather than picking one and hoping.
+    """
+    if raw.startswith(WORD_BOUNDARY):
+        return True, raw[len(WORD_BOUNDARY):]
+    if raw[:1].isspace():
+        return True, raw.lstrip()
+    return False, raw
 
 
 def _mean(values: list[float]) -> float | None:
@@ -58,9 +85,7 @@ def merge_tokens_to_words(tokens: list[Token]) -> list[Word]:
         confs = []
 
     for token in tokens:
-        raw = token.text
-        starts_word = raw.startswith(WORD_BOUNDARY)
-        text = raw[len(WORD_BOUNDARY):] if starts_word else raw
+        starts_word, text = _split_marker(token.text)
 
         if starts_word or not parts:
             flush()
