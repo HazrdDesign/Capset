@@ -165,6 +165,13 @@ jobs:
           name: capset-windows-installer
           path: dist/Capset-Setup-*.exe
           if-no-files-found: error
+          # Three days, not the default ninety. This artifact exists to hand
+          # the installer to the `release` job a minute later; once the
+          # release is published the .exe lives on the release page, which
+          # does not count against the Actions storage allowance. At ~500 MB
+          # per installer and 500 MB included on a private repo, the default
+          # retention would park a full allowance of dead weight per release.
+          retention-days: 3
 
   macos:
     name: macOS installer
@@ -289,6 +296,8 @@ jobs:
           name: capset-macos-installer
           path: dist/Capset-*.pkg
           if-no-files-found: error
+          # Same reasoning as the Windows artifact above.
+          retention-days: 3
 
   release:
     name: Publish release

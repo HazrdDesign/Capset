@@ -70,8 +70,19 @@ paid Apple Developer account ($99/yr); when there is one, set
 them into the macOS job — `build-pkg.sh` already reads both.
 
 **Runner minutes:** GitHub bills macOS runners at 10x the rate of Linux ones
-on private repositories. This job downloads the ~600 MB model and builds a
-~500 MB package, so it is the expensive part of a release.
+on private repositories (Windows is 2x). This job downloads the ~600 MB model
+and builds a ~500 MB package, so it is the expensive part of a release: figure
+150-250 billed minutes against an allowance of 2,000/month on a Free plan,
+3,000 on Pro. With no payment method on file the consequence of exhausting it
+is that Actions stops running until the next cycle, not a bill.
+
+**Artifact storage** is the tighter limit, and the reason both upload steps set
+`retention-days: 3`. Each installer is ~500 MB and the included Actions
+storage on a private repo is 500 MB (Free) or 1 GB (Pro), so the default
+90-day retention would park a full allowance of dead weight per release. The
+artifacts only exist to hand the installers to the `release` job a minute
+later; afterwards they live on the release page, which is storage that is not
+billed this way. Usage is at github.com/settings/billing.
 
 ## Version numbering
 
