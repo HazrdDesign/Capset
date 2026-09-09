@@ -1,10 +1,13 @@
 <!--
-  This file is the body of EVERY GitHub Release — release.yml points
-  body_path at this exact path for every version, v0.1.0 through whatever
-  ships next. It does not change automatically. Every release from v0.1.0
-  to v0.1.8 shipped this same text unedited, including "no animation
-  previews" long after previews existed. Update the "What's new" section
-  and anything below it stops being true of before publishing a release.
+  The notes for the v0.1 series, and nothing else.
+
+  This file used to be the body of EVERY GitHub Release: release.yml had this
+  exact path hardcoded, so v0.1.2 through v0.3.2 all shipped this text — by
+  the end describing a plugin three minor versions behind, including "no
+  animation previews" long after previews existed and had since been removed
+  again. The workflow now resolves the notes from the tag
+  (docs/RELEASE-NOTES-v<version>.md, or the v<major.minor>.md series file),
+  so each release needs its own. Leave this one as the record of v0.1.
 -->
 
 # Capset

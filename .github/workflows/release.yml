@@ -187,6 +187,47 @@ jobs:
             echo "value=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Resolve the release notes
+        id: notes
+        # This path was hardcoded to docs/RELEASE-NOTES-v0.1.md, so every
+        # release from v0.1.2 to v0.3.2 was published with v0.1's notes as its
+        # body -- describing features and known limitations from eleven tags
+        # ago. docs/RELEASING.md always said the notes were resolved per
+        # version; the workflow simply never did it.
+        #
+        # Both spellings are accepted because both exist in practice: the tag
+        # is v0.4.0 and the file for it may be named after the full version or
+        # after the minor series, the way RELEASE-NOTES-v0.1.md covered every
+        # v0.1.x tag.
+        run: |
+          version="${{ steps.version.outputs.value }}"
+          series="${version%.*}"
+          for candidate in \
+              "docs/RELEASE-NOTES-v$version.md" \
+              "docs/RELEASE-NOTES-v$series.md"; do
+            if [ -f "$candidate" ]; then
+              echo "using $candidate"
+              echo "path=$candidate" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+
+          # No notes written for this version. Publishing an accurate stub
+          # beats two worse options: failing the job after a twenty-minute
+          # Windows build that produced a good installer, or attaching notes
+          # for some other release and calling it this one's.
+          echo "::warning::no release notes found for v$version — publishing a stub"
+          stub="docs/RELEASE-NOTES-generated.md"
+          {
+            echo "# Capset v$version"
+            echo
+            echo "No release notes were written for this version."
+            echo
+            echo "See the commit log for what changed:"
+            echo "<${{ github.server_url }}/${{ github.repository }}/commits/v$version>"
+          } > "$stub"
+          echo "path=$stub" >> "$GITHUB_OUTPUT"
+
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
@@ -194,5 +235,5 @@ jobs:
           name: Capset v${{ steps.version.outputs.value }}
           prerelease: ${{ github.event.inputs.prerelease != 'false' }}
           files: dist/Capset-Setup-*.exe
-          body_path: docs/RELEASE-NOTES-v0.1.md
+          body_path: ${{ steps.notes.outputs.path }}
           fail_on_unmatched_files: true
