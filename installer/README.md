@@ -59,10 +59,28 @@ Notes:
 
 ## macOS
 
+Built by `.github/workflows/release.yml` on a `macos-14` runner, alongside the
+Windows job; both artifacts are attached to the same release. To build locally
+on a Mac:
+
 ```bash
 cd backend && pyinstaller capset-backend.spec --noconfirm && cd ..
-./installer/macos/build-pkg.sh 0.1.0
+python backend/capset_service.py --stage-model "$PWD/build/model"
+CAPSET_MODEL_DIR="$PWD/build/model" ./installer/macos/build-pkg.sh 0.1.0
 ```
+
+Output: `dist/Capset-<version>.pkg`.
+
+`CAPSET_MODEL_DIR` is optional and you want it: without it the package builds
+fine and then downloads ~600 MB the first time someone transcribes, which is
+the dependency bundling exists to remove.
+
+**Apple Silicon only.** PyInstaller builds for the interpreter it runs under,
+and onnxruntime publishes macOS wheels for `arm64` alone — no `x86_64`, no
+`universal2` — so there is no Intel build to make without a second ASR
+runtime. `build-pkg.sh` reads `uname -m` and writes that single architecture
+into the distribution definition, so the installer refuses an Intel Mac up
+front instead of installing and then having the backend killed at launch.
 
 Signing is opt-in:
 

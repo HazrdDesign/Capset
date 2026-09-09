@@ -4,8 +4,8 @@
 
 | | |
 |---|---|
-| **Shipped** | **v0.4.0** — tag `v0.4.0` on `c224846` |
-| **Next** | **v0.5.0** — notes written, at `docs/RELEASE-NOTES-v0.5.0.md` |
+| **Shipped** | **v0.5.0** — tag `v0.5.0` on `e3f6d67` |
+| **Next** | **v0.6.0** — notes written, at `docs/RELEASE-NOTES-v0.6.0.md` |
 
 Keep this table current: update it in the same commit that adds the next
 version's notes, so the number is answerable from the repository rather than
@@ -17,8 +17,8 @@ To ship the version named above: merge to `main`, then
 
 ```bash
 git fetch origin main
-git tag -a v0.5.0 <merge commit> -m "Capset v0.5.0"
-git push origin v0.5.0
+git tag -a v0.6.0 <merge commit> -m "Capset v0.6.0"
+git push origin v0.6.0
 ```
 
 The Windows installer is built by `.github/workflows/release.yml` on a
@@ -51,14 +51,27 @@ Either way the workflow will:
 
 ## macOS
 
-Not in CI yet. It needs a `macos-latest` runner and, for a warning-free
-install, Apple signing certificates as repository secrets. Build locally
-meanwhile:
+In CI since v0.6.0: a `macos-14` job builds `Capset-<version>.pkg` and the
+publish step attaches it to the same release as the Windows `.exe`. Two things
+to know about it.
 
-```bash
-cd backend && pyinstaller capset-backend.spec --noconfirm && cd ..
-./installer/macos/build-pkg.sh 0.1
-```
+**It is Apple Silicon only,** and that is not a shortcut. onnxruntime ships
+macOS wheels for `arm64` alone — no `x86_64` and no `universal2` — so an Intel
+build would need a different ASR runtime, not a build flag. The package
+declares `hostArchitectures="arm64"`, so an Intel Mac is refused by the
+installer rather than failing later at launch.
+
+**It is unsigned and un-notarized.** The binaries are ad-hoc signed, which is
+mandatory rather than optional — Apple Silicon SIGKILLs an unsigned arm64
+binary — but that is not notarization. A tester has to go to System Settings →
+Privacy & Security → Open Anyway on first run. Removing that prompt needs a
+paid Apple Developer account ($99/yr); when there is one, set
+`DEVELOPER_ID_INSTALLER` and `NOTARY_PROFILE` as repository secrets and pass
+them into the macOS job — `build-pkg.sh` already reads both.
+
+**Runner minutes:** GitHub bills macOS runners at 10x the rate of Linux ones
+on private repositories. This job downloads the ~600 MB model and builds a
+~500 MB package, so it is the expensive part of a release.
 
 ## Version numbering
 

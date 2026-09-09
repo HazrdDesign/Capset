@@ -166,9 +166,133 @@ jobs:
           path: dist/Capset-Setup-*.exe
           if-no-files-found: error
 
+  macos:
+    name: macOS installer
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pyinstaller
+
+      - name: Build backend with PyInstaller
+        working-directory: backend
+        # Same constraint as the Windows job: PyInstaller builds for the
+        # machine it runs on. macos-14 runners are Apple Silicon, and
+        # onnxruntime publishes macOS wheels for arm64 only, so this package
+        # is arm64-only and says so in its distribution definition.
+        run: pyinstaller capset-backend.spec --noconfirm --distpath dist --workpath build
+
+      - name: Verify the backend binary exists
+        run: |
+          test -f backend/dist/capset-backend/capset-backend \
+            || { echo "PyInstaller produced no binary"; ls -R backend/dist; exit 1; }
+          file backend/dist/capset-backend/capset-backend
+
+      - name: Verify the ASR stack is actually bundled
+        # /health answers even when the engine is unusable, so "the service
+        # responded" cannot tell a working bundle from a broken one.
+        run: |
+          if ! ./backend/dist/capset-backend/capset-backend --selftest; then
+            echo "::error::the packaged bundle cannot import onnxruntime/onnx_asr"
+            exit 1
+          fi
+
+      - name: Smoke-test the backend binary
+        # Building is not running. On Apple Silicon this also proves the
+        # bundle's own signing is intact: the OS SIGKILLs an unsigned arm64
+        # binary rather than warning, so a bundle that cannot be executed
+        # fails here rather than on the tester's machine.
+        run: |
+          ./backend/dist/capset-backend/capset-backend > backend-start.log 2>&1 &
+          pid=$!
+          ok=0
+          for i in $(seq 1 30); do
+            if ! kill -0 $pid 2>/dev/null; then
+              echo "::error::backend binary exited during startup"
+              echo "--- backend output ---"; cat backend-start.log
+              exit 1
+            fi
+            if curl -fsS --max-time 3 http://127.0.0.1:8756/health -o health.json; then
+              ok=1; break
+            fi
+            sleep 2
+          done
+          kill $pid 2>/dev/null || true
+          if [ "$ok" != "1" ]; then
+            echo "::error::backend binary did not serve /health — the bundle is broken"
+            echo "--- backend output ---"; cat backend-start.log
+            exit 1
+          fi
+          echo "backend responded:"; cat health.json
+
+      - name: Download the speech model
+        run: >
+          python backend/capset_service.py
+          --stage-model ${{ github.workspace }}/build/model
+
+      - name: Build the package
+        env:
+          CAPSET_MODEL_DIR: ${{ github.workspace }}/build/model
+        run: ./installer/macos/build-pkg.sh ${{ steps.version.outputs.value }}
+
+      - name: Verify the package exists and carries the model
+        run: |
+          pkg="dist/Capset-${{ steps.version.outputs.value }}.pkg"
+          test -f "$pkg" || { echo "productbuild produced no package"; ls -la dist; exit 1; }
+
+          # Ask the staging step what it did rather than inferring it from a
+          # compressed size — build_payload.py knows for certain.
+          staged=$(python -c "import json;print(json.load(open('build/payload/payload.json'))['model'])")
+          echo "payload reports model: $staged"
+          if [ "$staged" = "absent" ]; then
+            echo "::error::no speech model was staged — the installer cannot transcribe" >&2
+            exit 1
+          fi
+
+          # Same reasoning as the Windows floor: a package this far below the
+          # model's own compressed size cannot be carrying it.
+          size=$(stat -f%z "$pkg")
+          floor=300000000
+          echo "package is $size bytes ($((size / 1048576)) MiB)"
+          if [ "$size" -lt "$floor" ]; then
+            echo "::error::package is $size bytes, below the $floor byte floor for a build carrying the speech model" >&2
+            exit 1
+          fi
+
+          # An arm64-only payload must not offer itself to an Intel Mac: it
+          # installs happily and then the backend is killed on first launch.
+          if ! grep -q 'hostArchitectures="arm64"' build/distribution.xml; then
+            echo "::error::the distribution does not restrict itself to arm64" >&2
+            cat build/distribution.xml >&2
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: capset-macos-installer
+          path: dist/Capset-*.pkg
+          if-no-files-found: error
+
   release:
     name: Publish release
-    needs: [windows]
+    needs: [windows, macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -176,6 +300,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: capset-windows-installer
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: capset-macos-installer
           path: dist
 
       - name: Resolve version
@@ -234,6 +363,8 @@ jobs:
           tag_name: v${{ steps.version.outputs.value }}
           name: Capset v${{ steps.version.outputs.value }}
           prerelease: ${{ github.event.inputs.prerelease != 'false' }}
-          files: dist/Capset-Setup-*.exe
+          files: |
+            dist/Capset-Setup-*.exe
+            dist/Capset-*.pkg
           body_path: ${{ steps.notes.outputs.path }}
           fail_on_unmatched_files: true
