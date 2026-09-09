@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const timing = require("../js/lib/timing.js");
+const timing = require("../dormant/animation/timing.js");
 
 test("zero-duration layer produces no animation", () => {
   const r = timing.computeTimings(0);

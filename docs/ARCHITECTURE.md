@@ -4,8 +4,8 @@ Supersedes the original `ae-parakeet-captions/` scaffold where they conflict.
 Decisions here are backed by `docs/research/` (see `00-VERIFICATION.md` for
 what was independently confirmed vs. agent-reported).
 
-Status: backend and panel implemented (not yet run inside After Effects).
-Open questions marked **OPEN**. Last updated 2026-08-31.
+Status: backend and panel implemented; running inside After Effects.
+Open questions marked **OPEN**. Last updated 2026-09-09.
 
 ---
 
@@ -202,6 +202,23 @@ certain keyframes — never that the resulting motion was the motion intended.
 `panel/tests/ae-text-animator.js` now models the evaluation (per-unit coverage
 blended against the natural pose) and the animation tests assert motion.
 
+**The Animate tab was removed from the panel (2026-09).** Not the animator
+code — `capsetApplyAnimation`, `capsetAddPhase`, `capsetSpringKeys` and
+`capsetRemoveAnimators` are still in `capset.jsx`, still tested against the
+range-selector model in `panel/tests/ae-text-animator.js`, and are what any
+replacement writes into. What went is the *library and its UI*: 14 presets
+assembled from the same in/out phase primitives, which is why several of them
+read as the same animation under different names, and a preview grid that
+approximated the engine closely enough to be believed rather than checked.
+
+The library, the preview engine, the preset store and the tuning bench live
+in `panel/dormant/animation/` with their tests still running. The direction
+they are kept for is **capture rather than authoring**: animate a layer by
+hand in After Effects and read its animators back into a definition, the way
+`capsetCaptureStyle` already does for type. That inverts the problem the
+preview grid was solving — a card naming an animation the user built
+themselves does not have to sell it to them.
+
 **Known limitation, not yet addressed.** Because the animator's property values
 are themselves keyframed, characters the selector edge has not reached yet
 drift together rather than holding the from-pose until their turn. The classic
@@ -236,8 +253,52 @@ cubic bezier, the range selector's sweep becomes a fixed stagger, and the text
 is the panel's font. It conveys punch, overshoot, direction, colour and
 stagger — what someone picking from a grid is actually choosing between.
 
+**Superseded (2026-09).** The reasoning above is sound and the previews did
+work — but they were solving the wrong problem. An approximation is what you
+need when someone is choosing between animations they have never seen; it is
+not what you need when the animations themselves are the weak part. Live
+previews of a library that under-delivers make the library look better than it
+is, which is the opposite of useful. See the note in §3: the code is dormant,
+not deleted, and the next step is capturing hand-built animations instead of
+approximating hand-written ones.
+
 **On Essential Graphics:** the EGP authors `.mogrt` files for *Premiere*. It
 is not an in-AE reusable animation library and does not help here.
+
+---
+
+## 4a. Caption placement and pacing
+
+**Decision: one position, two pacing modes.**
+
+**Position is not a user setting.** Captions are centred at 85% of comp
+height. There was a "Keep inside title-safe" checkbox choosing between 80%
+and 88%, and it was incoherent: title-safe is a property of the whole text
+*block*, and the block's size comes from the user's Character panel settings —
+which the panel deliberately inherits and therefore does not know. Moving an
+anchor point cannot keep type of an unknown size inside a safe area, so the
+control promised something it had no way to deliver. 85% is the subtitle band
+itself: below the action on 16:9, clear of platform UI on 9:16, clear of the
+frame edge on both. `style.positionY` still overrides it, because Sync Style
+sends a captured position and must not be fought.
+
+**Two pacing modes are offered, not seven.** `segmentation.js` implements
+fixed-count (one/two/three), rhythm (phrase/smart/parts) and sentence modes,
+and they all still resolve — a project saved by an older version can name one.
+The panel offers **Smart** and **Word-by-Word**. Three words per caption was
+dropped because there is no editorial reason to reach for it: it is neither
+the punchy social rhythm nor a break the speaker actually made.
+
+**A word held for six seconds (fixed 2026-09).** Smart occasionally stranded
+the last word of a sentence on its own layer and left it on screen for
+seconds. The cause was in the backend, not the grouping: Parakeet reports only
+a *start* time per token, and the last token of a chunk was given the chunk's
+own duration as its end. Chunks come from VAD speech spans and the energy gate
+holds a span open through background music, so the final word inherited the
+whole music tail — and the phrase grouper, seeing a caption whose span blew
+the duration budget, closed the caption before it and left it alone. The
+chunk's duration is an upper bound on that token, not a measurement of it;
+`_MAX_FINAL_TOKEN_S` now caps it.
 
 ---
 

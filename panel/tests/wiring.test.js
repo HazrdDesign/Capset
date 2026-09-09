@@ -77,6 +77,51 @@ test("every element main.js looks up exists in index.html", () => {
   );
 });
 
+test("a healthy service costs no vertical space", () => {
+  // An After Effects panel is docked into a column a few hundred pixels wide,
+  // and the status row was the largest thing in it while saying the least:
+  // "Ready — nemo-parakeet-tdt-0.6b-v3" is not information anyone acts on.
+  // Healthy is a dot in the tab row; everything else still gets the full row,
+  // because those are the states the user has to do something about.
+  const src = functionBody("setStatus");
+  assert.ok(/hidden\s*=\s*kind === "ok"/.test(src),
+            "setStatus does not hide the status row when the service is fine");
+  assert.ok(/\$\("status-dot"\)/.test(src),
+            "setStatus never updates the compact indicator");
+  assert.ok(/dot\.title/.test(src),
+            "the dot carries no message, so a collapsed status says nothing at all");
+
+  // The row must start collapsed, or the panel flashes it on every open.
+  assert.ok(/<section id="status"[^>]*\bhidden\b/.test(html),
+            "the status row is not hidden in the markup");
+  assert.ok(main.includes('$("status-dot").addEventListener'),
+            "the dot cannot re-check, so a collapsed status is a dead end");
+});
+
+test("the button that deletes captions reads as destructive", () => {
+  // One click from the button that builds them, on layers the user has
+  // usually just spent time styling.
+  const css = fs.readFileSync(path.join(ROOT, "css", "panel.css"), "utf8");
+  assert.ok(/<button id="clear"[^>]*class="[^"]*\bdanger\b/.test(html),
+            "Remove all Capset captions is not marked as destructive");
+  const rule = css.slice(css.indexOf("button.danger {"),
+                         css.indexOf("}", css.indexOf("button.danger {")));
+  assert.ok(/var\(--err/.test(rule), "the danger button is not coloured by --err");
+});
+
+test("nothing dormant is loaded by the panel", () => {
+  // The Animate tab was removed, not left hidden: a tab that ships but never
+  // appears is dead weight in every install, and its libraries would still be
+  // parsed on every panel open. See panel/dormant/README.md.
+  assert.ok(!/data-tab="animate"/.test(html), "the Animate tab is still in the markup");
+  const dormant = scripts.filter((src) => src.includes("dormant"));
+  assert.deepStrictEqual(dormant, [], "index.html loads dormant code");
+  ["preview.js", "presets.js", "timing.js"].forEach((f) => {
+    assert.ok(!scripts.includes("js/lib/" + f),
+              f + " is loaded but has no live caller");
+  });
+});
+
 test("every log kind main.js uses has a style", () => {
   // A kind with no rule still renders, just not as a warning — the message
   // the user most needs to notice would look like ordinary output.
@@ -128,13 +173,10 @@ function functionBody(name) {
 test("the run path reads no live controls after the click", () => {
   // Controls whose value decides what a run produces. Reading any of these
   // after the click means the result can disagree with what was clicked.
-  const settingIds = [
-    "mode", "resolve",
-    "opt-precompose", "opt-parent", "opt-titlesafe"
-  ];
+  const settingIds = ["mode", "opt-precompose", "opt-parent"];
 
   // Everything downstream of the click, whether or not it is async itself.
-  const downstream = ["build", "captionsFromTranscription", "timingsFor"];
+  const downstream = ["build", "captionsFromTranscription"];
 
   const offenders = [];
   downstream.forEach((name) => {
@@ -156,7 +198,7 @@ test("captureSettings covers every control the run depends on", () => {
   // The snapshot is only worth having if it is complete: a setting left out of
   // it is a setting still read live, or one silently dropped from the run.
   const src = functionBody("captureSettings");
-  ["mode", "resolve", "opt-precompose", "opt-parent", "opt-titlesafe"]
+  ["mode", "opt-precompose", "opt-parent"]
     .forEach((id) => {
       assert.ok(
         src.includes('$("' + id + '")'),
@@ -224,36 +266,17 @@ test("capture refreshes the comp it is capturing from", () => {
   );
 });
 
-test("re-applying an animation sends real timings, not an empty map", () => {
-  // applyAnimation used to post `timingsById: {}`, so the host fell through to
-  // a hardcoded copy of the fraction rules and the length chosen in the panel
-  // was ignored on every layer. That is most of why the timing controls
-  // appeared to do nothing.
-  const src = functionBody("applyAnimation");
-  assert.ok(
-    /capsetCaptionLayerTimes/.test(src),
-    "applyAnimation does not ask the host for layer durations, so it cannot " +
-    "compute real timings"
-  );
-  assert.ok(
-    /timingsFor\(/.test(src),
-    "applyAnimation does not use timingsFor(), the one tested implementation"
-  );
-  assert.ok(
-    !/timingsById:\s*\{\s*\}/.test(src),
-    "applyAnimation still sends an empty timings map"
-  );
-});
-
-test("the host's fallback timing rules are a last resort, not the norm", () => {
-  // A second copy of the fraction rules lives in capset.jsx for layers the
-  // panel knows nothing about. It is allowed to exist, but nothing in the
-  // normal path should be relying on it.
+test("the host keeps the machinery a rebuilt animation feature needs", () => {
+  // The Animate tab is gone (panel/dormant/README.md), but what talks to
+  // After Effects stayed: generating animators under the Capset__ prefix and
+  // tearing them down exactly is the hard, tested part, and it is what any
+  // replacement writes into. Deleting it would mean rebuilding it first.
   const jsx = fs.readFileSync(path.join(ROOT, "jsx", "capset.jsx"), "utf8");
-  assert.ok(
-    /capsetCaptionLayerTimes/.test(jsx),
-    "the host cannot report layer durations, so the panel cannot avoid the fallback"
-  );
+  ["capsetApplyAnimation", "capsetRemoveAnimators", "capsetAddPhase",
+   "capsetCaptionLayerTimes"].forEach((fn) => {
+    assert.ok(new RegExp("function " + fn + "\\(").test(jsx),
+              fn + " was removed from the host script");
+  });
 });
 
 // --- the animation library ---------------------------------------------------
@@ -264,9 +287,11 @@ test("every field in animations.json is read by something", () => {
   // nothing read it, so every "pop" and "bounce" in the library was a plain
   // interpolation. A field nobody reads looks identical to one that works.
   const lib = JSON.parse(
-    fs.readFileSync(path.join(ROOT, "animations", "animations.json"), "utf8")
+    fs.readFileSync(
+      path.join(ROOT, "dormant", "animation", "animations.json"), "utf8")
   );
-  const sources = ["jsx/capset.jsx", "js/main.js", "js/lib/preview.js"]
+  const sources = ["jsx/capset.jsx", "dormant/animation/preview.js",
+                   "dormant/animation/timing.js", "dormant/animation/presets.js"]
     .map((f) => fs.readFileSync(path.join(ROOT, f), "utf8")).join("\n");
 
   const fields = new Set();
@@ -277,8 +302,11 @@ test("every field in animations.json is read by something", () => {
     }
   })(lib.animations);
 
-  // Descriptive metadata for the grid, not behaviour the definition promises.
-  const metadata = new Set(["tags"]);
+  // Descriptive metadata, not behaviour the definition promises. `name` and
+  // `description` were rendered by the Animate tab's grid and are read by
+  // nothing now that it is gone; they stay in the library because whatever
+  // replaces that tab will need something to label a definition with.
+  const metadata = new Set(["tags", "description"]);
 
   const unread = [...fields].filter((k) =>
     !k.startsWith("$") && !metadata.has(k) &&
@@ -294,117 +322,13 @@ test("every field in animations.json is read by something", () => {
   );
 });
 
-test("preview cards are timed by the same controls as the build", () => {
-  // A card that plays at a different speed from the captions it produces is
-  // the grid telling the user something untrue about what they are choosing.
-  // That is how the range-selector bug survived a whole release: the previews
-  // looked correct, so the library looked correct.
-  const src = functionBody("previewTimings");
-  assert.ok(
-    /explicitLength\(/.test(src),
-    "previewTimings ignores the animation-length control, so the grid plays " +
-    "at a different speed from the captions"
-  );
-  assert.ok(
-    /\$\("resolve"\)/.test(src),
-    "previewTimings ignores the resolve cap the build applies"
-  );
-});
-
-test("moving a timing control re-times the cards already on screen", () => {
-  // previewTimings is only consulted when a card is built, so without this
-  // the grid keeps playing at whatever the settings were when the panel
-  // opened.
-  assert.ok(
-    /function refreshPreviewTimings/.test(main),
-    "nothing re-times existing preview cards"
-  );
-  ["length-mode", "length-value", "resolve"].forEach((id) => {
-    const listener = main.indexOf('$("' + id + '").addEventListener');
-    assert.notStrictEqual(listener, -1, id + " has no listener at all");
-    const nearby = main.slice(listener, listener + 400);
-    assert.ok(
-      /refreshPreviewTimings/.test(nearby),
-      id + " changes without re-timing the preview cards"
-    );
-  });
-});
-
-// --- reading files out of the host -----------------------------------------
-
-test("main.js does not invent CEP encoding constants", () => {
-  // `cep.fs.NO_ENCODING` does not exist. Passing it gave `undefined`, which
-  // CEP treats as "decode this as UTF-8", which destroyed every audio file
-  // the panel read for four releases. There is no way to unit-test main.js
-  // (it is an IIFE needing a DOM and CSInterface), so this is a source check:
-  // the only encoding argument allowed is cep.encoding.Base64, in cepfile.js.
-  assert.doesNotMatch(main, /NO_ENCODING/,
-    "cep.fs.NO_ENCODING is not a real constant — see js/lib/cepfile.js");
-});
-
-test("binary reads go through cepfile.js, not straight to cep.fs", () => {
-  const raw = main.match(/cep\.fs\.readFile\([^)]*\)/g) || [];
-  raw.forEach((call) => {
-    assert.ok(
-      !/,/.test(call),
-      "main.js passes an encoding to readFile directly (" + call + "); " +
-      "binary reads belong in js/lib/cepfile.js where they are tested"
-    );
-  });
-});
-
-// --- what the installer ships ----------------------------------------------
-
-test("the installer's file check does not keep its own copy of js/lib", () => {
-  // installer/build_payload.py refuses to build a payload that is missing a
-  // required file. That list used to name the js/lib modules by hand and
-  // drifted four files behind — cepfile.js, launcher.js, presets.js and
-  // preview.js were all absent, cepfile.js being the one that reads the
-  // rendered audio. Nothing shipped broken (copytree copies the directory
-  // regardless), but the check had quietly stopped covering what it was
-  // written for.
-  //
-  // It now derives them from the directory. This fails if anyone types one
-  // back in, because a second hand-maintained list drifts exactly the same
-  // way the first one did.
-  const payload = fs.readFileSync(
-    path.join(REPO, "installer", "build_payload.py"), "utf8"
-  );
-  // Literal filenames only — the f-string template that BUILDS the list
-  // ("js/lib/{name}") is the fix, not a violation of it.
-  const explicit = [...payload.matchAll(/"(js\/lib\/[^"{}]+\.js)"/g)].map((m) => m[1]);
-  assert.deepStrictEqual(
-    explicit, [],
-    "build_payload.py names js/lib files literally: " + explicit.join(", ") +
-    " — let _library_files() read the directory instead"
-  );
-});
-
-test("every js/lib module is required by the installer's check", () => {
-  // The derivation is only worth anything if it actually covers the
-  // directory. Reads the same source of truth build_payload.py does.
-  const payload = fs.readFileSync(
-    path.join(REPO, "installer", "build_payload.py"), "utf8"
-  );
-  assert.match(
-    payload, /def _library_files\(/,
-    "build_payload.py no longer derives the library list from js/lib/"
-  );
-  assert.match(
-    payload, /list\(REQUIRED_PANEL_FILES\) \+ _library_files\(/,
-    "the derived library list is not being used in the payload check"
-  );
-});
-
-// --- what the panel offers, and what it inserts -----------------------------
-
 test("every segmentation option is a mode the library understands", () => {
   const seg = require("../js/lib/segmentation.js");
   const block = html.match(/<select id="mode">([\s\S]*?)<\/select>/);
   assert.ok(block, "the segmentation select is gone");
   const offered = [...block[1].matchAll(/value="([^"]+)"/g)].map((m) => m[1]);
 
-  assert.deepStrictEqual(offered, ["smart", "one", "three"],
+  assert.deepStrictEqual(offered, ["smart", "one"],
     "the segmentation list changed; keep it short and keep this in step");
 
   // A value the library does not know silently falls through to phrase

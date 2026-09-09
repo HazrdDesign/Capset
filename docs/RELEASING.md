@@ -44,5 +44,16 @@ cd backend && pyinstaller capset-backend.spec --noconfirm && cd ..
 The tag drives everything: `v0.1` → version `0.1` → `Capset-Setup-0.1.exe`
 and a release named "Capset v0.1". The workflow strips the leading `v`.
 
-Release notes live at `docs/RELEASE-NOTES-v<version>.md` and the workflow
-reads that path, so add one for each new version or the publish step fails.
+## Release notes
+
+Write `docs/RELEASE-NOTES-v<version>.md` before tagging — `v0.4.0` looks for
+`docs/RELEASE-NOTES-v0.4.0.md`, then `docs/RELEASE-NOTES-v0.4.md` for a file
+covering the whole minor series (which is how `RELEASE-NOTES-v0.1.md` served
+every `v0.1.x` tag).
+
+If neither exists the workflow publishes a stub linking to the commit log and
+warns in the job summary. It does not fail: the installer at that point is a
+good build twenty minutes in the making, and losing it over a missing markdown
+file helps nobody. It also does not fall back to another version's notes —
+which it did for eleven tags, publishing v0.1's text under every release from
+v0.1.2 to v0.3.2, because `body_path` was hardcoded to that one file.

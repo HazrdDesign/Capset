@@ -1,7 +1,7 @@
 # panel/ — CEP extension for After Effects
 
-The UI, the segmentation and timing logic, and the ExtendScript that builds
-caption layers.
+The UI, the segmentation logic, and the ExtendScript that builds caption
+layers.
 
 CEP rather than UXP because After Effects has no UXP panel API — see
 [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) §1.
@@ -9,32 +9,48 @@ CEP rather than UXP because After Effects has no UXP panel API — see
 ## Layout
 
 ```
-CSXS/manifest.xml     Extension manifest (AEFT, 2020-2026).
-index.html            Panel UI.
-css/panel.css         Styling, tuned to AE's dark theme.
-js/lib/timing.js      Duration-adaptive animation timing.  [pure, tested]
-js/lib/segmentation.js Word / phrase / smart grouping.     [pure, tested]
-js/lib/backend.js     Transcription service client.        [pure, tested]
-js/main.js            DOM glue and ExtendScript calls.
-js/vendor/            CSInterface.js from Adobe.
-jsx/capset.jsx        Host script: layers, animators, swapping.
-jsx/json2.jsx         JSON for ES3 (public domain).
-animations/           Animation definitions + preview loops.
+CSXS/manifest.xml      Extension manifest (AEFT, 2020-2026).
+index.html             Panel UI: two tabs, Insert and Update.
+css/panel.css          Styling, tuned to AE's dark theme.
+js/lib/segmentation.js Word / phrase / smart grouping.       [pure, tested]
+js/lib/backend.js      Transcription service client.         [pure, tested]
+js/lib/launcher.js     Starts the backend on demand.         [pure, tested]
+js/lib/cepfile.js      Reads the rendered audio as bytes.    [pure, tested]
+js/lib/srt.js          SRT / VTT import.                     [pure, tested]
+js/lib/updates.js      Update manifest checking.             [pure, tested]
+js/main.js             DOM glue and ExtendScript calls.
+js/vendor/             CSInterface.js from Adobe.
+jsx/capset.jsx         Host script: render, layers, style sync, animators.
+jsx/json2.jsx          JSON for ES3 (public domain).
+dormant/               Not loaded, not shipped. See dormant/README.md.
 ```
 
-## Two design decisions worth knowing
+## Three design decisions worth knowing
 
-**Timing is computed in the panel, not in ExtendScript.** `js/lib/timing.js`
-is unit-tested under node; the JSX only applies the seconds it is handed. One
-implementation of the rules, and it is the tested one.
+**Captions inherit the Character panel, and land in one place.** `addText()`
+picks up whatever font, size and colour the user last used, which is the point
+— style one layer, then push it everywhere from the Update tab. Position is
+the one thing not left to chance: centred, at 85% of comp height. A
+"keep inside title-safe" option used to sit next to it and could not work,
+because the size of the text block is exactly what the panel does not know.
 
 **Animations are generated, not applied from `.ffx`.** `.ffx` bakes fixed
 keyframes that cannot adapt to caption duration — which is exactly why
 preset-driven tools resolve too late on short words — cannot be generated
 programmatically, and cannot be cleanly removed when swapping. Everything
 `capset.jsx` creates carries a `Capset__` prefix, so replacing an animation is
-an exact teardown and rebuild. That is what makes "replace on selected / on
-all" reliable.
+an exact teardown and rebuild.
+
+That machinery is still in `capset.jsx` and still tested, but **the Animate
+tab is not in the panel**: too many of the shipped presets read as the same
+animation, and the preview cards approximated the real thing convincingly
+enough to mislead. The library and preview engine moved to `dormant/`, which
+explains what replaces them.
+
+**The panel renders its own audio.** After Effects writes it, so what gets
+transcribed is what the user hears — comp mix, levels, solo and mute, audio
+effects, time remapping — and no media decoder ships with Capset.
+See `docs/ARCHITECTURE.md` §5a.
 
 ## ExtendScript is ES3
 
@@ -49,10 +65,17 @@ time, so a single arrow function breaks the whole file.
 cd panel && npm test
 ```
 
-48 tests, no AE required: timing (including a sweep proving the in-animation
-always resolves within the cap), segmentation (word/phrase/smart, wrapping,
-gap and sentence breaks, no word lost), and the backend client (polling,
-failure, timeout, unreachable service).
+No After Effects required. Alongside the pure modules, two suites are worth
+knowing about:
+
+- `tests/wiring.test.js` runs `index.html` against `js/main.js` and fails on a
+  library that is never loaded, an element that does not exist, a control
+  nothing reads, or a setting read live after a run has started.
+- `tests/jsx-behaviour.test.js` executes `jsx/capset.jsx` against the fake
+  host in `tests/fake-ae.js`, whose text-animator model
+  (`tests/ae-text-animator.js`) evaluates range selectors properly — because
+  a fake that only recorded which keyframes were created is how animations
+  shipped applying no motion at all.
 
 ## Install for development
 
@@ -71,24 +94,6 @@ failure, timeout, unreachable service).
 
 3. Restart After Effects. **Window → Extensions → Capset**.
 
-The backend must be running (`cd backend && python -m app.main`); the panel
-shows service status at the top and refuses to build without it.
-
-## Status
-
-**Nothing here has been executed inside After Effects yet.** The logic
-modules are tested under node and the manifest is validated, but the JSX
-match names and API shapes come from the scripting reference, not from a
-running host. Treat `capset.jsx` as a first draft.
-
-Open items:
-
-- Run in AE and fix what the host rejects.
-- `TextDocument.fillColor` from script is flagged UNVERIFIED in
-  `docs/research/01-ae-extensibility.md`; a Fill effect is the fallback.
-- Range-selector match names (`ADBE Text Range Type2`) vary across versions;
-  the code degrades rather than aborting, which needs confirming.
-- Preview loops in `animations/previews/` do not exist yet. The grid falls
-  back to "no preview" text. They should be rendered from the procedural
-  engine via `aerender` so previews cannot drift from what is applied.
-- Controller rig (expression-linked global restyle) is not built yet.
+The panel starts the backend itself and reports the service as a dot in the
+tab row — grey while checking, orange-amber while the model loads, red with a
+full message and a re-check button when something is wrong.

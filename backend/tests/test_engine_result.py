@@ -77,11 +77,47 @@ def test_each_token_ends_where_the_next_begins():
         tokens=["▁a", "▁b", "▁c"],
         timestamps=[0.10, 0.50, 1.10],
     )
-    tokens = _tokens_from_result(result, duration=2.0)
+    tokens = _tokens_from_result(result, duration=1.4)
     assert [t.start for t in tokens] == [0.10, 0.50, 1.10]
-    assert [t.end for t in tokens] == [0.50, 1.10, 2.00]
+    assert [t.end for t in tokens] == [0.50, 1.10, 1.40]
     for token in tokens:
         assert token.end > token.start, "a token with no duration times nothing"
+
+
+def test_the_last_token_is_not_stretched_across_a_music_tail():
+    """The six-second caption.
+
+    Chunks are planned from VAD speech spans, and the energy gate holds a span
+    open through background music -- so a chunk ends long after the last word
+    in it was spoken. Taking the final token's end from the chunk's duration
+    handed that whole tail to one word: it sat on screen for the length of the
+    music, and the panel's phrase grouping, seeing a caption whose span blew
+    the duration budget, stranded it on a layer of its own.
+
+    The chunk's duration bounds the token. It does not measure it.
+    """
+    result = Result(
+        text="that is the end",
+        tokens=["▁that", "▁is", "▁the", "▁end"],
+        timestamps=[8.00, 8.30, 8.60, 8.90],
+    )
+    # Six seconds of music after the last word.
+    tokens = _tokens_from_result(result, duration=15.0)
+    last = tokens[-1]
+    assert last.end - last.start <= 0.6, "the final word swallowed the music tail"
+    # ...while the tokens that DO have a following token keep their real ends.
+    assert [t.end for t in tokens[:-1]] == [8.30, 8.60, 8.90]
+
+
+def test_a_short_chunk_still_ends_its_last_token_at_the_chunk_edge():
+    """The clamp is a ceiling, not a fixed length.
+
+    When the chunk really does end just after the last word -- the common case
+    for a span cut in silence -- that end is real information and is kept.
+    """
+    result = Result(text="hello", tokens=["▁hello"], timestamps=[0.20])
+    (token,) = _tokens_from_result(result, duration=0.45)
+    assert token.end == pytest.approx(0.45)
 
 
 def test_the_last_token_is_bounded_even_without_a_chunk_duration():

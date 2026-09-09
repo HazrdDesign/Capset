@@ -10,7 +10,10 @@
   <nav id="tabs">
     <button class="tab active" data-tab="insert">Insert</button>
     <button class="tab" data-tab="update">Update</button>
-    <button class="tab" data-tab="animate">Animate</button>
+    <!-- The service indicator lives in the tab row so a healthy backend costs
+         no vertical space at all. It only grows into the #status row below
+         when something actually needs saying. -->
+    <button id="status-dot" class="status-dot" title="Checking transcription service…"></button>
   </nav>
 
   <section id="update-banner" class="update" hidden>
@@ -24,7 +27,7 @@
     </div>
   </section>
 
-  <section id="status" class="warn">
+  <section id="status" class="warn" hidden>
     <span class="dot"></span>
     <span class="msg">Checking transcription service…</span>
     <button id="retry" title="Re-check">↻</button>
@@ -53,8 +56,7 @@
         <label for="mode">Segmentation</label>
         <select id="mode">
           <option value="smart">Smart — grouped on the pauses</option>
-          <option value="one">One word</option>
-          <option value="three">Three words</option>
+          <option value="one">Word-by-Word</option>
         </select>
         <p class="hint" id="mode-hint">Reads the comp's aspect ratio and picks a layout.</p>
       </div>
@@ -74,7 +76,6 @@
       <div class="opts">
         <label class="check"><input type="checkbox" id="opt-precompose"> Precompose captions</label>
         <label class="check"><input type="checkbox" id="opt-parent"> Parent to Controller</label>
-        <label class="check"><input type="checkbox" id="opt-titlesafe" checked> Keep inside title-safe</label>
       </div>
 
       <button class="primary" id="build">Add Captions</button>
@@ -115,65 +116,8 @@
 
     <section>
       <h2>Danger zone</h2>
-      <button id="clear" style="width:100%">Remove all Capset captions</button>
+      <button id="clear" class="danger" style="width:100%">Remove all Capset captions</button>
       <p class="hint">Deletes generated caption layers in this composition.</p>
-    </section>
-  </div>
-
-  <!-- =========================== ANIMATE ============================ -->
-  <div class="panel" data-panel="animate">
-    <section>
-      <h2>Animation</h2>
-      <div id="animations"></div>
-      <div class="file" style="margin-top:8px">
-        <input type="text" id="preset-name" placeholder="Save the selected animation as…"
-               maxlength="60" autocomplete="off">
-        <button id="preset-save">Save</button>
-      </div>
-      <div class="row" style="margin-top:6px">
-        <label class="check" style="margin:0">
-          <input type="checkbox" id="preset-with-style">
-          Include the captured text style
-        </label>
-      </div>
-      <button id="preset-delete" style="width:100%;margin-top:6px" disabled>
-        Delete this preset
-      </button>
-      <p class="hint" id="preset-hint">
-        Saved presets appear in the grid above and live in your user folder, so
-        they survive updates.
-      </p>
-    </section>
-
-    <section>
-      <h2>Timing</h2>
-      <label for="length-mode">Animation length</label>
-      <select id="length-mode">
-        <option value="auto" selected>Auto — scale to each caption</option>
-        <option value="frames">Frames</option>
-        <option value="seconds">Seconds</option>
-      </select>
-      <div id="length-row" hidden>
-        <label for="length-value">Length</label>
-        <input type="number" id="length-value" min="0" step="1" value="8">
-      </div>
-      <p class="hint" id="length-hint">
-        Auto scales each animation to its caption, so short words finish early
-        instead of still moving when the word disappears. Set a length in
-        frames or seconds to give every caption the same timing instead — it
-        is still shortened on a caption too short to hold it.
-      </p>
-      <label for="resolve">Never use more than <span id="resolve-value">50</span>% of a caption</label>
-      <input type="range" id="resolve" min="20" max="50" value="50" style="width:100%">
-    </section>
-
-    <section>
-      <h2>Apply</h2>
-      <div class="row">
-        <button id="anim-selected">Selected layers</button>
-        <button id="anim-all">All captions</button>
-      </div>
-      <button id="anim-clear" style="width:100%;margin-top:6px">Remove animation</button>
     </section>
   </div>
 
@@ -189,14 +133,11 @@
 
   <script src="js/vendor/CSInterface.js"></script>
   <script src="js/lib/cepfile.js"></script>
-  <script src="js/lib/timing.js"></script>
   <script src="js/lib/segmentation.js"></script>
   <script src="js/lib/srt.js"></script>
   <script src="js/lib/backend.js"></script>
   <script src="js/lib/updates.js"></script>
   <script src="js/lib/launcher.js"></script>
-  <script src="js/lib/preview.js"></script>
-  <script src="js/lib/presets.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>

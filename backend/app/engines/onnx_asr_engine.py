@@ -203,6 +203,23 @@ class OnnxAsrEngine:
 # long; used only for the final token of a chunk whose duration is unknown.
 _NOMINAL_TOKEN_S = 0.08
 
+# The longest a chunk's FINAL token may be stretched.
+#
+# Every other token ends where the next one starts, which is real information.
+# The last one has nothing after it, so its end used to be taken from the
+# chunk's own duration -- and that is not an end time, it is an upper bound.
+# Chunks are planned from VAD speech spans, and the energy gate keeps a span
+# open through background music, so a chunk routinely runs seconds past the
+# last word spoken in it. The final word then inherited that whole tail: one
+# word left on screen for six seconds after it was said, and (because the
+# panel's phrase grouping closes a caption whose span exceeds the duration
+# budget) stranded on a caption of its own.
+#
+# A generous ceiling for one spoken word. Long enough that a drawn-out word
+# keeps its real length, short enough that a music tail cannot be mistaken
+# for one.
+_MAX_FINAL_TOKEN_S = 0.6
+
 
 def _tokens_from_result(result, duration: float = 0.0) -> list[Token]:
     """Turn an onnx-asr TimestampedResult into our Token list.
@@ -224,8 +241,9 @@ def _tokens_from_result(result, duration: float = 0.0) -> list[Token]:
     the model had produced perfectly, sitting untouched in `result.text`.
 
     A token ends where the next one starts; the last ends at the end of the
-    chunk. That is an approximation -- the model does not report ends -- but
-    it is contiguous and monotonic, which is what caption timing needs.
+    chunk, or _MAX_FINAL_TOKEN_S after it started, whichever comes first.
+    That is an approximation -- the model does not report ends -- but it is
+    contiguous and monotonic, which is what caption timing needs.
     """
     text = getattr(result, "text", "") or ""
     pieces = getattr(result, "tokens", None)
@@ -258,7 +276,11 @@ def _tokens_from_result(result, duration: float = 0.0) -> list[Token]:
         if index + 1 < count:
             end = float(starts[index + 1])
         else:
-            end = max(duration, start + _NOMINAL_TOKEN_S)
+            # The chunk's duration bounds this token; it does not measure it.
+            end = min(
+                max(duration, start + _NOMINAL_TOKEN_S),
+                start + _MAX_FINAL_TOKEN_S,
+            )
         # logprobs are log probabilities and therefore <= 0. Passing one
         # straight through as "confidence" would report -0.31 for a token the
         # model was 73% sure of.

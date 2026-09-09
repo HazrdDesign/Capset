@@ -7,27 +7,18 @@ const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
 const path = require("node:path");
-const preview = require("../js/lib/preview.js");
-const timing = require("../js/lib/timing.js");
+const preview = require("../dormant/animation/preview.js");
+const timing = require("../dormant/animation/timing.js");
 
 const LIBRARY = JSON.parse(
-  fs.readFileSync(path.join(__dirname, "..", "animations", "animations.json"), "utf8")
+  fs.readFileSync(path.join(__dirname, "..", "dormant", "animation", "animations.json"), "utf8")
 );
 
 function timingsFor(animation, duration = 1.2) {
-  const spec = { hasOut: !!animation.out };
-  if (animation.spansLayer) { spec.maxInFraction = 1; spec.maxTotalFraction = 1; }
-  if (animation["in"]) {
-    spec.inFraction = animation["in"].fraction;
-    spec.inMin = animation["in"].min;
-    spec.inMax = animation["in"].max;
-  }
-  if (animation.out) {
-    spec.outFraction = animation.out.fraction;
-    spec.outMin = animation.out.min;
-    spec.outMax = animation.out.max;
-  }
-  return timing.computeTimings(duration, spec);
+  // The same adapter the applier uses, not a copy of it: a preview timed by a
+  // second implementation of these rules is a preview that can agree with the
+  // test while disagreeing with After Effects.
+  return timing.computeTimings(duration, timing.specForAnimation(animation));
 }
 
 // --- easing -----------------------------------------------------------------
@@ -309,12 +300,12 @@ test("a plain overshoot is still a single peak in both", () => {
 });
 
 test("the tuning bench computes the same spring as the panel", () => {
-  // tools/animation-tuner.html carries its own copy of the spring maths so it
+  // The tuning bench carries its own copy of the spring maths so it
   // can be opened as a single file. A copy that drifts is a bench that lies
   // about what After Effects will do -- which is the failure this whole suite
   // exists to prevent, so the copy is checked against the original.
   const html = fs.readFileSync(
-    path.join(__dirname, "..", "tools", "animation-tuner.html"), "utf8"
+    path.join(__dirname, "..", "dormant", "animation", "animation-tuner.html"), "utf8"
   );
   const consts = html.slice(html.indexOf("var OVERSHOOT_PEAK"), html.indexOf("var REST = {"));
   const body = html.slice(html.indexOf("function lerp("), html.indexOf("function clamp01("));
@@ -341,9 +332,9 @@ test("the tuning bench computes the same spring as the panel", () => {
 test("the tuning bench offers every preset in the library", () => {
   // A bench missing a preset is a preset nobody can tune.
   const html = fs.readFileSync(
-    path.join(__dirname, "..", "tools", "animation-tuner.html"), "utf8"
+    path.join(__dirname, "..", "dormant", "animation", "animation-tuner.html"), "utf8"
   );
-  const library = require("../animations/animations.json");
+  const library = require("../dormant/animation/animations.json");
   library.animations.forEach((animation) => {
     if (animation.id === "none") return;
     assert.ok(
