@@ -4,8 +4,6 @@ Auto-captioning for **After Effects**. Transcribes audio locally with NVIDIA
 Parakeet and builds timed, styled, animated text layers directly on the AE
 timeline — no cloud, no SRT round-trip, no manual keyframing.
 
-Personal project (HAZRD).
-
 ## Why
 
 Existing tools apply caption *animations* well in Premiere but leave After
