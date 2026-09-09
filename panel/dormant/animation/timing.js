@@ -143,6 +143,53 @@
     };
   }
 
+  /**
+   * Turn an animation DEFINITION into a spec computeTimings understands.
+   *
+   * The adapter between the two halves of the system: the library describes
+   * its phases as fractions of the caption, and everything that applies one
+   * -- the host script, and whatever draws a preview -- needs those as a
+   * spec. It lived inline in the panel's main.js until the Animate tab was
+   * removed; it is the definition's meaning, not the tab's, so it moved here
+   * rather than going with it.
+   *
+   * @param animation an entry from animations.json
+   * @param options   {resolvePercent, lengthSeconds} from the UI, both optional
+   */
+  function specForAnimation(animation, options) {
+    var opts = options || {};
+    var spec = {};
+
+    if (isPositive(opts.resolvePercent)) {
+      spec.maxInFraction = Number(opts.resolvePercent) / 100;
+    }
+    if (isPositive(opts.lengthSeconds)) {
+      spec.inSeconds = Number(opts.lengthSeconds);
+    }
+
+    // A karaoke fill is supposed to run the length of the caption -- that IS
+    // the effect. The resolve-early cap exists so an entrance is not still
+    // moving when the word disappears, which is a different thing, so an
+    // animation that spans the layer opts out of it.
+    if (animation && animation.spansLayer) {
+      spec.maxInFraction = 1;
+      spec.maxTotalFraction = 1;
+    }
+    if (animation && animation["in"]) {
+      spec.inFraction = animation["in"].fraction;
+      spec.inMin = animation["in"].min;
+      spec.inMax = animation["in"].max;
+    }
+    if (animation && animation.out) {
+      spec.outFraction = animation.out.fraction;
+      spec.outMin = animation.out.min;
+      spec.outMax = animation.out.max;
+    } else {
+      spec.hasOut = false;
+    }
+    return spec;
+  }
+
   /** Fraction of the layer at which the in-animation finishes (0-1). */
   function resolveFraction(layerDuration, spec) {
     var duration = Math.max(0, Number(layerDuration) || 0);
@@ -155,6 +202,7 @@
     clamp: clamp,
     toSeconds: toSeconds,
     computeTimings: computeTimings,
+    specForAnimation: specForAnimation,
     resolveFraction: resolveFraction
   };
 

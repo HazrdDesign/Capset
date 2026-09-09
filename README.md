@@ -35,12 +35,12 @@ current decisions and supersedes the original scaffold where they conflict.
 
 | Component | State |
 |---|---|
-| Backend (Parakeet, chunking, job API) | Implemented, 148 tests |
-| Panel (UI, segmentation, timing, animations) | Implemented, 262 tests |
+| Backend (Parakeet, chunking, job API) | Implemented, 194 tests |
+| Panel (UI, segmentation, style sync) | Implemented, 307 tests |
 | Installer (Windows + macOS scripts, CI) | Implemented, shipping |
 | **Verified inside After Effects** | **Partly — see below** |
 
-410 automated tests, green in CI.
+501 automated tests, green in CI.
 
 The plugin now runs in real After Effects, and the first sessions there found
 four failures in a row that no amount of testing had caught: a one-character
@@ -65,8 +65,12 @@ To cut a release, see [`docs/RELEASING.md`](docs/RELEASING.md).
 ## Phases
 
 1. **Backend** — Parakeet via ONNX with VAD chunking; measure CPU speed.
-2. **Panel** — CEP panel, audio extraction, segmentation (word / phrase / smart).
-3. **Animation** — procedural text animators, preview grid, controller rig.
+2. **Panel** — CEP panel, audio extraction, segmentation (smart / word-by-word).
+3. **Animation** — *restarting.* The procedural animator machinery works and
+   stays; the preset library and its preview grid were pulled from the panel
+   because too many presets read as the same animation. Next: capture an
+   animation built by hand in After Effects, the way the Update tab already
+   captures type. See [`panel/dormant/README.md`](panel/dormant/README.md).
 4. **Packaging** — Windows + macOS installers.
 
 ## Platforms

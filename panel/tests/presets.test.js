@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const presets = require("../js/lib/presets.js");
+const presets = require("../dormant/animation/presets.js");
 
 const ANIMATION = {
   id: "word-pop",

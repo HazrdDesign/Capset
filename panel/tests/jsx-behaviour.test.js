@@ -66,17 +66,45 @@ test("an empty caption list is refused rather than silently doing nothing", () =
                 /No captions/);
 });
 
-test("title-safe raises the baseline out of the overscan region", () => {
-  const safe = load();
-  safe.call("capsetBuildCaptions", {
-    captions: CAPTIONS, style: { titleSafe: true }, options: {}
+test("captions land centred, in the subtitle band, whatever is passed", () => {
+  // This used to be a "Keep inside title-safe" checkbox picking between two
+  // baselines, and it could not do what it said: the text block's size comes
+  // from the user's Character panel settings, which is the whole point of
+  // inheriting them, so moving the anchor cannot keep type of an unknown size
+  // inside a safe area. One position, always, and no control claiming
+  // otherwise.
+  const h = load();
+  h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+  const position = (layer) =>
+    plain(layer.property("Transform").property("Position").value);
+
+  captionLayers(h.comp).forEach((layer) => {
+    const [x, y] = position(layer);
+    assert.strictEqual(x, h.comp.width * 0.5, "captions must be centred");
+    assert.ok(y > h.comp.height * 0.78 && y < h.comp.height * 0.92,
+              "captions must sit in the subtitle band, not at " + y);
   });
-  const unsafe = load();
-  unsafe.call("capsetBuildCaptions", {
+
+  // A stale style object from an older project must not move them.
+  const legacy = load();
+  legacy.call("capsetBuildCaptions", {
     captions: CAPTIONS, style: { titleSafe: false }, options: {}
   });
-  const y = (h) => captionLayers(h.comp)[0].property("Transform").property("Position").value[1];
-  assert.ok(y(safe) < y(unsafe), "title-safe captions must sit higher in frame");
+  assert.deepStrictEqual(position(captionLayers(legacy.comp)[0]),
+                         position(captionLayers(h.comp)[0]));
+});
+
+test("an explicit positionY still wins, because Sync Style sends one", () => {
+  // The Update tab captures a layer's position and pushes it to the rest. If
+  // the baseline overrode that, moving one caption and syncing would snap it
+  // back to where it started.
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: { positionY: 0.5 }, options: {}
+  });
+  const y = captionLayers(h.comp)[0]
+    .property("Transform").property("Position").value[1];
+  assert.strictEqual(y, h.comp.height * 0.5);
 });
 
 // --- rebuilding -------------------------------------------------------------
@@ -936,7 +964,7 @@ test("supplied timings are used instead of the built-in fallback", () => {
 // fixed. This walks the real library through the real host and checks each
 // entry produces motion.
 
-const LIBRARY = require("../animations/animations.json");
+const LIBRARY = require("../dormant/animation/animations.json");
 
 const REST = {
   scale: [100, 100, 100], opacity: 100, position: [0, 0, 0], rotation: 0,

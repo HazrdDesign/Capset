@@ -226,9 +226,21 @@ function capsetStyleText(layer, style, comp) {
     doc.justification = ParagraphJustification.CENTER_JUSTIFY;
     prop.setValue(doc);
 
-    // Title-safe: broadcast practice keeps captions inside the inner 80% of
-    // frame, because overscan on real displays clips the edges.
-    var baseline = style.titleSafe ? 0.80 : 0.88;
+    // Captions land centred, in the subtitle band, every time.
+    //
+    // This used to be a "Keep inside title-safe" checkbox choosing between
+    // 0.80 and 0.88, and it did not do what the label promised: title-safe is
+    // about the whole text BLOCK staying inside the inner 80% of frame, and
+    // the block's size is whatever the user's Character panel settings make
+    // it -- which is the entire point of inheriting them. Moving the anchor
+    // up cannot keep type of an unknown size inside anything.
+    //
+    // 0.85 is the subtitle band itself: below the action of a 16:9 frame,
+    // clear of the platform UI that crowds the bottom of a 9:16 one, and
+    // clear of the frame edge on both. Anyone wanting it elsewhere moves the
+    // layers, or restyles one and pushes it with the Update tab.
+    var CAPSET_BASELINE = 0.85;
+    var baseline = CAPSET_BASELINE;
     if (style.positionY !== undefined && style.positionY !== null) {
         baseline = style.positionY;
     }

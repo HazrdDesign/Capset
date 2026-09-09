@@ -26,10 +26,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Development-only files that must never reach a user's machine. "tools" is
-# the animation tuning bench: useful while building the library, not something
-# a customer needs installed into their Adobe CEP folder.
-PANEL_EXCLUDE = {"node_modules", "tests", "tools",
+# Development-only files that must never reach a user's machine. "dormant" is
+# code kept in the tree for work that is planned rather than abandoned (see
+# panel/dormant/README.md) -- nothing loads it, so shipping it would put dead
+# weight in every install.
+PANEL_EXCLUDE = {"node_modules", "tests", "dormant",
                  "package.json", "package-lock.json", ".DS_Store"}
 
 
@@ -84,7 +85,6 @@ REQUIRED_PANEL_FILES = (
     "jsx/capset.jsx", "jsx/json2.jsx",
     "js/vendor/CSInterface.js", "js/main.js",
     "capset.config.json",
-    "animations/animations.json",
 )
 
 
