@@ -12,6 +12,13 @@
 #
 #   DEVELOPER_ID_INSTALLER="Developer ID Installer: Name (TEAMID)"
 #   NOTARY_PROFILE="capset"      # from: xcrun notarytool store-credentials
+#
+# The speech model is bundled when CAPSET_MODEL_DIR points at a populated
+# directory (stage one with `python backend/capset_service.py --stage-model`).
+# Without it the package still builds, but the installed Capset downloads
+# ~600 MB on first use -- the dependency bundling exists to remove.
+#
+#   CAPSET_MODEL_DIR="$PWD/build/model"
 
 set -euo pipefail
 
@@ -23,10 +30,31 @@ ROOTDIR="$BUILD/pkgroot"
 DIST="$ROOT/dist"
 IDENTIFIER="design.hazrd.capset"
 
+# PyInstaller is not a cross-compiler and neither is it a universal builder:
+# it produces a binary for the interpreter it runs under, and onnxruntime
+# publishes macOS wheels for arm64 only (no x86_64, no universal2). So this
+# package is Apple Silicon only, and it says so in the distribution below
+# rather than installing on an Intel Mac and failing at launch.
+ARCH="$(uname -m)"
+case "$ARCH" in
+  arm64)  HOST_ARCHS="arm64" ;;
+  x86_64) HOST_ARCHS="x86_64" ;;
+  *) echo "unsupported build architecture: $ARCH" >&2; exit 1 ;;
+esac
+echo "==> Building for $HOST_ARCHS"
+
 echo "==> Staging payload"
-python3 "$ROOT/installer/build_payload.py" \
-  --backend-dist "$ROOT/backend/dist/capset-backend" \
+STAGE_ARGS=(
+  --backend-dist "$ROOT/backend/dist/capset-backend"
   --version "$VERSION"
+)
+if [ -n "${CAPSET_MODEL_DIR:-}" ]; then
+  STAGE_ARGS+=(--model-dir "$CAPSET_MODEL_DIR")
+else
+  echo "    NOTE: CAPSET_MODEL_DIR is not set, so no speech model is bundled."
+  echo "    The installed Capset will download it on first use."
+fi
+python3 "$ROOT/installer/build_payload.py" "${STAGE_ARGS[@]}"
 
 echo "==> Laying out install root"
 rm -rf "$ROOTDIR"
@@ -35,6 +63,11 @@ mkdir -p "$ROOTDIR/Library/Application Support/Capset"
 cp -R "$PAYLOAD/panel/." \
       "$ROOTDIR/Library/Application Support/Adobe/CEP/extensions/$IDENTIFIER/"
 cp -R "$PAYLOAD/backend/." "$ROOTDIR/Library/Application Support/Capset/"
+if [ -d "$PAYLOAD/model" ]; then
+  # app/config._bundled_model_dir() looks for "model" beside the executable.
+  echo "==> Bundling the speech model"
+  cp -R "$PAYLOAD/model" "$ROOTDIR/Library/Application Support/Capset/model"
+fi
 
 # Tell the panel where the backend is, so it can start the service on demand.
 # The install location is fixed on macOS, unlike Windows, but the panel reads
@@ -46,10 +79,23 @@ printf '%s' "/Library/Application Support/Capset/capset-backend" > \
 # not a warning, and not bypassable. Ad-hoc signing satisfies that and needs no
 # Apple account. This is separate from notarisation: skip notarisation and you
 # get a Gatekeeper prompt; skip this and the build simply does not run.
+#
+# Every Mach-O file, not just the ones with the executable bit: a PyInstaller
+# bundle is mostly .so and .dylib, the loader checks those too, and they are
+# not marked executable. Signing only what `find -perm -u+x` turns up leaves
+# the libraries unsigned and the backend dies on first import.
 echo "==> Ad-hoc signing binaries"
-find "$ROOTDIR/Library/Application Support/Capset" -type f -perm -u+x -print0 |
+find "$ROOTDIR/Library/Application Support/Capset" -type f \
+     \( -perm -u+x -o -name '*.so' -o -name '*.dylib' \) -print0 |
   while IFS= read -r -d '' bin; do
-    codesign --force --sign - "$bin" 2>/dev/null || true
+    # Skip anything that is not actually Mach-O (scripts, data files that
+    # happen to carry the executable bit).
+    if file -b "$bin" | grep -q 'Mach-O'; then
+      codesign --force --sign - --timestamp=none "$bin" || {
+        echo "::error::could not ad-hoc sign $bin" >&2
+        exit 1
+      }
+    fi
   done
 
 echo "==> Building component package"
@@ -80,7 +126,7 @@ cat > "$BUILD/distribution.xml" <<XML
 <installer-gui-script minSpecVersion="1">
     <title>Capset $VERSION</title>
     <organization>design.hazrd</organization>
-    <options customize="never" require-scripts="false" hostArchitectures="arm64,x86_64"/>
+    <options customize="never" require-scripts="false" hostArchitectures="$HOST_ARCHS"/>
     <license file="LICENSE.txt"/>
     <pkg-ref id="$IDENTIFIER"/>
     <choices-outline><line choice="default"><line choice="$IDENTIFIER"/></line></choices-outline>

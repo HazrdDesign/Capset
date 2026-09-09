@@ -517,8 +517,14 @@ as a later optimization if Mac users ever ask for it.
   recurring**.
 - No single tool builds both installers. Two pipelines: Inno Setup (Windows),
   `pkgbuild`/`productbuild` (macOS).
-- Ship universal (arm64 + x86_64) for now; arm64-only becomes reasonable once
-  Intel Mac support ends.
+- ~~Ship universal (arm64 + x86_64) for now~~ — **not available.** onnxruntime
+  publishes macOS wheels for `arm64` only: no `x86_64`, no `universal2`
+  (checked against PyPI at 1.29.0). PyInstaller builds for the interpreter it
+  runs under, so there is no universal binary to make without a second ASR
+  runtime for Intel. The macOS package is arm64-only and declares
+  `hostArchitectures="arm64"` so an Intel Mac is refused by the installer
+  rather than failing at launch, which is the difference between "not
+  supported" and "broken".
 
 ---
 
