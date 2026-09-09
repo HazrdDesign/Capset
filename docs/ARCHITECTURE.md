@@ -282,6 +282,46 @@ itself: below the action on 16:9, clear of platform UI on 9:16, clear of the
 frame edge on both. `style.positionY` still overrides it, because Sync Style
 sends a captured position and must not be fought.
 
+**Layer names are the caption text; the comment field is the identity.**
+Captions were named `Capset__cap_1`, `Capset__cap_2` — serial numbers on
+layers whose entire content is a line of prose, in a timeline where reading
+the transcript down the layer stack is exactly what a person wants. The name
+is now the caption's own text (newlines flattened to spaces, since a layer
+name is one line). Recognition moved to a tag written into each layer's
+`comment` (`CAPSET_TAG`), which is invisible unless the Comment column is
+shown and survives the user renaming a layer — which they can now reasonably
+do. `capsetIsCapsetLayer` still accepts the old name prefix, because every
+project already built has captions carrying it and nothing else.
+
+One consequence, worth naming because it is the sort of thing that bites
+later: layer names are no longer unique. Two captions reading "Yeah." share a
+name, so anything keyed by name had to move to the layer index —
+`capsetCaptionLayerTimes`/`capsetReplaceAnimation`, and the selection that
+Sync Style borrows and puts back.
+
+**The controller rig works in the parent's coordinate space.** "Parent to
+Controller" parents every caption to a null carrying Font Size, Baseline %
+and Fill Colour, and drives Position by expression. That expression computed
+`[thisComp.width / 2, thisComp.height * baseline / 100]` — a point in **comp**
+space — and assigned it to a property that, once the layer is parented, is
+measured in the **parent's** space. `addNull()` leaves the null's anchor at
+its top-left corner with the null itself at the comp centre, so every caption
+was drawn half a comp width right and half a comp height down of where it
+belonged: off the bottom-right corner, on every comp, whenever the option was
+ticked. `parent.fromComp()` does the conversion, guarded on `hasParent` so
+the expression stays correct on a layer the user later unparents.
+
+The rig's "Baseline %" slider also defaulted to 82 while layers were built at
+85, so merely parenting them nudged every caption up by 3% of the comp.
+Both now read one `CAPSET_BASELINE` constant.
+
+`panel/tests/jsx-behaviour.test.js` **evaluates** these expressions rather
+than pattern-matching them — an AE expression's result is the completion
+value of its last statement, which is what JavaScript's `eval` returns, so
+the shipped text runs in the test with a mocked comp and null. Reading the
+expression for keywords would never have caught a right number in the wrong
+coordinate space.
+
 **Two pacing modes are offered, not seven.** `segmentation.js` implements
 fixed-count (one/two/three), rhythm (phrase/smart/parts) and sentence modes,
 and they all still resolve — a project saved by an older version can name one.
@@ -299,6 +339,32 @@ whole music tail — and the phrase grouper, seeing a caption whose span blew
 the duration budget, closed the caption before it and left it alone. The
 chunk's duration is an upper bound on that token, not a measurement of it;
 `_MAX_FINAL_TOKEN_S` now caps it.
+
+---
+
+## 4b. SRT export
+
+**Decision: export from the timeline, not from the transcript, and write
+beside the project file.**
+
+The captions the user wants in an SRT are the ones on their timeline, which
+by then may differ from what came back from the model: a retimed layer, a
+fixed typo, a deleted caption. Exporting a remembered transcript would
+quietly disagree with what they can see, so `capsetCaptionsForExport` reads
+the caption layers themselves, descending into a Capset precomp and shifting
+its times by the precomp layer's `startTime`.
+
+Formatting lives in `panel/js/lib/srt.js` beside the parser, not in
+ExtendScript: timecode arithmetic is worth testing, and After Effects is the
+hardest place to run a test. The host reads the layers and writes the file;
+the panel turns one into the other. Milliseconds are **rounded** — AE reports
+times derived from frames, so an in-point at exactly 2s arrives as
+1.9999999999999998 and a truncating formatter writes 00:00:01,999.
+
+The file goes in a `Capset SRT` folder beside the saved project. It needs no
+dialog, and it is the one folder the user already thinks of as this job's.
+An unsaved project has no such folder; that is refused with the reason rather
+than falling back to somewhere they will never look.
 
 ---
 

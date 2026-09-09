@@ -95,3 +95,73 @@ test("millisecond precision is interpreted by digit count", () => {
   assert.strictEqual(out.captions[0].start, 1.5);
   assert.strictEqual(out.captions[0].end, 2.5);
 });
+
+// --- writing ----------------------------------------------------------------
+
+test("timecodes round to the nearest millisecond, not down", () => {
+  // After Effects reports times derived from frames, so an in-point on frame
+  // 60 at 30fps arrives as 1.9999999999999998. Truncating writes 00:00:01,999
+  // for a caption that starts at exactly two seconds.
+  assert.strictEqual(srt.toTimecode(1.9999999999999998), "00:00:02,000");
+  assert.strictEqual(srt.toTimecode(0.0333333333333333), "00:00:00,033");
+  assert.strictEqual(srt.toTimecode(0), "00:00:00,000");
+  assert.strictEqual(srt.toTimecode(3661.5), "01:01:01,500");
+  // Negative times cannot be expressed in SRT and are clamped, not wrapped
+  // into an hour of 59:59.
+  assert.strictEqual(srt.toTimecode(-1), "00:00:00,000");
+});
+
+test("cues are numbered from one in time order", () => {
+  // Layer order in After Effects is not caption order, and a player reading a
+  // file whose cues run backwards shows nothing at all.
+  const text = srt.format([
+    { text: "third", start: 5, end: 6 },
+    { text: "first", start: 0, end: 1 },
+    { text: "second", start: 2, end: 3 }
+  ]);
+  const numbers = text.split("\r\n").filter((l) => /^\d+$/.test(l));
+  assert.deepStrictEqual(numbers, ["1", "2", "3"]);
+  assert.ok(text.indexOf("first") < text.indexOf("second"));
+  assert.ok(text.indexOf("second") < text.indexOf("third"));
+});
+
+test("multi-line captions keep their line breaks", () => {
+  const text = srt.format([{ lines: ["two", "lines"], start: 0, end: 1 }]);
+  assert.ok(text.includes("two\r\nlines"), text);
+});
+
+test("a caption with no duration still produces a valid cue", () => {
+  // A zero-length cue is invalid SRT; dropping it would silently lose a
+  // caption the user can see on their timeline.
+  const text = srt.format([{ text: "blink", start: 1, end: 1 }]);
+  assert.ok(/00:00:01,000 --> 00:00:01,001/.test(text), text);
+});
+
+test("captions with no text are skipped without breaking the numbering", () => {
+  const text = srt.format([
+    { text: "one", start: 0, end: 1 },
+    { text: "   ", start: 1, end: 2 },
+    { text: "two", start: 2, end: 3 }
+  ]);
+  assert.deepStrictEqual(text.split("\r\n").filter((l) => /^\d+$/.test(l)), ["1", "2"]);
+});
+
+test("what we write, we can read back", () => {
+  // The two halves of this module have to agree, and a round trip is the only
+  // check that proves it.
+  const captions = [
+    { lines: ["Hi everyone."], start: 0.0333333, end: 1.9999999 },
+    { lines: ["Welcome back", "to the channel."], start: 2, end: 4.5 }
+  ];
+  const parsed = srt.parse(srt.format(captions)).captions;
+  assert.strictEqual(parsed.length, 2);
+  assert.deepStrictEqual(parsed.map((c) => c.lines), [
+    ["Hi everyone."], ["Welcome back", "to the channel."]
+  ]);
+  assert.deepStrictEqual(parsed.map((c) => [c.start, c.end]), [[0.033, 2], [2, 4.5]]);
+});
+
+test("an empty caption list is an empty file, not a broken one", () => {
+  assert.strictEqual(srt.format([]), "");
+  assert.strictEqual(srt.format(null), "");
+});

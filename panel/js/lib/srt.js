@@ -1,5 +1,5 @@
 /**
- * SRT / WebVTT subtitle parsing.
+ * SRT / WebVTT subtitle parsing, and SRT writing.
  *
  * Lets people bring timings from elsewhere instead of transcribing: a
  * corrected transcript, another tool's output, or a translation. Output
@@ -96,7 +96,86 @@
     return { captions: captions, errors: errors };
   }
 
-  var api = { parse: parse, toSeconds: toSeconds };
+  function pad(value, width) {
+    var text = String(Math.floor(value));
+    while (text.length < width) text = "0" + text;
+    return text;
+  }
+
+  /**
+   * Seconds to an SRT timecode: 00:00:01,500.
+   *
+   * Milliseconds are ROUNDED, not truncated. After Effects gives times in
+   * seconds derived from frames, so 1/30th of a second arrives as
+   * 0.03333333333333333 and a truncating formatter turns a caption starting
+   * on frame 1 into 00:00:00,033 -- which is correct, and then turns one
+   * ending at exactly 2.0 seconds, held as 1.9999999999999998, into
+   * 00:00:01,999. Rounding puts both where the frame actually is.
+   */
+  function toTimecode(seconds) {
+    var total = Math.max(0, Number(seconds) || 0);
+    var millis = Math.round(total * 1000);
+    var hours = Math.floor(millis / 3600000);
+    millis -= hours * 3600000;
+    var minutes = Math.floor(millis / 60000);
+    millis -= minutes * 60000;
+    var secs = Math.floor(millis / 1000);
+    millis -= secs * 1000;
+    return pad(hours, 2) + ":" + pad(minutes, 2) + ":" + pad(secs, 2) +
+           "," + pad(millis, 3);
+  }
+
+  /**
+   * Render captions as SRT.
+   *
+   * Cues are numbered from 1 in time order, whatever order they arrive in --
+   * layer order in After Effects is not caption order, and a player reading a
+   * file whose cues run backwards shows nothing at all.
+   *
+   * A cue whose end is not after its start is given one millisecond, because
+   * a zero-length cue is invalid SRT and dropping it would silently lose a
+   * caption the user can see on their timeline.
+   *
+   * @param {Array} captions {text|lines, start, end} in seconds
+   * @returns {string} SRT text, CRLF-terminated as the format specifies
+   */
+  function format(captions) {
+    var list = (captions || []).slice().sort(function (a, b) {
+      return (a.start - b.start) || (a.end - b.end);
+    });
+
+    var blocks = [];
+    for (var i = 0; i < list.length; i++) {
+      var caption = list[i];
+      var body = caption.lines && caption.lines.length
+        ? caption.lines.join("\n")
+        : String(caption.text === undefined || caption.text === null
+            ? "" : caption.text);
+      body = body.replace(/\r\n?/g, "\n").replace(/^\s+|\s+$/g, "");
+      if (!body) continue;
+
+      var start = Math.max(0, Number(caption.start) || 0);
+      var end = Number(caption.end);
+      if (!(end > start)) end = start + 0.001;
+
+      blocks.push(
+        (blocks.length + 1) + "\n" +
+        toTimecode(start) + " --> " + toTimecode(end) + "\n" +
+        body + "\n"
+      );
+    }
+
+    // CRLF throughout: the SRT convention, and what every editor that ingests
+    // one expects. Written last so the logic above stays readable.
+    return blocks.join("\n").replace(/\n/g, "\r\n");
+  }
+
+  var api = {
+    parse: parse,
+    format: format,
+    toSeconds: toSeconds,
+    toTimecode: toTimecode
+  };
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

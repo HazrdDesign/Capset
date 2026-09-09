@@ -22,6 +22,27 @@
 var CAPSET_PREFIX = "Capset__";
 var CAPSET_CONTROLLER = "Capset Controller";
 
+// Written into every caption layer's comment field, and the primary way a
+// Capset layer is recognised.
+//
+// The name used to carry that job (Capset__cap_1, Capset__cap_2...), which
+// meant the timeline read like a list of serial numbers when it could have
+// read like the transcript. The comment is invisible unless you turn the
+// Comment column on, survives a rename, and leaves the name free to say what
+// the caption actually says.
+var CAPSET_TAG = "Capset caption";
+
+// Exported subtitles go in a folder of their own beside the project file, so
+// an export never drops a loose file into someone's project directory.
+var CAPSET_SRT_FOLDER = "Capset SRT";
+
+// Where a caption sits vertically, as a fraction of comp height: the subtitle
+// band on 16:9 and 9:16 alike. One constant, because the controller rig's
+// "Baseline %" slider must start where the layers already are -- it defaulted
+// to 82 while the layers were built at 85, so merely parenting them to the
+// controller nudged every caption up.
+var CAPSET_BASELINE = 0.85;
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
@@ -239,7 +260,6 @@ function capsetStyleText(layer, style, comp) {
     // clear of the platform UI that crowds the bottom of a 9:16 one, and
     // clear of the frame edge on both. Anyone wanting it elsewhere moves the
     // layers, or restyles one and pushes it with the Update tab.
-    var CAPSET_BASELINE = 0.85;
     var baseline = CAPSET_BASELINE;
     if (style.positionY !== undefined && style.positionY !== null) {
         baseline = style.positionY;
@@ -965,7 +985,9 @@ function capsetEnsureController(comp, style) {
     var baseline = effects.addProperty("ADBE Slider Control");
     baseline.name = "Baseline %";
     baseline.property("ADBE Slider Control-0001").setValue(
-        style && style.positionY !== undefined ? style.positionY * 100 : 82
+        style && style.positionY !== undefined
+            ? style.positionY * 100
+            : CAPSET_BASELINE * 100
     );
 
     var fill = effects.addProperty("ADBE Color Control");
@@ -986,10 +1008,30 @@ function capsetEnsureController(comp, style) {
  */
 function capsetLinkToController(layer, useJsEngine) {
     var position = layer.property("Transform").property("Position");
+    // Position is measured in the PARENT'S space once a layer is parented,
+    // and this expression computes a point in COMP space. Handing one to the
+    // other is what put every caption off the bottom-right of the frame with
+    // "Parent to Controller" ticked: addNull() leaves the null's anchor at
+    // its top-left corner with the null itself at the comp centre, so a
+    // caption computed at (w/2, h*0.85) was drawn that far DOWN AND RIGHT of
+    // the centre -- out of frame by half a comp in each axis, every time.
+    //
+    // fromComp does the conversion. Guarded on hasParent so the same
+    // expression is correct on a layer the user later unparents, and wrapped
+    // in try/catch because an expression that errors disables itself and
+    // leaves a red layer -- much worse than falling back to the layer's own
+    // value.
     position.expression =
         'var c = thisComp.layer("' + CAPSET_CONTROLLER + '");\r' +
         'try {\r' +
-        '  [thisComp.width / 2, thisComp.height * c.effect("Baseline %")("Slider") / 100];\r' +
+        '  var p = [thisComp.width / 2,\r' +
+        '           thisComp.height * c.effect("Baseline %")("Slider") / 100];\r' +
+        '  if (hasParent) {\r' +
+        '    var q = parent.fromComp(p);\r' +
+        '    [q[0], q[1]];\r' +
+        '  } else {\r' +
+        '    p;\r' +
+        '  }\r' +
         '} catch (err) { value; }';
 
     if (!useJsEngine) return false;
@@ -1150,22 +1192,27 @@ function capsetDeselectAll(comp) {
     }
 }
 
+/**
+ * Remember which layers are selected, by index rather than by name.
+ *
+ * Caption layers are named after what they say, so two captions of "Yeah."
+ * carry the same name -- and restoring a selection by name would select both
+ * when the user had one. Indices are unique for as long as the selection is
+ * held, which is within a single host call that adds and removes no layers.
+ */
 function capsetSelectionNames(comp) {
-    var names = [];
+    var indices = [];
     var selected = comp.selectedLayers;
-    for (var i = 0; i < selected.length; i++) names.push(selected[i].name);
-    return names;
+    for (var i = 0; i < selected.length; i++) indices.push(selected[i].index);
+    return indices;
 }
 
-function capsetRestoreSelection(comp, names) {
+function capsetRestoreSelection(comp, indices) {
     capsetDeselectAll(comp);
-    for (var i = 1; i <= comp.numLayers; i++) {
-        var layer = comp.layer(i);
-        for (var j = 0; j < names.length; j++) {
-            if (layer.name === names[j]) {
-                try { layer.selected = true; } catch (e) {}
-                break;
-            }
+    for (var j = 0; j < indices.length; j++) {
+        var index = indices[j];
+        if (index >= 1 && index <= comp.numLayers) {
+            try { comp.layer(index).selected = true; } catch (e) {}
         }
     }
 }
@@ -1296,6 +1343,144 @@ function capsetSyncStyle(payloadJson) {
 }
 
 /** Remove every Capset caption layer, so a rebuild replaces rather than stacks. */
+// ---------------------------------------------------------------------------
+// SRT export
+//
+// Reads the captions off the TIMELINE rather than remembering what was
+// transcribed. Everything the user has done since -- retimed a layer, fixed a
+// typo, deleted a caption -- is in the file that comes out, which is the
+// whole point of exporting from a project rather than from a transcript.
+// ---------------------------------------------------------------------------
+
+/** A caption layer's text, as one string. Null if it has none. */
+function capsetLayerText(layer) {
+    try {
+        var prop = layer.property("Source Text");
+        if (!prop) return null;
+        var doc = prop.value;
+        if (!doc) return null;
+        var text = doc.text;
+        return (text === undefined || text === null) ? null : String(text);
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
+ * Collect caption layers from a comp, descending into a Capset precomp.
+ *
+ * `offset` shifts an inner comp's times into the outer comp's timeline: a
+ * precomposed caption at 2s inside a precomp that starts at 10s is at 12s in
+ * the comp the user is looking at, and an SRT that said 2s would be wrong for
+ * every caption in the file.
+ */
+function capsetCollectCaptions(comp, offset, out) {
+    for (var i = 1; i <= comp.numLayers; i++) {
+        var layer = comp.layer(i);
+        if (!capsetIsCapsetLayer(layer) || layer.name === CAPSET_CONTROLLER) continue;
+
+        var source = null;
+        try {
+            if (layer.source && layer.source instanceof CompItem) source = layer.source;
+        } catch (e) {}
+        if (source) {
+            capsetCollectCaptions(source, offset + layer.startTime, out);
+            continue;
+        }
+
+        var text = capsetLayerText(layer);
+        if (text === null || !capsetTrim(text).length) continue;
+
+        out.push({
+            text: capsetTrim(text.replace(/[\r\n]+/g, " ")),
+            lines: text.split(/[\r\n]+/),
+            start: layer.inPoint + offset,
+            end: layer.outPoint + offset
+        });
+    }
+    return out;
+}
+
+/**
+ * @returns {captions, comp} — captions carry seconds, for js/lib/srt.js to
+ *          format. The timecode maths lives there, tested, rather than being
+ *          written a second time in ExtendScript.
+ */
+function capsetCaptionsForExport() {
+    try {
+        var comp = capsetActiveComp();
+        var captions = capsetCollectCaptions(comp, 0, []);
+        if (!captions.length) {
+            throw new Error(
+                "No Capset captions in \"" + comp.name + "\". Add captions " +
+                "before exporting an SRT."
+            );
+        }
+        return capsetOk({ comp: comp.name, captions: captions });
+    } catch (e) {
+        return capsetErr(e.message);
+    }
+}
+
+/** Strip what a filesystem will not take, so a caption comp name is safe. */
+function capsetSafeFileName(name) {
+    // The / is escaped inside the class on purpose: ExtendScript's regex
+    // scanner reads \\ followed by a bare / as the end of the literal and
+    // corrupts the rest of the file. panel/tests/jsx.test.js guards this.
+    var safe = capsetTrim(String(name || "captions").replace(/[\\\/:*?"<>|\r\n]+/g, "-"));
+    // Windows also rejects a trailing dot or space on a file name.
+    safe = safe.replace(/[. ]+$/, "");
+    return safe.length ? safe : "captions";
+}
+
+/**
+ * Write the SRT beside the project file, in a "Capset SRT" folder.
+ *
+ * Beside the project rather than anywhere else because that is the one
+ * location the user already thinks of as this job's folder, and it needs no
+ * dialog. An unsaved project has no such location, which is a thing the user
+ * can fix in one keystroke -- so say that rather than falling back to
+ * somewhere they will never find it.
+ */
+function capsetWriteSrt(payloadJson) {
+    try {
+        var payload = JSON.parse(payloadJson || "{}");
+        var text = payload.text || "";
+        if (!capsetTrim(text).length) throw new Error("Nothing to write.");
+
+        var projectFile = app.project ? app.project.file : null;
+        if (!projectFile) {
+            throw new Error(
+                "Save the After Effects project first — Capset writes the SRT " +
+                "next to it, and an unsaved project has nowhere to be next to."
+            );
+        }
+
+        var folder = new Folder(projectFile.parent.fsName + "/" + CAPSET_SRT_FOLDER);
+        if (!folder.exists && !folder.create()) {
+            throw new Error("Could not create " + folder.fsName);
+        }
+
+        var file = new File(folder.fsName + "/" + capsetSafeFileName(payload.name) + ".srt");
+        // UTF-8, so accented characters and non-Latin scripts survive the
+        // round trip into whatever the user opens the file with. Set before
+        // open(), which is when ExtendScript reads it.
+        file.encoding = "UTF-8";
+        if (!file.open("w")) throw new Error("Could not open " + file.fsName + " for writing.");
+        var wrote = false;
+        try {
+            wrote = file.write(text);
+        } finally {
+            file.close();
+        }
+        if (!wrote) throw new Error("Could not write " + file.fsName);
+
+        return capsetOk({ path: file.fsName, folder: folder.fsName });
+    } catch (e) {
+        return capsetErr(e.message);
+    }
+}
+
 function capsetClearCaptions(payloadJson) {
     var undoOpen = false;
     try {
@@ -1396,7 +1581,9 @@ function capsetBuildCaptions(payloadJson) {
             if (!text || !capsetTrim(text).length) continue;
 
             var layer = comp.layers.addText(text);
-            layer.name = CAPSET_PREFIX + "cap_" + (i + 1);
+            layer.name = capsetLayerName(text);
+            // The tag, not the name, is what makes this a Capset layer.
+            try { layer.comment = CAPSET_TAG; } catch (e) {}
 
             var inPoint = capsetSnap(comp, offset + caption.start);
             var outPoint = capsetSnap(comp, offset + caption.end);
@@ -1474,7 +1661,35 @@ function capsetBuildCaptions(payloadJson) {
 // ---------------------------------------------------------------------------
 
 function capsetIsCapsetLayer(layer) {
-    return layer && layer.name && layer.name.indexOf(CAPSET_PREFIX) === 0;
+    if (!layer) return false;
+    // The tag first: it is what layers built by this version carry, and it
+    // survives the user renaming a layer -- which they can now reasonably do,
+    // because the name is prose rather than an identifier.
+    try {
+        if (layer.comment === CAPSET_TAG) return true;
+    } catch (e) {}
+    // The name second, for captions built before the tag existed. Dropping
+    // this would orphan every caption in every project already out there:
+    // Sync Style would stop finding them and a rebuild would stack a second
+    // set on top of the first.
+    return !!(layer.name && layer.name.indexOf(CAPSET_PREFIX) === 0);
+}
+
+/**
+ * The layer name for a caption: what the caption says.
+ *
+ * Newlines become spaces because a layer name is one line -- a two-line
+ * caption whose name contained a carriage return would render as a control
+ * character in the timeline. Nothing else is altered: the point is to read
+ * the transcript down the timeline, so a truncated or decorated name would
+ * defeat it.
+ */
+function capsetLayerName(text) {
+    var name = capsetTrim(String(text === undefined || text === null ? "" : text)
+        .replace(/[\r\n]+/g, " "));
+    // A caption with no text does not reach here (capsetBuildCaptions skips
+    // it), but a name must never be empty: After Effects rejects that.
+    return name || (CAPSET_PREFIX + "caption");
 }
 
 /**
@@ -1503,6 +1718,11 @@ function capsetCaptionLayerTimes(scopeJson) {
                 var candidate = comp.layer(i);
                 if (candidate instanceof TextLayer && capsetIsCapsetLayer(candidate)) {
                     out.push({
+                        // Keyed by index, not name: caption layers are named
+                        // after their text, so two captions reading "Yeah."
+                        // would share a key and one would take the other's
+                        // timings.
+                        id: candidate.index,
                         name: candidate.name,
                         duration: candidate.outPoint - candidate.inPoint
                     });
@@ -1513,6 +1733,7 @@ function capsetCaptionLayerTimes(scopeJson) {
             for (i = 0; i < selected.length; i++) {
                 if (selected[i] instanceof TextLayer) {
                     out.push({
+                        id: selected[i].index,
                         name: selected[i].name,
                         duration: selected[i].outPoint - selected[i].inPoint
                     });
@@ -1565,7 +1786,7 @@ function capsetReplaceAnimation(payloadJson) {
         var changed = 0;
         for (i = 0; i < targets.length; i++) {
             var layer = targets[i];
-            var timings = timingsById[layer.name];
+            var timings = timingsById[layer.index];
             if (!timings) {
                 // No precomputed timing (e.g. a hand-made layer): fall back to
                 // the layer's own duration with the default fractions. Kept

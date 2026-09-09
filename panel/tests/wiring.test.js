@@ -109,6 +109,21 @@ test("the button that deletes captions reads as destructive", () => {
   assert.ok(/var\(--err/.test(rule), "the danger button is not coloured by --err");
 });
 
+test("SRT export formats with the tested module, not in ExtendScript", () => {
+  // Timecode arithmetic is worth testing, and ExtendScript is where tests are
+  // hardest to run. The host reads the layers and writes the file; the
+  // formatting happens here, where srt.test.js can reach it.
+  const src = functionBody("exportSrt");
+  assert.ok(/srt\.format\(/.test(src), "exportSrt does not use the SRT module");
+  assert.ok(/capsetCaptionsForExport/.test(src),
+            "exportSrt does not read the captions off the timeline");
+  assert.ok(/capsetWriteSrt/.test(src), "exportSrt never asks the host to write");
+
+  const jsx = fs.readFileSync(path.join(ROOT, "jsx", "capset.jsx"), "utf8");
+  assert.ok(!/-->/.test(jsx),
+            "the host script is formatting SRT cues itself; that belongs in js/lib/srt.js");
+});
+
 test("nothing dormant is loaded by the panel", () => {
   // The Animate tab was removed, not left hidden: a tab that ships but never
   // appears is dead weight in every install, and its libraries would still be

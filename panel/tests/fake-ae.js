@@ -188,6 +188,14 @@ class Layer {
     this.name = name;
     this.inPoint = 0;
     this.outPoint = comp ? comp.duration : 0;
+    // Real layers carry a comment, and Capset uses it to mark its own
+    // captions -- so a fake without one would make every capsetIsCapsetLayer
+    // test pass through the legacy name check instead of the live path.
+    this.comment = "";
+    // Where the layer's source time zero sits in this comp. Only a precomp
+    // layer normally moves it, and it is what shifts precomposed captions
+    // into the timeline the user is looking at.
+    this.startTime = 0;
     this.enabled = true;
     this.solo = false;
     this.selected = false;
@@ -400,6 +408,16 @@ class RenderQueue {
  */
 const writtenFiles = new Map();
 
+/** Text written through File.open("w") / write / close, by path. */
+const writtenText = new Map();
+
+/**
+ * Folders that exist. The project's own folder is always there; anything else
+ * has to be created, which is what makes "the export creates Capset SRT"
+ * testable rather than assumed.
+ */
+const existingFolders = new Set();
+
 /** A plausible size for a few seconds of uncompressed PCM. */
 const DEFAULT_RENDERED_BYTES = 1764044;
 
@@ -455,6 +473,9 @@ function reset(options = {}) {
     options.duration || 30, options.frameRate || 30
   );
   writtenFiles.clear();
+  writtenText.clear();
+  existingFolders.clear();
+  existingFolders.add("/projects");
   project = {
     items: [comp],
     activeItem: comp,
@@ -463,6 +484,12 @@ function reset(options = {}) {
       renderedBytes: options.renderedBytes
     }),
     expressionEngine: options.expressionEngine || "javascript-1.0",
+    // A saved project has a file; an unsaved one has null, which is the
+    // branch the SRT export has to refuse politely rather than crash on.
+    // `undefined` in options means "saved, in the default place".
+    file: options.projectFile === undefined
+      ? { fsName: "/projects/Demo.aep", parent: { fsName: "/projects" } }
+      : options.projectFile,
     numItems: 1,
     item(i) { return project.items[i - 1]; }
   };
@@ -472,7 +499,7 @@ function reset(options = {}) {
 }
 
 module.exports = {
-  reset, app, commandLog, writtenFiles,
+  reset, app, commandLog, writtenFiles, writtenText, existingFolders,
   RenderQueue, RenderQueueItem, OutputModule, DEFAULT_TEMPLATES,
   get project() { return project; },
   CompItem, TextLayer, AVLayer, ShapeLayer, Layer,

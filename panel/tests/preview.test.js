@@ -264,7 +264,8 @@ test("the preview's spring matches the host's spring keys", () => {
 
   const layers = [];
   for (let i = 1; i <= h.comp.numLayers; i++) layers.push(h.comp.layer(i));
-  const cap = layers.find((l) => /^Capset__cap/.test(l.name));
+  // Found by the tag, not the name: caption layers are named after their text.
+  const cap = layers.find((l) => l.comment === "Capset caption");
   const animators = cap.property("ADBE Text Properties").property("ADBE Text Animators");
   let animator = null;
   for (let i = 1; i <= animators.numProperties; i++) {

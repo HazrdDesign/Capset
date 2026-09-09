@@ -20,8 +20,13 @@ const names = (comp) => comp.layers._layers.map((l) => l.name);
 // Arrays built inside the sandbox have that realm's Array prototype, so
 // deepStrictEqual rejects them on identity alone. Copy before comparing.
 const plain = (arr) => Array.prototype.slice.call(arr);
+// Caption layers are found the way the host script finds them: by the tag in
+// the comment field. Filtering on a name prefix would be testing an
+// implementation detail that no longer exists — the name is the caption's
+// text now, and a user is free to change it.
+const CAPSET_TAG = "Capset caption";
 const captionLayers = (comp) =>
-  comp.layers._layers.filter((l) => l.name.indexOf("Capset__cap") === 0);
+  comp.layers._layers.filter((l) => l.comment === CAPSET_TAG);
 
 // --- building ---------------------------------------------------------------
 
@@ -105,6 +110,253 @@ test("an explicit positionY still wins, because Sync Style sends one", () => {
   const y = captionLayers(h.comp)[0]
     .property("Transform").property("Position").value[1];
   assert.strictEqual(y, h.comp.height * 0.5);
+});
+
+test("a caption layer is named after what it says", () => {
+  // The timeline should read like the transcript. It used to read
+  // Capset__cap_1, Capset__cap_2, Capset__cap_3 — serial numbers for layers
+  // whose whole content is a line of text.
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: [
+      { text: "Hi everyone.", start: 0, end: 1 },
+      { lines: ["Welcome back to", "the channel."], start: 1, end: 2.5 }
+    ],
+    style: {}, options: {}
+  });
+
+  const layers = captionLayers(h.comp).sort((a, b) => a.inPoint - b.inPoint);
+  assert.strictEqual(layers[0].name, "Hi everyone.");
+  // A layer name is one line: the carriage return that separates the lines in
+  // the text itself would render as a control character in the timeline.
+  assert.strictEqual(layers[1].name, "Welcome back to the channel.");
+});
+
+test("a caption layer is recognised by its tag, not its name", () => {
+  // The name is prose now, so a user can rename a layer without Capset losing
+  // track of it — Sync Style must still find it, and a rebuild must still
+  // replace it rather than stacking a second set on top.
+  const h = load();
+  h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+
+  const renamed = captionLayers(h.comp)[0];
+  renamed.name = "my favourite line";
+
+  const second = h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+  assert.strictEqual(second.replaced, 3, "a renamed caption was not recognised");
+  assert.strictEqual(captionLayers(h.comp).length, 3);
+});
+
+test("captions built before the tag existed are still recognised", () => {
+  // Every project already out there names its captions Capset__cap_N and has
+  // no comment on them. Dropping the name check would orphan all of them.
+  const h = load();
+  h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+  captionLayers(h.comp).forEach((layer, i) => {
+    layer.comment = "";
+    layer.name = "Capset__cap_" + (i + 1);
+  });
+
+  const second = h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+  assert.strictEqual(second.replaced, 3, "legacy caption layers were orphaned");
+});
+
+// --- the controller rig -----------------------------------------------------
+
+/**
+ * Evaluate an After Effects expression and return its value.
+ *
+ * An expression's result is the completion value of its last statement, which
+ * is exactly what JavaScript's `eval` returns — so the real expression text
+ * runs here, branches and all, rather than being pattern-matched. That
+ * matters: this expression shipped computing the right number in the wrong
+ * coordinate space, and no amount of reading it for keywords would have
+ * caught that.
+ */
+function evaluateExpression(expression, scope) {
+  return Function(
+    "thisComp", "hasParent", "parent", "value",
+    "return eval(" + JSON.stringify(expression) + ");"
+  )(scope.thisComp, scope.hasParent, scope.parent, scope.value);
+}
+
+/** A null as addNull() makes one: anchor at its top-left, sitting at centre. */
+function centredNull(comp, baselinePercent) {
+  const position = [comp.width / 2, comp.height / 2];
+  return {
+    position: position,
+    effect: () => () => baselinePercent,
+    // Comp space to this layer's space. With the anchor at [0,0] that is a
+    // straight subtraction of where the null sits.
+    fromComp: (p) => [p[0] - position[0], p[1] - position[1]]
+  };
+}
+
+test("a caption parented to the controller stays in frame", () => {
+  // It did not. Position is measured in the PARENT'S space once a layer is
+  // parented, and the expression computed a point in COMP space — so every
+  // caption was drawn half a comp width right and half a comp height down of
+  // where it belonged, which on any comp is off the bottom-right corner.
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+
+  const layer = captionLayers(h.comp)[0];
+  const expression = layer.property("Transform").property("Position").expression;
+  assert.ok(expression, "no position expression was written");
+
+  const comp = { width: h.comp.width, height: h.comp.height, layer: () => null };
+  const controller = centredNull(h.comp, 85);
+  comp.layer = () => controller;
+
+  const local = evaluateExpression(expression, {
+    thisComp: comp, hasParent: true, parent: controller, value: [0, 0]
+  });
+  // Parented: the layer's world position is the null's plus its own.
+  const world = [local[0] + controller.position[0], local[1] + controller.position[1]];
+
+  assert.deepStrictEqual(world, [comp.width / 2, comp.height * 0.85]);
+  assert.ok(world[0] < comp.width && world[1] < comp.height,
+            "the caption is outside the composition at " + world);
+});
+
+test("the same expression is still correct on an unparented layer", () => {
+  // Someone will unparent a caption from the controller. The expression stays
+  // on the layer when they do, and must not then subtract a null that is no
+  // longer above it.
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+  const expression = captionLayers(h.comp)[0]
+    .property("Transform").property("Position").expression;
+
+  const comp = { width: 1080, height: 1920, layer: () => null };
+  const controller = centredNull(comp, 85);
+  comp.layer = () => controller;
+
+  const world = evaluateExpression(expression, {
+    thisComp: comp, hasParent: false, parent: null, value: [0, 0]
+  });
+  assert.deepStrictEqual(world, [540, 1632]);
+});
+
+test("the controller's baseline slider starts where the captions already are", () => {
+  // The slider defaulted to 82 while layers were built at 85, so ticking
+  // Parent to Controller shifted every caption up by 3% of the comp for no
+  // reason the user asked for.
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+  const controller = h.comp.layers._layers.find((l) => l.name === "Capset Controller");
+  assert.ok(controller, "no controller was created");
+
+  const slider = controller.property("ADBE Effect Parade")
+    .property("Baseline %").property("ADBE Slider Control-0001").value;
+
+  const unparented = load();
+  unparented.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+  const y = captionLayers(unparented.comp)[0]
+    .property("Transform").property("Position").value[1];
+
+  assert.strictEqual(slider / 100, y / unparented.comp.height);
+});
+
+test("a captured baseline still drives the controller", () => {
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: { positionY: 0.6 }, options: { parentToController: true }
+  });
+  const controller = h.comp.layers._layers.find((l) => l.name === "Capset Controller");
+  const slider = controller.property("ADBE Effect Parade")
+    .property("Baseline %").property("ADBE Slider Control-0001").value;
+  assert.strictEqual(slider, 60);
+});
+
+// --- SRT export -------------------------------------------------------------
+
+test("export reads the captions off the timeline", () => {
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: [
+      { text: "Second.", start: 2, end: 3 },
+      { text: "First.", start: 0, end: 1 }
+    ],
+    style: {}, options: {}
+  });
+
+  const data = h.call("capsetCaptionsForExport");
+  assert.strictEqual(data.comp, h.comp.name);
+  const texts = plain(data.captions).map((c) => c.text).sort();
+  assert.deepStrictEqual(texts, ["First.", "Second."]);
+});
+
+test("export reflects a caption the user retimed or retyped", () => {
+  // The reason it reads the timeline rather than remembering the transcript.
+  const h = load();
+  h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+
+  const layer = captionLayers(h.comp).sort((a, b) => a.inPoint - b.inPoint)[0];
+  layer.outPoint = 9;
+  const prop = layer.property("Source Text");
+  const doc = prop.value;
+  doc.text = "corrected text";
+  prop.setValue(doc);
+
+  const captions = plain(h.call("capsetCaptionsForExport").captions);
+  const edited = captions.filter((c) => c.text === "corrected text");
+  assert.strictEqual(edited.length, 1, "the edit did not reach the export");
+  assert.strictEqual(edited[0].end, 9);
+});
+
+test("export descends into precomposed captions and shifts their times", () => {
+  // Precompose is an option on the Insert tab, and inside a precomp a caption
+  // at 2s may sit anywhere in the outer comp. An SRT that reported the inner
+  // time would be wrong for every caption in the file.
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { precompose: true }
+  });
+  const precomp = h.comp.layers._layers.find((l) => l.source);
+  assert.ok(precomp, "nothing was precomposed");
+  precomp.startTime = 10;
+
+  const captions = plain(h.call("capsetCaptionsForExport").captions)
+    .sort((a, b) => a.start - b.start);
+  assert.deepStrictEqual(
+    captions.map((c) => +c.start.toFixed(3)),
+    [10, 11.2, 12.5]
+  );
+});
+
+test("exporting with no captions says so rather than writing an empty file", () => {
+  const h = load();
+  assert.throws(() => h.call("capsetCaptionsForExport"), /No Capset captions/);
+});
+
+test("the SRT lands in a Capset SRT folder beside the project", () => {
+  const h = load();
+  const result = h.call("capsetWriteSrt", { text: "1\r\n...\r\n", name: "Comp 1" });
+  assert.strictEqual(result.path, "/projects/Capset SRT/Comp 1.srt");
+  assert.strictEqual(h.fake.writtenText.get(result.path), "1\r\n...\r\n");
+  assert.ok(h.fake.existingFolders.has("/projects/Capset SRT"),
+            "the folder was not created");
+});
+
+test("an unsaved project is refused with something the user can act on", () => {
+  const h = load({ projectFile: null });
+  assert.throws(() => h.call("capsetWriteSrt", { text: "x", name: "Comp 1" }),
+                /Save the After Effects project first/);
+});
+
+test("a comp name that is not a legal filename is made into one", () => {
+  const h = load();
+  const result = h.call("capsetWriteSrt", { text: "x", name: 'Ep 3: "final"/v2 ' });
+  // A run of illegal characters collapses to one dash, and the trailing
+  // space goes: Windows rejects a name ending in a space or a dot.
+  assert.strictEqual(result.path, "/projects/Capset SRT/Ep 3- -final-v2.srt");
 });
 
 // --- rebuilding -------------------------------------------------------------
@@ -906,17 +1158,43 @@ test("caption layer times are reported for the whole comp", () => {
   });
 });
 
-test("reported names match the keys replaceAnimation looks up", () => {
-  // These are two separate host calls and the map between them is by name; a
+test("reported ids match the keys replaceAnimation looks up", () => {
+  // These are two separate host calls and the map between them is by id; a
   // mismatch would silently fall back to the defaults for every layer.
+  //
+  // The id is the layer INDEX, not the name. Caption layers are named after
+  // their text, so two captions reading "Yeah." share a name -- and a
+  // name-keyed map would hand one of them the other's timings.
   const h = load();
   h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
 
   const reported = h.call("capsetCaptionLayerTimes", { scope: "all" })
-    .layers.map((l) => l.name).sort();
-  const actual = captionLayers(h.comp).map((l) => l.name).sort();
+    .layers.map((l) => l.id).sort();
+  const actual = captionLayers(h.comp).map((l) => l.index).sort();
 
-  assert.deepStrictEqual(reported, actual);
+  assert.deepStrictEqual(plain(reported), actual);
+});
+
+test("two captions with identical text get their own timings", () => {
+  // The failure the index key exists to prevent: same words, different
+  // durations, and under a name-keyed map the second layer would be animated
+  // with the first one's timing.
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: [
+      { text: "Yeah.", start: 0, end: 0.4 },
+      { text: "Yeah.", start: 2, end: 4 }
+    ],
+    style: {}, options: {}
+  });
+
+  const reported = h.call("capsetCaptionLayerTimes", { scope: "all" }).layers;
+  const ids = reported.map((l) => l.id);
+  assert.strictEqual(new Set(plain(ids)).size, 2, "the two layers share a key");
+  assert.deepStrictEqual(
+    plain(reported.map((l) => +l.duration.toFixed(3))).sort(),
+    [0.4, 2]
+  );
 });
 
 test("the comp frame rate comes back so frames can be converted", () => {
@@ -929,12 +1207,12 @@ test("the comp frame rate comes back so frames can be converted", () => {
 test("supplied timings are used instead of the built-in fallback", () => {
   const h = load();
   h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
-  const names = captionLayers(h.comp).map((l) => l.name);
+  const ids = captionLayers(h.comp).map((l) => l.index);
 
   const timingsById = {};
   // A length nothing in the fallback rules would ever produce.
-  names.forEach((n) => {
-    timingsById[n] = { inStart: 0, inDuration: 0.123, outStart: 0.5, outDuration: 0 };
+  ids.forEach((id) => {
+    timingsById[id] = { inStart: 0, inDuration: 0.123, outStart: 0.5, outDuration: 0 };
   });
 
   h.call("capsetReplaceAnimation", {

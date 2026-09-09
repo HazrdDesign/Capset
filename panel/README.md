@@ -16,11 +16,11 @@ js/lib/segmentation.js Word / phrase / smart grouping.       [pure, tested]
 js/lib/backend.js      Transcription service client.         [pure, tested]
 js/lib/launcher.js     Starts the backend on demand.         [pure, tested]
 js/lib/cepfile.js      Reads the rendered audio as bytes.    [pure, tested]
-js/lib/srt.js          SRT / VTT import.                     [pure, tested]
+js/lib/srt.js          SRT / VTT import, SRT export.         [pure, tested]
 js/lib/updates.js      Update manifest checking.             [pure, tested]
 js/main.js             DOM glue and ExtendScript calls.
 js/vendor/             CSInterface.js from Adobe.
-jsx/capset.jsx         Host script: render, layers, style sync, animators.
+jsx/capset.jsx         Host script: render, layers, style sync, SRT export.
 jsx/json2.jsx          JSON for ES3 (public domain).
 dormant/               Not loaded, not shipped. See dormant/README.md.
 ```
@@ -33,6 +33,12 @@ picks up whatever font, size and colour the user last used, which is the point
 the one thing not left to chance: centred, at 85% of comp height. A
 "keep inside title-safe" option used to sit next to it and could not work,
 because the size of the text block is exactly what the panel does not know.
+
+Each layer is **named after what it says**, so the timeline reads like the
+transcript. What marks a layer as Capset's is the tag in its comment field
+(`CAPSET_TAG`), not its name — so renaming a caption does not orphan it from
+Sync Style or from a rebuild. Layers built before the tag existed are still
+recognised by the old `Capset__cap_N` name.
 
 **Animations are generated, not applied from `.ffx`.** `.ffx` bakes fixed
 keyframes that cannot adapt to caption duration — which is exactly why

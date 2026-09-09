@@ -60,9 +60,27 @@ function makeFile() {
   File.prototype.remove = function () {
     return fake.writtenFiles.delete(this.fsName);
   };
-  File.prototype.open = function () { return false; };
-  File.prototype.read = function () { return ""; };
-  File.prototype.close = function () {};
+  // Writing. ExtendScript's File.open returns a BOOLEAN rather than throwing,
+  // and so does write -- code that assumes exceptions would treat a failed
+  // write as a successful one, so the fake answers the same way.
+  File.prototype.open = function (mode) {
+    if (mode !== "w") return false;
+    if (!fake.existingFolders.has(this.parent.fsName)) return false;  // no folder
+    this._writing = "";
+    return true;
+  };
+  File.prototype.write = function (text) {
+    if (this._writing === undefined) return false;
+    this._writing += String(text);
+    return true;
+  };
+  File.prototype.close = function () {
+    if (this._writing === undefined) return;
+    fake.writtenText.set(this.fsName, this._writing);
+    fake.writtenFiles.set(this.fsName, this._writing.length);
+    this._writing = undefined;
+  };
+  File.prototype.read = function () { return fake.writtenText.get(this.fsName) || ""; };
   return File;
 }
 
@@ -71,6 +89,14 @@ function makeFolder() {
     if (!(this instanceof Folder)) return new Folder(fsName);
     this.fsName = String(fsName || "/tmp");
   }
+  Object.defineProperty(Folder.prototype, "exists", {
+    get() { return fake.existingFolders.has(this.fsName); }
+  });
+  // Returns a boolean, like the real thing.
+  Folder.prototype.create = function () {
+    fake.existingFolders.add(this.fsName);
+    return true;
+  };
   Folder.temp = { fsName: "/tmp" };
   Folder.fs = "Windows";
   return Folder;
