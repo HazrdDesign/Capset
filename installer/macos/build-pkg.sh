@@ -80,23 +80,64 @@ printf '%s' "/Library/Application Support/Capset/capset-backend" > \
 # Apple account. This is separate from notarisation: skip notarisation and you
 # get a Gatekeeper prompt; skip this and the build simply does not run.
 #
-# Every Mach-O file, not just the ones with the executable bit: a PyInstaller
-# bundle is mostly .so and .dylib, the loader checks those too, and they are
-# not marked executable. Signing only what `find -perm -u+x` turns up leaves
-# the libraries unsigned and the backend dies on first import.
-echo "==> Ad-hoc signing binaries"
-find "$ROOTDIR/Library/Application Support/Capset" -type f \
+# PyInstaller already ad-hoc signs its macOS output, so this is a backstop
+# rather than the main event: it signs whatever arrives unsigned or with a
+# signature the copy into pkgroot invalidated, and leaves the rest alone.
+#
+# Verify-then-sign rather than sign-everything, for one specific reason. A
+# framework is a BUNDLE, and codesign refuses to sign the Mach-O file inside
+# one on its own:
+#
+#     Python.framework/Python: bundle format is ambiguous (could be app or framework)
+#
+# Blanket re-signing every Mach-O file therefore fails on
+# _internal/Python.framework/Python, which PyInstaller had already signed
+# correctly as part of the framework. Frameworks are handled below, as
+# bundles, and only if they actually need it.
+APP_DIR="$ROOTDIR/Library/Application Support/Capset"
+
+echo "==> Checking code signatures"
+find "$APP_DIR" -type f \
      \( -perm -u+x -o -name '*.so' -o -name '*.dylib' \) -print0 |
   while IFS= read -r -d '' bin; do
-    # Skip anything that is not actually Mach-O (scripts, data files that
-    # happen to carry the executable bit).
-    if file -b "$bin" | grep -q 'Mach-O'; then
-      codesign --force --sign - --timestamp=none "$bin" || {
-        echo "::error::could not ad-hoc sign $bin" >&2
-        exit 1
-      }
-    fi
+    # Inside a framework: signed as part of the bundle, never on its own.
+    case "$bin" in */*.framework/*) continue ;; esac
+    # Not Mach-O at all (scripts, data files carrying the executable bit).
+    file -b "$bin" | grep -q 'Mach-O' || continue
+    # Already validly signed, by PyInstaller or by a previous run.
+    codesign --verify --strict "$bin" 2>/dev/null && continue
+
+    echo "    signing $(basename "$bin")"
+    codesign --force --sign - --timestamp=none "$bin" || {
+      echo "::error::could not ad-hoc sign $bin" >&2
+      exit 1
+    }
   done
+
+# Frameworks, as bundles. A versioned framework is signed at its version
+# directory; codesign resolves Current for us.
+find "$APP_DIR" -type d -name '*.framework' -print0 |
+  while IFS= read -r -d '' fw; do
+    target="$fw"
+    [ -d "$fw/Versions/Current" ] && target="$fw/Versions/Current"
+    codesign --verify --strict "$target" 2>/dev/null && continue
+
+    echo "    signing framework $(basename "$fw")"
+    codesign --force --sign - --timestamp=none "$target" || {
+      echo "::error::could not ad-hoc sign the framework $fw" >&2
+      exit 1
+    }
+  done
+
+# The check that actually matters, and the one the old loop never made: is the
+# thing we are about to ship executable on Apple Silicon? An invalid signature
+# here is SIGKILL on the user's machine, not a warning.
+echo "==> Verifying the backend's signature"
+codesign --verify --deep --strict --verbose=2 "$APP_DIR/capset-backend" || {
+  echo "::error::the backend binary's signature is not valid — it would be" >&2
+  echo "killed on launch on Apple Silicon rather than merely warned about." >&2
+  exit 1
+}
 
 echo "==> Building component package"
 mkdir -p "$DIST" "$BUILD/scripts"
