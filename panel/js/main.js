@@ -76,7 +76,7 @@
 
   function setBusy(busy) {
     state.busy = busy;
-    var ids = ["build", "pick", "capture", "sync", "clear"];
+    var ids = ["build", "pick", "capture", "sync", "clear", "export-srt"];
     for (var i = 0; i < ids.length; i++) {
       var el = $(ids[i]);
       if (el) el.disabled = busy;
@@ -567,6 +567,32 @@
       .then(function () { setBusy(false); });
   }
 
+  // --- srt export ----------------------------------------------------------
+
+  /**
+   * Export what is on the timeline, not what was transcribed.
+   *
+   * The host reads the caption layers; js/lib/srt.js turns them into SRT; the
+   * host writes the file. Formatting stays on this side because the timecode
+   * arithmetic is worth testing and ExtendScript is where tests are hardest
+   * to run.
+   */
+  function exportSrt() {
+    setBusy(true);
+    host("capsetCaptionsForExport()")
+      .then(function (data) {
+        var text = srt.format(data.captions);
+        if (!text) throw new Error("Those caption layers have no text in them.");
+        log(data.captions.length + " captions → SRT");
+        return host("capsetWriteSrt(" + arg({
+          text: text, name: data.comp
+        }) + ")");
+      })
+      .then(function (data) { log("Wrote " + data.path, "ok"); })
+      .catch(function (err) { log(err.message, "err"); })
+      .then(function () { setBusy(false); });
+  }
+
   // --- update tab ----------------------------------------------------------
 
   function capture() {
@@ -674,6 +700,7 @@
   $("capture").addEventListener("click", capture);
   $("sync").addEventListener("click", sync);
   $("clear").addEventListener("click", clearCaptions);
+  $("export-srt").addEventListener("click", exportSrt);
   $("mode").addEventListener("change", function () {
     // Two are offered. The rest still resolve in js/lib/segmentation.js,
     // because they are real modes and a project saved by an earlier version
