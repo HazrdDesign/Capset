@@ -299,6 +299,29 @@ name, so anything keyed by name had to move to the layer index —
 `capsetCaptionLayerTimes`/`capsetReplaceAnimation`, and the selection that
 Sync Style borrows and puts back.
 
+**The controller rig works in the parent's coordinate space.** "Parent to
+Controller" parents every caption to a null carrying Font Size, Baseline %
+and Fill Colour, and drives Position by expression. That expression computed
+`[thisComp.width / 2, thisComp.height * baseline / 100]` — a point in **comp**
+space — and assigned it to a property that, once the layer is parented, is
+measured in the **parent's** space. `addNull()` leaves the null's anchor at
+its top-left corner with the null itself at the comp centre, so every caption
+was drawn half a comp width right and half a comp height down of where it
+belonged: off the bottom-right corner, on every comp, whenever the option was
+ticked. `parent.fromComp()` does the conversion, guarded on `hasParent` so
+the expression stays correct on a layer the user later unparents.
+
+The rig's "Baseline %" slider also defaulted to 82 while layers were built at
+85, so merely parenting them nudged every caption up by 3% of the comp.
+Both now read one `CAPSET_BASELINE` constant.
+
+`panel/tests/jsx-behaviour.test.js` **evaluates** these expressions rather
+than pattern-matching them — an AE expression's result is the completion
+value of its last statement, which is what JavaScript's `eval` returns, so
+the shipped text runs in the test with a mocked comp and null. Reading the
+expression for keywords would never have caught a right number in the wrong
+coordinate space.
+
 **Two pacing modes are offered, not seven.** `segmentation.js` implements
 fixed-count (one/two/three), rhythm (phrase/smart/parts) and sentence modes,
 and they all still resolve — a project saved by an older version can name one.

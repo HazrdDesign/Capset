@@ -161,6 +161,120 @@ test("captions built before the tag existed are still recognised", () => {
   assert.strictEqual(second.replaced, 3, "legacy caption layers were orphaned");
 });
 
+// --- the controller rig -----------------------------------------------------
+
+/**
+ * Evaluate an After Effects expression and return its value.
+ *
+ * An expression's result is the completion value of its last statement, which
+ * is exactly what JavaScript's `eval` returns — so the real expression text
+ * runs here, branches and all, rather than being pattern-matched. That
+ * matters: this expression shipped computing the right number in the wrong
+ * coordinate space, and no amount of reading it for keywords would have
+ * caught that.
+ */
+function evaluateExpression(expression, scope) {
+  return Function(
+    "thisComp", "hasParent", "parent", "value",
+    "return eval(" + JSON.stringify(expression) + ");"
+  )(scope.thisComp, scope.hasParent, scope.parent, scope.value);
+}
+
+/** A null as addNull() makes one: anchor at its top-left, sitting at centre. */
+function centredNull(comp, baselinePercent) {
+  const position = [comp.width / 2, comp.height / 2];
+  return {
+    position: position,
+    effect: () => () => baselinePercent,
+    // Comp space to this layer's space. With the anchor at [0,0] that is a
+    // straight subtraction of where the null sits.
+    fromComp: (p) => [p[0] - position[0], p[1] - position[1]]
+  };
+}
+
+test("a caption parented to the controller stays in frame", () => {
+  // It did not. Position is measured in the PARENT'S space once a layer is
+  // parented, and the expression computed a point in COMP space — so every
+  // caption was drawn half a comp width right and half a comp height down of
+  // where it belonged, which on any comp is off the bottom-right corner.
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+
+  const layer = captionLayers(h.comp)[0];
+  const expression = layer.property("Transform").property("Position").expression;
+  assert.ok(expression, "no position expression was written");
+
+  const comp = { width: h.comp.width, height: h.comp.height, layer: () => null };
+  const controller = centredNull(h.comp, 85);
+  comp.layer = () => controller;
+
+  const local = evaluateExpression(expression, {
+    thisComp: comp, hasParent: true, parent: controller, value: [0, 0]
+  });
+  // Parented: the layer's world position is the null's plus its own.
+  const world = [local[0] + controller.position[0], local[1] + controller.position[1]];
+
+  assert.deepStrictEqual(world, [comp.width / 2, comp.height * 0.85]);
+  assert.ok(world[0] < comp.width && world[1] < comp.height,
+            "the caption is outside the composition at " + world);
+});
+
+test("the same expression is still correct on an unparented layer", () => {
+  // Someone will unparent a caption from the controller. The expression stays
+  // on the layer when they do, and must not then subtract a null that is no
+  // longer above it.
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+  const expression = captionLayers(h.comp)[0]
+    .property("Transform").property("Position").expression;
+
+  const comp = { width: 1080, height: 1920, layer: () => null };
+  const controller = centredNull(comp, 85);
+  comp.layer = () => controller;
+
+  const world = evaluateExpression(expression, {
+    thisComp: comp, hasParent: false, parent: null, value: [0, 0]
+  });
+  assert.deepStrictEqual(world, [540, 1632]);
+});
+
+test("the controller's baseline slider starts where the captions already are", () => {
+  // The slider defaulted to 82 while layers were built at 85, so ticking
+  // Parent to Controller shifted every caption up by 3% of the comp for no
+  // reason the user asked for.
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+  const controller = h.comp.layers._layers.find((l) => l.name === "Capset Controller");
+  assert.ok(controller, "no controller was created");
+
+  const slider = controller.property("ADBE Effect Parade")
+    .property("Baseline %").property("ADBE Slider Control-0001").value;
+
+  const unparented = load();
+  unparented.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+  const y = captionLayers(unparented.comp)[0]
+    .property("Transform").property("Position").value[1];
+
+  assert.strictEqual(slider / 100, y / unparented.comp.height);
+});
+
+test("a captured baseline still drives the controller", () => {
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: { positionY: 0.6 }, options: { parentToController: true }
+  });
+  const controller = h.comp.layers._layers.find((l) => l.name === "Capset Controller");
+  const slider = controller.property("ADBE Effect Parade")
+    .property("Baseline %").property("ADBE Slider Control-0001").value;
+  assert.strictEqual(slider, 60);
+});
+
 // --- SRT export -------------------------------------------------------------
 
 test("export reads the captions off the timeline", () => {

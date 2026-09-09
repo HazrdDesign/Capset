@@ -12,7 +12,7 @@
 Local auto-captioning for After Effects: transcribes with NVIDIA Parakeet on
 your machine and generates timed text layers on the timeline.
 
-> **Pre-release.** Both changes below are tested — 326 panel tests, 194
+> **Pre-release.** The changes below are tested — 330 panel tests, 194
 > backend — but have not yet been run inside a live After Effects.
 
 ## What's new in this build
@@ -37,6 +37,22 @@ that comes out. Precomposed captions are found inside their precomp and timed
 against the composition you are looking at. If the project has never been
 saved there is nowhere to write next to, and it says so rather than leaving
 the file somewhere you would not find it.
+
+**Parent to Controller no longer throws the captions out of frame.** Ticking
+it put every caption off the bottom-right corner of the composition. The
+controller null itself was fine, which is what made it look like a null
+placement problem — the captions were the part in the wrong place.
+
+A parented layer's position is measured from its parent, not from the
+composition, and the expression driving the captions was calculating a
+composition point. So each caption was placed that far *down and to the
+right of the null* instead of at that spot in the frame — half a comp width
+and half a comp height out, every time. The expression now converts between
+the two, and keeps working if you unparent a caption later.
+
+The controller's **Baseline %** slider also started at 82 while captions are
+built at 85, so parenting nudged everything up by 3% of the comp for no
+reason. Both read the same number now.
 
 ## Install
 

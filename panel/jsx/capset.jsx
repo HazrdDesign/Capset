@@ -36,6 +36,13 @@ var CAPSET_TAG = "Capset caption";
 // an export never drops a loose file into someone's project directory.
 var CAPSET_SRT_FOLDER = "Capset SRT";
 
+// Where a caption sits vertically, as a fraction of comp height: the subtitle
+// band on 16:9 and 9:16 alike. One constant, because the controller rig's
+// "Baseline %" slider must start where the layers already are -- it defaulted
+// to 82 while the layers were built at 85, so merely parenting them to the
+// controller nudged every caption up.
+var CAPSET_BASELINE = 0.85;
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
@@ -253,7 +260,6 @@ function capsetStyleText(layer, style, comp) {
     // clear of the platform UI that crowds the bottom of a 9:16 one, and
     // clear of the frame edge on both. Anyone wanting it elsewhere moves the
     // layers, or restyles one and pushes it with the Update tab.
-    var CAPSET_BASELINE = 0.85;
     var baseline = CAPSET_BASELINE;
     if (style.positionY !== undefined && style.positionY !== null) {
         baseline = style.positionY;
@@ -979,7 +985,9 @@ function capsetEnsureController(comp, style) {
     var baseline = effects.addProperty("ADBE Slider Control");
     baseline.name = "Baseline %";
     baseline.property("ADBE Slider Control-0001").setValue(
-        style && style.positionY !== undefined ? style.positionY * 100 : 82
+        style && style.positionY !== undefined
+            ? style.positionY * 100
+            : CAPSET_BASELINE * 100
     );
 
     var fill = effects.addProperty("ADBE Color Control");
@@ -1000,10 +1008,30 @@ function capsetEnsureController(comp, style) {
  */
 function capsetLinkToController(layer, useJsEngine) {
     var position = layer.property("Transform").property("Position");
+    // Position is measured in the PARENT'S space once a layer is parented,
+    // and this expression computes a point in COMP space. Handing one to the
+    // other is what put every caption off the bottom-right of the frame with
+    // "Parent to Controller" ticked: addNull() leaves the null's anchor at
+    // its top-left corner with the null itself at the comp centre, so a
+    // caption computed at (w/2, h*0.85) was drawn that far DOWN AND RIGHT of
+    // the centre -- out of frame by half a comp in each axis, every time.
+    //
+    // fromComp does the conversion. Guarded on hasParent so the same
+    // expression is correct on a layer the user later unparents, and wrapped
+    // in try/catch because an expression that errors disables itself and
+    // leaves a red layer -- much worse than falling back to the layer's own
+    // value.
     position.expression =
         'var c = thisComp.layer("' + CAPSET_CONTROLLER + '");\r' +
         'try {\r' +
-        '  [thisComp.width / 2, thisComp.height * c.effect("Baseline %")("Slider") / 100];\r' +
+        '  var p = [thisComp.width / 2,\r' +
+        '           thisComp.height * c.effect("Baseline %")("Slider") / 100];\r' +
+        '  if (hasParent) {\r' +
+        '    var q = parent.fromComp(p);\r' +
+        '    [q[0], q[1]];\r' +
+        '  } else {\r' +
+        '    p;\r' +
+        '  }\r' +
         '} catch (err) { value; }';
 
     if (!useJsEngine) return false;
