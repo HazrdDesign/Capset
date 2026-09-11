@@ -4,8 +4,8 @@
 
 | | |
 |---|---|
-| **Shipped** | **v0.5.0** — tag `v0.5.0` on `e3f6d67` |
-| **Next** | **v0.6.0** — notes written, at `docs/RELEASE-NOTES-v0.6.0.md` |
+| **Shipped** | **v0.6.0** — tag `v0.6.0` on `2713dec` |
+| **Next** | **v0.7.0** — notes written, at `docs/RELEASE-NOTES-v0.7.0.md` |
 
 Keep this table current: update it in the same commit that adds the next
 version's notes, so the number is answerable from the repository rather than
@@ -17,8 +17,8 @@ To ship the version named above: merge to `main`, then
 
 ```bash
 git fetch origin main
-git tag -a v0.6.0 <merge commit> -m "Capset v0.6.0"
-git push origin v0.6.0
+git tag -a v0.7.0 <merge commit> -m "Capset v0.7.0"
+git push origin v0.7.0
 ```
 
 The Windows installer is built by `.github/workflows/release.yml` on a
