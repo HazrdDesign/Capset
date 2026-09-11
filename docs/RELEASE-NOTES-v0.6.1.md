@@ -1,5 +1,5 @@
 <!--
-  The body of the GitHub Release for v0.7.0.
+  The body of the GitHub Release for v0.6.1.
 
   release.yml resolves this path from the tag. If the next release is numbered
   differently, rename this file to match (RELEASE-NOTES-v<version>.md, or
@@ -7,7 +7,7 @@
   publishes a stub instead.
 -->
 
-# Capset v0.7.0
+# Capset v0.6.1
 
 Local auto-captioning for After Effects: transcribes with NVIDIA Parakeet on
 your machine and generates timed text layers on the timeline.
@@ -15,6 +15,10 @@ your machine and generates timed text layers on the timeline.
 This release is entirely about the captions themselves — where they get cut,
 and how long they stay up. Nothing about the backend, the installers or the
 transcription changed.
+
+> **Still under test.** Numbered as a patch for that reason rather than by
+> what changed: there is a new segmentation mode in here and the timing of
+> every caption moved, which is ordinarily a minor bump.
 
 ## What's new in this build
 
@@ -76,10 +80,10 @@ removing the layer holding them takes the rest with it.
 
 ## Install
 
-**Windows** — run `Capset-Setup-0.7.0.exe`, restart After Effects,
+**Windows** — run `Capset-Setup-0.6.1.exe`, restart After Effects,
 **Window → Extensions → Capset**.
 
-**macOS** — open `Capset-0.7.0.pkg` (right-click → Open if Gatekeeper
+**macOS** — open `Capset-0.6.1.pkg` (right-click → Open if Gatekeeper
 objects), restart After Effects, **Window → Extensions → Capset**. The
 installer needs an administrator password: it writes to
 `/Library/Application Support`.

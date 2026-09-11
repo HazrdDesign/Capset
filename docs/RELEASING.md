@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Shipped** | **v0.6.0** — tag `v0.6.0` on `2713dec` |
-| **Next** | **v0.7.0** — notes written, at `docs/RELEASE-NOTES-v0.7.0.md` |
+| **Next** | **v0.6.1** — notes written, at `docs/RELEASE-NOTES-v0.6.1.md` |
 
 Keep this table current: update it in the same commit that adds the next
 version's notes, so the number is answerable from the repository rather than
@@ -13,12 +13,19 @@ from memory or a chat log. The rule for choosing it is ordinary semver — a
 new feature or a change to how something behaves is a minor bump, a fix on
 its own is a patch.
 
+A build still being tested may take a patch number whatever is in it, which
+is why v0.6.1 carries a new segmentation mode and a change to caption timing.
+Say so in its notes when that happens, so the number is not read as a claim
+about how small the change was. Minor numbers are not the scarce resource
+here — v0.12.0 and v0.30.0 are ordinary — so this is about signalling
+confidence, nothing else.
+
 To ship the version named above: merge to `main`, then
 
 ```bash
 git fetch origin main
-git tag -a v0.7.0 <merge commit> -m "Capset v0.7.0"
-git push origin v0.7.0
+git tag -a v0.6.1 <merge commit> -m "Capset v0.6.1"
+git push origin v0.6.1
 ```
 
 The Windows installer is built by `.github/workflows/release.yml` on a
