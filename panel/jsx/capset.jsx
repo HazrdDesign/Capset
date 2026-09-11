@@ -1514,6 +1514,19 @@ function capsetClearCaptions(payloadJson) {
 // build
 // ---------------------------------------------------------------------------
 
+/**
+ * Does this layer show anything inside the stretch being rebuilt?
+ *
+ * Half-open at both ends on purpose. Captions sit end to end -- one out point
+ * IS the next in point, now that a caption is held until its successor
+ * arrives -- so treating a touch as an overlap would take the neighbour on
+ * each side of every range with it, which is the behaviour being fixed.
+ */
+function capsetLayerInRange(layer, range) {
+    var end = range.start + range.duration;
+    return layer.inPoint < end && layer.outPoint > range.start;
+}
+
 function capsetBuildCaptions(payloadJson) {
     var undoOpen = false;
     try {
@@ -1523,6 +1536,9 @@ function capsetBuildCaptions(payloadJson) {
         var animation = payload.animation || null;
         var offset = payload.timeOffset || 0;
         var options = payload.options || {};
+        // Absent for a whole-composition run, which replaces everything as it
+        // always has. Present for a work-area one, which must not.
+        var range = payload.replaceRange || null;
 
         if (!captions.length) throw new Error("No captions to build.");
 
@@ -1533,10 +1549,18 @@ function capsetBuildCaptions(payloadJson) {
 
         // Rebuilding replaces rather than stacks: running Add Captions twice
         // should not leave two sets of layers fighting over the same frames.
+        //
+        // A work-area run replaces only what it captioned. It used to clear
+        // the comp, so setting in and out points to redo one line word by
+        // word threw away every caption outside them -- the rest of the pass
+        // you were keeping. What is outside the range was not re-transcribed
+        // and is not being rebuilt, so it stays.
         var replaced = 0;
+        var precompOverrun = false;
         for (var r = comp.numLayers; r >= 1; r--) {
             var existing = comp.layer(r);
             if (capsetIsCapsetLayer(existing) && existing.name !== CAPSET_CONTROLLER) {
+                if (range && !capsetLayerInRange(existing, range)) continue;
                 // A precomposed caption layer owns a composition of its own.
                 // Removing only the layer leaves that comp behind, so a user
                 // who rebuilds a few times finds the project panel filling up
@@ -1549,6 +1573,16 @@ function capsetBuildCaptions(payloadJson) {
                         orphan = existing.source;
                     }
                 } catch (e) {}
+                // A range cannot reach inside a precomp: the captions in
+                // there are layers of another composition, and removing the
+                // one layer that holds them takes the ones outside the range
+                // with it. Nothing here can prevent that, so it is reported
+                // rather than done quietly.
+                if (range && orphan &&
+                    (existing.inPoint < range.start ||
+                     existing.outPoint > range.start + range.duration)) {
+                    precompOverrun = true;
+                }
                 existing.remove();
                 if (orphan) {
                     try { orphan.remove(); } catch (e) {}
@@ -1647,7 +1681,11 @@ function capsetBuildCaptions(payloadJson) {
             created: created.length,
             replaced: replaced,
             precomposed: precomposed,
-            parented: controller !== null
+            parented: controller !== null,
+            // So the panel can say "replaced 4 in the work area" rather than
+            // implying it cleared the comp.
+            ranged: range !== null,
+            precompOverrun: precompOverrun
         });
     } catch (e) {
         return capsetErr(e.message);

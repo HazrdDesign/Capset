@@ -515,7 +515,16 @@
         }
         // The render begins at the requested range, so timestamps are
         // relative to that point in comp time.
-        return { captions: out.captions, offset: source.start || 0 };
+        return {
+          captions: out.captions,
+          offset: source.start || 0,
+          // Only a work-area run is a partial rebuild, and only a partial
+          // rebuild may leave existing captions standing. A full-composition
+          // run replaces the lot, which is what it has always done.
+          range: settings.scope === "inout"
+            ? { start: source.start || 0, duration: source.duration }
+            : null
+        };
       });
     });
   }
@@ -552,16 +561,29 @@
           animation: null,
           style: {},
           options: settings.options,
-          timeOffset: payload.offset
+          timeOffset: payload.offset,
+          // Null unless this run captioned the work area only. The host
+          // replaces every caption layer when it is null.
+          replaceRange: payload.range || null
         }) + ")");
       })
       .then(function (data) {
         setProgress(1, "Done");
         var parts = ["Built " + data.created + " caption layers"];
-        if (data.replaced) parts.push("replaced " + data.replaced);
+        if (data.replaced) {
+          parts.push("replaced " + data.replaced +
+                     (data.ranged ? " in the work area" : ""));
+        }
         if (data.precomposed) parts.push("precomposed");
         if (data.parented) parts.push("parented to controller");
         log(parts.join(", ") + ".", "ok");
+        if (data.precompOverrun) {
+          // Worth interrupting for: captions outside the work area were lost,
+          // and the user asked for the opposite.
+          log("The captions already here were precomposed, so all of them " +
+              "were replaced — a work-area rebuild can only leave loose " +
+              "caption layers standing.", "warn");
+        }
       })
       .catch(function (err) { log(err.message, "err"); })
       .then(function () { setBusy(false); });

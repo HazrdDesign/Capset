@@ -409,6 +409,87 @@ test("the precomposed layer carries the Capset prefix", () => {
             "precomposed layer is named " + layer.name);
 });
 
+test("a work-area rebuild leaves captions outside it alone", () => {
+  // The reported behaviour: set in and out points to redo one line word by
+  // word, and every caption outside them was thrown away too — including the
+  // pass you were keeping.
+  const h = load();
+  h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+
+  const second = h.call("capsetBuildCaptions", {
+    captions: [{ text: "redone", start: 1.3, end: 2.4 }],
+    style: {}, options: {},
+    replaceRange: { start: 1.2, duration: 1.3 }        // the middle caption
+  });
+
+  assert.strictEqual(second.replaced, 1, "it reached outside the range");
+  assert.deepStrictEqual(
+    captionLayers(h.comp).map((l) => l.name).sort(),
+    ["first caption", "redone", "third caption"]
+  );
+});
+
+test("a caption that merely touches the range is not replaced", () => {
+  // Captions sit end to end now that each is held until the next arrives, so
+  // one out point IS the next in point. Counting a touch as an overlap would
+  // take the neighbour on each side of every range.
+  const h = load();
+  h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+  const second = h.call("capsetBuildCaptions", {
+    captions: [{ text: "redone", start: 1.3, end: 2.4 }],
+    style: {}, options: {},
+    // Exactly the middle caption's span: [1.2, 2.5]. Its neighbours end at
+    // 1.2 and begin at 2.5.
+    replaceRange: { start: 1.2, duration: 1.3 }
+  });
+  assert.strictEqual(second.replaced, 1,
+    "replaced " + second.replaced + ", so a touching neighbour was taken");
+});
+
+test("a caption straddling the range edge is replaced", () => {
+  // Leaving it would put two captions on screen at once, which is worse than
+  // replacing slightly more than was asked for.
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: [{ text: "straddler", start: 0.0, end: 2.0 }], style: {}, options: {}
+  });
+  const second = h.call("capsetBuildCaptions", {
+    captions: [{ text: "redone", start: 1.5, end: 3.0 }],
+    style: {}, options: {},
+    replaceRange: { start: 1.5, duration: 1.5 }
+  });
+  assert.strictEqual(second.replaced, 1);
+});
+
+test("a whole-composition rebuild still replaces everything", () => {
+  // No range means no scoping: the behaviour every existing run depends on.
+  const h = load();
+  h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+  const second = h.call("capsetBuildCaptions", {
+    captions: [{ text: "redone", start: 1.3, end: 2.4 }], style: {}, options: {}
+  });
+  assert.strictEqual(second.replaced, 3);
+  assert.strictEqual(second.ranged, false);
+  assert.strictEqual(captionLayers(h.comp).length, 1);
+});
+
+test("a work-area rebuild says when a precomp forced its hand", () => {
+  // A range cannot reach inside a precomp — the captions there are layers of
+  // another composition — so removing the layer takes the ones outside the
+  // range with it. That must not happen quietly.
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { precompose: true }
+  });
+  const second = h.call("capsetBuildCaptions", {
+    captions: [{ text: "redone", start: 1.3, end: 2.4 }],
+    style: {}, options: {},
+    replaceRange: { start: 1.2, duration: 1.3 }
+  });
+  assert.strictEqual(second.precompOverrun, true,
+    "captions outside the work area were lost with nothing said");
+});
+
 test("a rebuild leaves the controller alone", () => {
   // Removing it would drop the user's slider values and unparent everything.
   const h = load();

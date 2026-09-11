@@ -368,6 +368,50 @@ This applies wherever `minWords` is above 1, which today means Smart. Phrase
 keeps `minWords: 1` and so has no floor to enforce — its historical behaviour
 is deliberate.
 
+**When a caption is on screen (added 2026-09).** A caption goes up the instant
+its first word is spoken and nothing may change that — sync against the audio
+is the only reference a viewer has, so reading time is never bought by
+starting a caption early. The END is free, and leaving it exactly on the last
+word was wrong twice over: a caption the budget cut mid-breath cleared a frame
+or two before its successor arrived and the screen blinked between them, and a
+caption holding one short word ("Wait." at 0.18s) was gone before it could be
+read. `hold()` answers both by extending the out point only.
+
+`minDurationS` is what fixed the second. It had sat in all five defaults blocks
+since the first version, describing exactly this behaviour, while nothing read
+it — a knob that looks identical to one that works.
+
+A hole is bridged only when it is a blink rather than a beat: `MAX_HOLD_S`
+(0.6s) caps it, and a mode that cuts more tightly than that caps it further
+with its own `maxGapS`. The cap is not decoration. Sentence mode sets
+`maxGapS: 99` to mean "never CUT on a pause", and reading that as a hold
+threshold would leave a caption on screen for every silence in the clip —
+the "word held for six seconds" bug, reintroduced by a shared variable name.
+Nothing is ever held into the caption after it; where the recogniser hands
+back overlapping words, that cap pulls the end back instead.
+
+**A work-area rebuild replaces only the work area (added 2026-09).** Adding
+captions clears the Capset layers already in the comp, because running it
+twice should not leave two sets fighting over the same frames. With in and out
+points set it cleared them anyway — so redoing one line word by word threw
+away the whole pass around it. The panel now sends `replaceRange` for a
+work-area run (and nothing for a full-composition one, which still replaces
+everything), and the host removes only the caption layers overlapping it. That
+is what makes "Smart over the whole comp, then Word-by-Word over one line"
+work.
+
+Overlap is half-open at both ends. Captions sit end to end now that each is
+held until the next arrives, so one out point IS the next in point, and
+counting a touch as an overlap would take the neighbour on each side of every
+range. A caption straddling an edge IS replaced: leaving it would put two
+captions on screen at once, which is worse than replacing slightly more than
+was asked.
+
+A range cannot reach inside a precomp — those captions are layers of another
+composition, and removing the one layer holding them takes the ones outside
+the range too. Nothing in the host can prevent that, so it is reported and the
+panel says so rather than losing them quietly.
+
 ---
 
 ## 4b. SRT export

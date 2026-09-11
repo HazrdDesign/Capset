@@ -90,6 +90,12 @@
 
   var SENTENCE_END = /[.!?]["')\]]?$/;
 
+  // The longest hole worth bridging, whatever the mode. Below it the screen
+  // is blinking between captions; above it the speaker has genuinely stopped
+  // and the captions should stop with them. 0.6s is where the broadcast
+  // defaults already put that line.
+  var MAX_HOLD_S = 0.6;
+
   function assign(target, source) {
     if (!source) return target;
     for (var key in source) {
@@ -188,6 +194,62 @@
   }
 
   /**
+   * Hold a caption that would otherwise blink -- and never move its start.
+   *
+   * A caption goes on screen the instant its first word is spoken, and
+   * nothing here changes that. Sync between the type and the voice is the
+   * point; buying reading time by starting a caption early breaks it against
+   * the one reference the viewer has, which is the audio.
+   *
+   * The END is another matter. Left exactly on the last word, two things go
+   * wrong that have nothing to do with the speech:
+   *
+   *   - a caption the budget cut mid-breath clears a frame or two before the
+   *     next one arrives, and the screen blinks between them;
+   *   - a caption holding one short word -- "Wait." at 0.18s -- is gone
+   *     before it can be read. This is what minDurationS has described in
+   *     every defaults block since the first version while nothing read it.
+   *
+   * Both are answered by holding the caption longer, never by starting it
+   * sooner. A hole short enough to be a blink rather than a beat is where
+   * the arithmetic cut, not a pause the speaker made, so the caption simply
+   * runs to the next one. A real pause still clears the screen: type held
+   * through a silence is the "word held for six seconds" bug in
+   * ARCHITECTURE.md, not a feature.
+   *
+   * Nothing is ever held into the caption after it. Where the recogniser
+   * hands back overlapping words -- it does, at chunk boundaries -- that cap
+   * pulls the end BACK instead, because two caption layers lit at once is
+   * worse than one a few frames short.
+   */
+  function hold(captions, opts) {
+    // A mode may bridge less than this, never more. Sentence mode sets
+    // maxGapS to 99 to say "never CUT on a pause", and that must not be read
+    // as "hold type through any silence" -- the two thresholds happen to
+    // share a name, not a meaning.
+    var bridge = Math.min(opts.maxGapS, MAX_HOLD_S);
+
+    for (var i = 0; i < captions.length; i++) {
+      var caption = captions[i];
+      var next = captions[i + 1];
+      var limit = next ? next.start : Infinity;
+      var end = caption.end;
+
+      if (next && next.start - end <= bridge) end = limit;
+      if (end - caption.start < opts.minDurationS) {
+        end = Math.min(caption.start + opts.minDurationS, limit);
+      }
+      // This cannot invert a caption: the words arrive ordered by start, so
+      // the next caption never begins before this one does, and both rules
+      // above are bounded by it. Contradictory timings invert in
+      // buildCaption, before ever reaching here, and the host gives a
+      // zero-length layer its one frame.
+      caption.end = end;
+    }
+    return captions;
+  }
+
+  /**
    * Exactly `size` words per caption.
    *
    * No pause detection, no budget: the point of these modes is a metronomic
@@ -202,7 +264,7 @@
     for (var i = 0; i < words.length; i += step) {
       captions.push(buildCaption(words.slice(i, i + step), opts));
     }
-    return captions;
+    return hold(captions, opts);
   }
 
   /** Length of these words once joined with single spaces. */
@@ -337,9 +399,9 @@
   function segmentByPhrase(words, options) {
     var opts = merge(PHRASE_DEFAULTS, options);
     var groups = rebalance(groupByPhrase(words, opts), opts);
-    return groups.map(function (group) {
+    return hold(groups.map(function (group) {
       return buildCaption(group, opts);
-    });
+    }), opts);
   }
 
   /**
@@ -377,7 +439,7 @@
       if (SENTENCE_END.test(word.text)) flush();
     }
     flush();
-    return captions;
+    return hold(captions, opts);
   }
 
   /**
