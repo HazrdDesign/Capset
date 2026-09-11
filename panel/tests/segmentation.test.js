@@ -357,10 +357,11 @@ test("smart never emits a one-word caption mid-sentence", () => {
     { text: "home", start: 1.75, end: 2.10 }
   ];
   const out = seg.segment(w, { mode: "smart", width: 1080, height: 1920 });
-  // The final caption is exempt: when the words simply run out, a one-word
-  // tail is correct and merging it backwards would exceed the word budget.
-  // Everything before it was a deliberate cut and must respect the floor.
-  out.captions.slice(0, -1).forEach((c) => assert.ok(c.words.length >= 2,
+  // The last caption is NOT exempt. It used to be -- "the words simply ran
+  // out" was treated as a good enough reason for a one-word tail -- but from
+  // the timeline it looks identical to any other bad cut, because it is one.
+  // rebalance() moves the break back instead.
+  out.captions.forEach((c) => assert.ok(c.words.length >= 2,
     "one-word caption mid-sentence: " + JSON.stringify(c.text)));
   assert.ok(out.captions.length >= 2, "nothing was split at all");
 });
@@ -385,4 +386,156 @@ test("the retired modes still resolve for old presets", () => {
     const out = seg.segment(words, { mode, width: 1080, height: 1920 });
     assert.ok(out.captions.length > 0, mode + " produced nothing");
   });
+});
+
+
+// --- stranded tails ---------------------------------------------------------
+
+test("smart does not strand the last word of a run", () => {
+  // The reported symptom, exactly: five evenly-spoken words against a
+  // four-word budget put "this." on a layer of its own. Nothing in the
+  // delivery cut there -- the caption filled up and the leftover became a
+  // caption by default.
+  const out = seg.segment(evenWords("I really enjoyed making this.", 0.35),
+    { mode: "smart", width: 1080, height: 1920 });
+  assert.deepStrictEqual(texts(out), ["I really enjoyed", "making this."]);
+});
+
+test("a pause before the last word still gets its own caption", () => {
+  // The repair must not swallow a break the speaker actually made, or it
+  // trades one wrong cut for another.
+  const w = [
+    { text: "and", start: 0.00, end: 0.25 },
+    { text: "that", start: 0.30, end: 0.55 },
+    { text: "was", start: 0.60, end: 0.85 },
+    { text: "that", start: 0.90, end: 1.20 },
+    { text: "honestly", start: 2.60, end: 3.10 }   // 1.4s — a real stop
+  ];
+  assert.deepStrictEqual(
+    texts(seg.segment(w, { mode: "smart", width: 1080, height: 1920 })),
+    ["and that was that", "honestly"]
+  );
+});
+
+test("a full stop before a short caption stays where the speaker put it", () => {
+  // The caption before has a word to spare here, so the guard is the only
+  // thing stopping the cut moving: without it the end of one sentence is
+  // glued to the start of the next as "I went" / "home. Anyway".
+  const w = [
+    { text: "I", start: 0.00, end: 0.20 },
+    { text: "went", start: 0.25, end: 0.50 },
+    { text: "home.", start: 0.55, end: 0.90 },
+    { text: "Anyway", start: 0.95, end: 1.40 }
+  ];
+  assert.deepStrictEqual(
+    texts(seg.segment(w, { mode: "smart", width: 1080, height: 1920 })),
+    ["I went home.", "Anyway"]
+  );
+});
+
+test("a caption already at the floor is not broken to fix the one after", () => {
+  // Two long words are cut apart by the duration cap, leaving "welcome" on
+  // its own. The caption before is AT the floor, so taking a word back would
+  // simply move the problem onto it -- and the cap that split them forbids
+  // joining them anyway. A short caption is the right answer here.
+  const w = [
+    { text: "Hello", start: 0.00, end: 1.20 },
+    { text: "everybody", start: 1.30, end: 2.40 },
+    { text: "welcome", start: 2.50, end: 3.00 }
+  ];
+  assert.deepStrictEqual(
+    texts(seg.segment(w, { mode: "smart", width: 1080, height: 1920 })),
+    ["Hello everybody", "welcome"]
+  );
+});
+
+test("a word that will not fit is not dragged into the tail", () => {
+  // 20 + 1 + 21 = 42 characters against this comp's 40. Moving the cut has
+  // to obey the budget it is moving within, or the repair produces exactly
+  // what the budget exists to prevent: a caption too wide for the frame.
+  const w = [
+    { text: "The", start: 0.00, end: 0.20 },
+    { text: "long", start: 0.25, end: 0.50 },
+    { text: "antidisestablishment", start: 0.55, end: 1.10 },
+    { text: "counterrevolutionary.", start: 1.15, end: 1.80 }
+  ];
+  assert.deepStrictEqual(
+    texts(seg.segment(w, { mode: "smart", width: 1080, height: 1920 })),
+    ["The long antidisestablishment", "counterrevolutionary."]
+  );
+});
+
+test("moving a cut never strands the caption it borrowed from", () => {
+  // Nine words at a four-word budget is 4+4+1; the repair must land on
+  // 4+3+2 and not 4+4 followed by a pair of ones.
+  const out = seg.segment(evenWords("one two three four five six seven eight nine.", 0.3),
+    { mode: "smart", width: 1080, height: 1920 });
+  out.captions.forEach((c) => assert.ok(c.words.length >= 2,
+    "stranded: " + JSON.stringify(c.text) + " in " + texts(out).join(" | ")));
+});
+
+test("moving a cut never pushes a caption past its budgets", () => {
+  // The whole point of the cut is that the caption was full. Moving it must
+  // respect every bound that put it there.
+  const bounds = seg.chooseLayout(1080, 1920).options;
+  const out = seg.segment(
+    evenWords("there is quite a lot of speech here to divide up between the " +
+              "two shapes and it carries on for a while yet.", 0.3),
+    { mode: "smart", width: 1080, height: 1920 });
+  out.captions.forEach((c) => {
+    assert.ok(c.words.length <= bounds.maxWords,
+      c.words.length + " words: " + JSON.stringify(c.text));
+    assert.ok(c.text.length <= bounds.maxCharsPerLine * bounds.maxLines,
+      c.text.length + " chars: " + JSON.stringify(c.text));
+    assert.ok(c.end - c.start <= bounds.maxDurationS,
+      (c.end - c.start).toFixed(2) + "s: " + JSON.stringify(c.text));
+  });
+});
+
+test("rebalancing leaves the fixed-count modes alone", () => {
+  // Their whole point is a metronomic rhythm, so a one-word tail at the end
+  // of "three words each" is correct and must survive.
+  assert.deepStrictEqual(
+    texts(seg.segment(evenWords("one two three four five six seven"), { mode: "three" })),
+    ["one two three", "four five six", "seven"]
+  );
+});
+
+// --- sentence mode in the panel ---------------------------------------------
+
+test("sentence mode wraps to the comp, not to a broadcast measure", () => {
+  // It is offered in the panel now, so it meets vertical comps. A 42-character
+  // line on a 1080-wide frame runs off both edges — that shipped once already.
+  const long = "this is a deliberately long sentence that runs well past " +
+               "forty two characters and keeps going for a while yet.";
+  const tall = seg.segment(evenWords(long, 0.12),
+    { mode: "sentence", width: 1080, height: 1920 });
+  const wide = seg.segment(evenWords(long, 0.12),
+    { mode: "sentence", width: 1920, height: 1080 });
+
+  const widest = (out) => Math.max(...out.captions.map(
+    (c) => Math.max(...c.lines.map((l) => l.length))));
+
+  assert.ok(widest(tall) <= seg.VERTICAL_DEFAULTS.maxCharsPerLine,
+    "vertical lines run to " + widest(tall) + " characters");
+  assert.ok(widest(wide) <= seg.PHRASE_DEFAULTS.maxCharsPerLine,
+    "horizontal lines run to " + widest(wide) + " characters");
+  assert.ok(widest(tall) < widest(wide), "the comp made no difference");
+});
+
+test("sentence mode still cuts only on punctuation, whatever the comp", () => {
+  const w = evenWords("I went to the store. It was closed. So I left.");
+  assert.deepStrictEqual(
+    texts(seg.segment(w, { mode: "sentence", width: 1080, height: 1920 })),
+    ["I went to the store.", "It was closed.", "So I left."]
+  );
+});
+
+test("sentence mode reports the layout it wrapped to", () => {
+  // main.js logs this; a mode that silently reshapes captions is the thing
+  // the rationale exists to prevent.
+  const out = seg.segment(evenWords("one two three."),
+    { mode: "sentence", width: 1080, height: 1920 });
+  assert.strictEqual(out.layout.orientation, "vertical");
+  assert.match(out.layout.rationale, /sentence/i);
 });

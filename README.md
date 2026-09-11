@@ -34,7 +34,7 @@ current decisions and supersedes the original scaffold where they conflict.
 | Component | State |
 |---|---|
 | Backend (Parakeet, chunking, job API) | Implemented, 194 tests |
-| Panel (UI, segmentation, style sync) | Implemented, 307 tests |
+| Panel (UI, segmentation, style sync) | Implemented, 341 tests |
 | Installer (Windows + macOS scripts, CI) | Implemented, shipping |
 | **Verified inside After Effects** | **Partly — see below** |
 
@@ -63,7 +63,8 @@ To cut a release, see [`docs/RELEASING.md`](docs/RELEASING.md).
 ## Phases
 
 1. **Backend** — Parakeet via ONNX with VAD chunking; measure CPU speed.
-2. **Panel** — CEP panel, audio extraction, segmentation (smart / word-by-word).
+2. **Panel** — CEP panel, audio extraction, segmentation (smart / sentence /
+   word-by-word).
 3. **Animation** — *restarting.* The procedural animator machinery works and
    stays; the preset library and its preview grid were pulled from the panel
    because too many presets read as the same animation. Next: capture an

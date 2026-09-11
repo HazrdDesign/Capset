@@ -205,23 +205,34 @@
     return captions;
   }
 
+  /** Length of these words once joined with single spaces. */
+  function joinedLength(words) {
+    var n = 0;
+    for (var i = 0; i < words.length; i++) n += words[i].text.length;
+    return n + Math.max(0, words.length - 1);
+  }
+
+  /** Seconds from the first word's start to the last word's end. */
+  function spanOf(words) {
+    return words[words.length - 1].end - words[0].start;
+  }
+
   /**
-   * Group words into phrase captions.
+   * Group words into phrase-sized runs.
    *
-   * A caption is closed when adding the next word would exceed the character
-   * or word budget, when the pause before it is long enough to be a natural
-   * break, when the caption has run too long, or after sentence-ending
+   * A run is closed when adding the next word would exceed the character or
+   * word budget, when the pause before it is long enough to be a natural
+   * break, when the run has gone on too long, or after sentence-ending
    * punctuation.
    */
-  function segmentByPhrase(words, options) {
-    var opts = merge(PHRASE_DEFAULTS, options);
+  function groupByPhrase(words, opts) {
     var budget = opts.maxCharsPerLine * opts.maxLines;
-    var captions = [];
+    var groups = [];
     var current = [];
 
     function flush() {
       if (current.length) {
-        captions.push(buildCaption(current, opts));
+        groups.push(current);
         current = [];
       }
     }
@@ -232,9 +243,7 @@
       if (current.length) {
         var previous = current[current.length - 1];
         var gap = word.start - previous.end;
-        var textLength = current.reduce(function (n, w) {
-          return n + w.text.length + 1;
-        }, 0) + word.text.length;
+        var textLength = joinedLength(current) + 1 + word.text.length;
         var span = word.end - current[0].start;
 
         // A floor, so "2 to 5 words" means what it says. Without it a
@@ -268,7 +277,69 @@
       if (SENTENCE_END.test(word.text)) flush();
     }
     flush();
-    return captions;
+    return groups;
+  }
+
+  /**
+   * Move cuts that stranded a word, rather than leaving them where the
+   * arithmetic put them.
+   *
+   * A run closes the moment one more word will not fit, so whatever is left
+   * over becomes the next caption however little it is. Five evenly-spoken
+   * words against a four-word budget gave "I really enjoyed making" and then
+   * "this." on a layer of its own -- with nothing in the delivery cutting
+   * there. It reads as a mistake because it is one: that break landed on a
+   * word count, not on anything the speaker did.
+   *
+   * So the break is MOVED, not removed: words come back off the end of the
+   * caption before until the tail reaches the floor, giving "I really
+   * enjoyed" and "making this." -- both within budget, and cut where a
+   * person would cut. When the caption before has nothing to spare the short
+   * one stands, because the budget that forced the cut forbids undoing it
+   * just as much as it forbids ignoring it.
+   *
+   * Two cuts are never moved, because they are the speaker's rather than the
+   * budget's: a pause long enough to break on, and a full stop. A short
+   * caption after either of those is correct, and "Right." is a caption.
+   */
+  function rebalance(groups, opts) {
+    var budget = opts.maxCharsPerLine * opts.maxLines;
+    var floor = Math.max(1, opts.minWords || 1);
+
+    function fits(words) {
+      return words.length <= opts.maxWords &&
+             joinedLength(words) <= budget &&
+             spanOf(words) <= opts.maxDurationS;
+    }
+
+    for (var i = 1; i < groups.length; i++) {
+      var tail = groups[i];
+      if (tail.length >= floor) continue;
+
+      var head = groups[i - 1];
+      var last = head[head.length - 1];
+      if (tail[0].start - last.end > opts.maxGapS) continue;
+      if (SENTENCE_END.test(last.text)) continue;
+
+      // Never rob the caption before to the point of stranding IT: stop while
+      // it still holds the floor.
+      while (tail.length < floor && head.length > floor) {
+        var moved = [head[head.length - 1]].concat(tail);
+        if (!fits(moved)) break;
+        head.pop();
+        tail = moved;
+      }
+      groups[i] = tail;
+    }
+    return groups;
+  }
+
+  function segmentByPhrase(words, options) {
+    var opts = merge(PHRASE_DEFAULTS, options);
+    var groups = rebalance(groupByPhrase(words, opts), opts);
+    return groups.map(function (group) {
+      return buildCaption(group, opts);
+    });
   }
 
   /**
@@ -332,17 +403,57 @@
   }
 
   /**
+   * Sentences, wrapped to the comp.
+   *
+   * Where the cut lands is the speaker's business and nothing here changes
+   * that -- a sentence is a sentence on any comp. How WIDE it is allowed to
+   * get is the comp's business: 42 characters is a broadcast measure, and on
+   * a 1080x1920 comp a line that long runs off both edges. That is not
+   * hypothetical, it is what the panel shipped in v0.4.0 and a screenshot of
+   * it is in the commit that fixed it.
+   *
+   * So the line width comes from the comp and the line COUNT follows from it,
+   * holding roughly the same total as the broadcast shape. It has to: a
+   * narrower line needs more of them, and wrapLines puts whatever will not
+   * fit on the final line rather than dropping it, so a count set too low
+   * overflows exactly the way an over-wide line does.
+   */
+  var SENTENCE_WRAP_BUDGET =
+    SENTENCE_DEFAULTS.maxCharsPerLine * SENTENCE_DEFAULTS.maxLines;
+
+  function segmentSentenceForComp(words, width, height, options) {
+    var layout = chooseLayout(width, height);
+    var chars = layout.options.maxCharsPerLine;
+    var shaped = merge(SENTENCE_DEFAULTS, {
+      maxCharsPerLine: chars,
+      maxLines: Math.max(2, Math.ceil(SENTENCE_WRAP_BUDGET / chars))
+    });
+    return {
+      layout: {
+        orientation: layout.orientation,
+        aspect: layout.aspect,
+        options: shaped,
+        rationale:
+          "One caption per sentence, wrapped at " + chars +
+          " characters per line for this " + layout.orientation + " comp."
+      },
+      captions: segmentBySentence(words, merge(shaped, options))
+    };
+  }
+
+  /**
    * Entry point.
    *
    * @param {Array} words backend word list ({text, start, end, confidence})
    * @param {object} config
    *   mode: "one"|"two"|"three"  exactly N words per caption
    *         "parts"              2-5 words, grouped on pauses
-   *         "sentence"           one sentence per caption
+   *         "sentence"           one sentence per caption, wrapped to the comp
    *         "smart"              phrase pacing sized to the comp shape
    *         "phrase"             broadcast pacing (the default)
    *         "word"               historical alias for "one"
-   *   width, height: comp dimensions, used by "smart" only
+   *   width, height: comp dimensions. "smart" sizes its captions to them;
+   *         "sentence" wraps to them. The fixed counts ignore them.
    *   options: overrides merged over the mode's defaults
    */
   // Fixed-count modes, by name. "word" is the historical spelling of "one"
@@ -369,10 +480,12 @@
       };
     }
     if (mode === "sentence") {
+      var bySentence =
+        segmentSentenceForComp(list, cfg.width, cfg.height, cfg.options);
       return {
         mode: mode,
-        layout: null,
-        captions: segmentBySentence(list, cfg.options)
+        layout: bySentence.layout,
+        captions: bySentence.captions
       };
     }
     if (mode === "smart") {
@@ -401,6 +514,7 @@
     segmentByCount: segmentByCount,
     segmentByPhrase: segmentByPhrase,
     segmentBySentence: segmentBySentence,
+    segmentSentenceForComp: segmentSentenceForComp,
     segmentSmart: segmentSmart,
     segment: segment,
     readingSpeed: readingSpeed

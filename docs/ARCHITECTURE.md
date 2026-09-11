@@ -322,12 +322,20 @@ the shipped text runs in the test with a mocked comp and null. Reading the
 expression for keywords would never have caught a right number in the wrong
 coordinate space.
 
-**Two pacing modes are offered, not seven.** `segmentation.js` implements
+**Three pacing modes are offered, not seven.** `segmentation.js` implements
 fixed-count (one/two/three), rhythm (phrase/smart/parts) and sentence modes,
 and they all still resolve — a project saved by an older version can name one.
-The panel offers **Smart** and **Word-by-Word**. Three words per caption was
-dropped because there is no editorial reason to reach for it: it is neither
-the punchy social rhythm nor a break the speaker actually made.
+The panel offers **Smart**, **Sentence** and **Word-by-Word**: cut where the
+speaker paused, cut where they punctuated, or do not group at all. Three words
+per caption stays off the list because there is no editorial reason to reach
+for it — it is neither the punchy social rhythm nor a break the speaker made.
+
+Sentence takes its line WIDTH from the comp, though never where it cuts. A
+sentence is a sentence on any comp, but 42 characters is a broadcast measure
+and on a 1080-wide frame a line that long runs off both edges — which is
+exactly what shipped in v0.4.0. The line count follows from the width, because
+`wrapLines` puts whatever will not fit on the final line rather than dropping
+it: a count set too low overflows the same way an over-wide line does.
 
 **A word held for six seconds (fixed 2026-09).** Smart occasionally stranded
 the last word of a sentence on its own layer and left it on screen for
@@ -339,6 +347,26 @@ whole music tail — and the phrase grouper, seeing a caption whose span blew
 the duration budget, closed the caption before it and left it alone. The
 chunk's duration is an upper bound on that token, not a measurement of it;
 `_MAX_FINAL_TOKEN_S` now caps it.
+
+**A word stranded on its own layer (fixed 2026-09).** The same symptom with a
+second, unrelated cause — this one in the grouping. A run closes the moment
+one more word will not fit, so the leftover became a caption however little it
+was: five evenly-spoken words against a four-word budget gave "I really
+enjoyed making" and then "this." alone, with nothing in the delivery cutting
+there. The break had landed on a word count.
+
+`rebalance()` moves that break rather than removing it, pulling words back off
+the end of the caption before until the tail reaches `minWords` — "I really
+enjoyed" / "making this." Two cuts are never moved, because they belong to the
+speaker rather than to the arithmetic: a pause long enough to break on, and a
+full stop. A short caption after either of those is correct, and "Right." is a
+caption. Nor is the caption before ever robbed below the floor, or pushed past
+the budget that closed it in the first place; when it has nothing to spare,
+the short caption stands.
+
+This applies wherever `minWords` is above 1, which today means Smart. Phrase
+keeps `minWords: 1` and so has no floor to enforce — its historical behaviour
+is deliberate.
 
 ---
 
