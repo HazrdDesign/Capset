@@ -702,7 +702,7 @@
   $("clear").addEventListener("click", clearCaptions);
   $("export-srt").addEventListener("click", exportSrt);
   $("mode").addEventListener("change", function () {
-    // Two are offered. The rest still resolve in js/lib/segmentation.js,
+    // Three are offered. The rest still resolve in js/lib/segmentation.js,
     // because they are real modes and a project saved by an earlier version
     // can name one — they simply are not choices worth putting in front of
     // someone captioning a video.
@@ -713,7 +713,7 @@
       two: "Two words per caption — balanced rhythm and readability.",
       three: "Three words per caption — smoother pacing, fewer cuts.",
       parts: "Groups 2–5 words on the pauses in the speech.",
-      sentence: "One caption per sentence, split where the speaker stops.",
+      sentence: "One caption per sentence, cut on the speaker's punctuation.",
       phrase: "Broadcast style — 42 characters per line, up to 2 lines."
     };
     $("mode-hint").textContent = hints[$("mode").value] || "";

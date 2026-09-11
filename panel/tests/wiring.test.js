@@ -343,7 +343,7 @@ test("every segmentation option is a mode the library understands", () => {
   assert.ok(block, "the segmentation select is gone");
   const offered = [...block[1].matchAll(/value="([^"]+)"/g)].map((m) => m[1]);
 
-  assert.deepStrictEqual(offered, ["smart", "one"],
+  assert.deepStrictEqual(offered, ["smart", "sentence", "one"],
     "the segmentation list changed; keep it short and keep this in step");
 
   // A value the library does not know silently falls through to phrase
