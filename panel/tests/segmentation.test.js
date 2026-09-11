@@ -135,11 +135,16 @@ test("no word is lost or duplicated during grouping", () => {
   assert.deepStrictEqual(flat, SENTENCE.map((w) => w.text));
 });
 
-test("caption timings come from their first and last words", () => {
+test("caption timings come from their words, with the end held", () => {
   const out = seg.segment(SENTENCE, { mode: "phrase" });
   for (const caption of out.captions) {
     assert.strictEqual(caption.start, caption.words[0].start);
-    assert.strictEqual(caption.end, caption.words[caption.words.length - 1].end);
+    // The end is the last word's, held on (see hold()) -- never before it,
+    // which would clear the caption while it is still being spoken.
+    const spoken = caption.words[caption.words.length - 1].end;
+    assert.ok(caption.end >= spoken, "cleared before its last word finished");
+    assert.ok(caption.end <= spoken + seg.MAX_HOLD_S + 1e-9,
+      "held " + (caption.end - spoken).toFixed(2) + "s past the speech");
     assert.ok(caption.end > caption.start);
   }
 });
@@ -345,7 +350,10 @@ test("sentence mode still caps runaway unpunctuated speech", () => {
   const out = seg.segment(words, { mode: "sentence" });
   assert.ok(out.captions.length > 1, "no cap applied: " + texts(out).join(" | "));
   out.captions.forEach((c) => {
-    assert.ok(c.end - c.start <= seg.SENTENCE_DEFAULTS.maxDurationS + 1.0);
+    // The cap governs how much SPEECH goes in a caption. What hold() adds
+    // after the last word is a separate decision, measured separately.
+    const spoken = c.words[c.words.length - 1].end - c.words[0].start;
+    assert.ok(spoken <= seg.SENTENCE_DEFAULTS.maxDurationS + 1.0);
   });
 });
 
@@ -573,32 +581,54 @@ test("a caption the budget cut runs on to the next one", () => {
     "a hole opened up where the budget cut");
 });
 
-test("a real pause still clears the screen", () => {
-  // The other half: holding type through a silence is the bug the v0.4.0
-  // notes call "a word held for six seconds", not a feature.
+test("a real silence still clears the screen", () => {
+  // Holding type through a silence is the bug the v0.4.0 notes call "a word
+  // held for six seconds", not a feature. The caption runs on past its last
+  // word, then stops; it does not reach for the next one.
   const w = [
     { text: "Done.", start: 0.00, end: 0.60 },
-    { text: "Then", start: 2.40, end: 2.70 },   // 1.8s of silence
-    { text: "again", start: 2.75, end: 3.10 }
+    { text: "Then", start: 3.40, end: 3.70 },   // 2.8s of silence
+    { text: "again", start: 3.75, end: 4.10 }
   ];
   const out = seg.segment(w, { mode: "smart", width: 1080, height: 1920 });
-  assert.strictEqual(out.captions[0].end, 0.60,
-    "the caption was held across a pause the speaker actually made");
+  assert.strictEqual(out.captions[0].end, 0.60 + seg.MAX_HOLD_S);
+  assert.ok(out.captions[0].end < out.captions[1].start,
+    "held all the way across a silence the speaker actually took");
 });
 
 test("a caption too brief to read is held, not started early", () => {
-  // minDurationS finally does something. It sat in all five defaults blocks
-  // describing this exact behaviour while nothing read it.
+  // "Wait." is spoken in 0.18s -- four frames. Nothing may move its start to
+  // buy reading time, so the time comes off the end.
   const w = [
     { text: "Wait.", start: 0.00, end: 0.18 },
-    { text: "I", start: 1.50, end: 1.60 },
-    { text: "know", start: 1.65, end: 1.90 },
-    { text: "this.", start: 1.95, end: 2.30 }
+    { text: "I", start: 2.50, end: 2.60 },
+    { text: "know", start: 2.65, end: 2.90 },
+    { text: "this.", start: 2.95, end: 3.30 }
   ];
   const out = seg.segment(w, { mode: "smart", width: 1080, height: 1920 });
   assert.strictEqual(out.captions[0].start, 0.00, "the start moved");
-  assert.strictEqual(out.captions[0].end, seg.VERTICAL_DEFAULTS.minDurationS,
-    "0.18s is under the floor and stayed there");
+  assert.strictEqual(out.captions[0].end, 0.18 + seg.MAX_HOLD_S);
+  assert.ok(out.captions[0].end - out.captions[0].start > 1.0,
+    "still on screen for " + (out.captions[0].end).toFixed(2) + "s");
+});
+
+test("the blank after a caption grows with the silence, in step", () => {
+  // This was two rules once -- bridge a hole under the ceiling, otherwise
+  // hold to a minimum -- and it jumped at the boundary: a 1.20s pause played
+  // continuous and a 1.21s pause blanked for nearly a second. One rule makes
+  // the blank grow from nothing as the silence does.
+  const blankAfter = (silence) => {
+    const out = seg.segment([
+      { text: "one", start: 0.0, end: 0.4 },
+      { text: "two", start: 0.4 + silence, end: 0.8 + silence }
+    ], { mode: "one" });
+    return out.captions[1].start - out.captions[0].end;
+  };
+  assert.strictEqual(blankAfter(seg.MAX_HOLD_S - 0.2), 0, "blanked early");
+  assert.strictEqual(blankAfter(seg.MAX_HOLD_S), 0, "blanked at the ceiling");
+  assert.ok(Math.abs(blankAfter(seg.MAX_HOLD_S + 0.01) - 0.01) < 1e-6,
+    "a hair over the ceiling blanks for " +
+    blankAfter(seg.MAX_HOLD_S + 0.01).toFixed(3) + "s, not 0.01s");
 });
 
 test("a caption is never held into the one after it", () => {
@@ -641,6 +671,7 @@ test("sentence mode does not hold type through a silence", () => {
     { text: "Later.", start: 6.00, end: 6.40 }
   ];
   const out = seg.segment(w, { mode: "sentence", width: 1080, height: 1920 });
-  assert.strictEqual(out.captions[0].end, 0.60,
+  assert.strictEqual(out.captions[0].end, 0.60 + seg.MAX_HOLD_S,
     "held for " + (out.captions[0].end - 0.60).toFixed(2) + "s of silence");
+  assert.ok(out.captions[0].end < out.captions[1].start);
 });

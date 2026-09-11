@@ -37,9 +37,7 @@
     // minWords. Only the bounded modes set minWords above 1, so this has no
     // effect on the historical ones.
     hardGapS: 1.2,
-    maxDurationS: 6.0,
-    // Below this a caption flashes; extend it if the next word allows.
-    minDurationS: 0.5
+    maxDurationS: 6.0
   };
 
   // Vertical/social: fewer words, larger type, faster cuts.
@@ -49,8 +47,7 @@
     maxWords: 4,
     maxGapS: 0.45,
     hardGapS: 0.9,
-    maxDurationS: 2.5,
-    minDurationS: 0.3
+    maxDurationS: 2.5
   };
 
   var SQUARE_DEFAULTS = {
@@ -59,8 +56,7 @@
     maxWords: 7,
     maxGapS: 0.5,
     hardGapS: 1.0,
-    maxDurationS: 3.5,
-    minDurationS: 0.4
+    maxDurationS: 3.5
   };
 
   // Sentences run as long as the speaker's sentences do, so the line budget
@@ -72,8 +68,7 @@
     minWords: 1,
     maxGapS: 99,
     hardGapS: 99,
-    maxDurationS: 8.0,
-    minDurationS: 0.5
+    maxDurationS: 8.0
   };
 
   // "Smart Parts": grouped by speech rhythm, held to 2-5 words.
@@ -84,17 +79,27 @@
     maxWords: 5,
     maxGapS: 0.35,
     hardGapS: 0.7,
-    maxDurationS: 2.5,
-    minDurationS: 0.3
+    maxDurationS: 2.5
   };
 
   var SENTENCE_END = /[.!?]["')\]]?$/;
 
-  // The longest hole worth bridging, whatever the mode. Below it the screen
-  // is blinking between captions; above it the speaker has genuinely stopped
-  // and the captions should stop with them. 0.6s is where the broadcast
-  // defaults already put that line.
-  var MAX_HOLD_S = 0.6;
+  // The longest silence a caption is held across.
+  //
+  // Where to CUT and whether to BLANK THE SCREEN are different questions, and
+  // tying the second to the first was wrong. A 0.5s pause is a good place to
+  // end a caption -- it is how the speaker phrased the line -- and a terrible
+  // place to show nothing, because at that length the screen just flickers.
+  // Reading each mode's maxGapS as both left Smart blanking four times in a
+  // twenty-second clip, twice in the middle of a sentence.
+  //
+  // So the caption simply stays up until the next one arrives, and this is
+  // the one thing that stops it: longer than any ordinary pause between
+  // phrases or sentences, shorter than a beat a speaker takes on purpose.
+  // Past it they have genuinely stopped and the captions stop with them --
+  // without that, a caption sits on screen through a silence, which is the
+  // "word held for six seconds" bug in ARCHITECTURE.md.
+  var MAX_HOLD_S = 1.2;
 
   function assign(target, source) {
     if (!source) return target;
@@ -207,44 +212,33 @@
    *   - a caption the budget cut mid-breath clears a frame or two before the
    *     next one arrives, and the screen blinks between them;
    *   - a caption holding one short word -- "Wait." at 0.18s -- is gone
-   *     before it can be read. This is what minDurationS has described in
-   *     every defaults block since the first version while nothing read it.
+   *     before it can be read.
    *
-   * Both are answered by holding the caption longer, never by starting it
-   * sooner. A hole short enough to be a blink rather than a beat is where
-   * the arithmetic cut, not a pause the speaker made, so the caption simply
-   * runs to the next one. A real pause still clears the screen: type held
-   * through a silence is the "word held for six seconds" bug in
-   * ARCHITECTURE.md, not a feature.
+   * One rule answers both, and only ever by holding a caption longer: it
+   * runs on for MAX_HOLD_S past its last word, or until the next caption
+   * starts, whichever comes first. Speech that keeps going gives the next
+   * caption inside that window, so the screen never blanks between them; a
+   * silence longer than it clears the screen, because by then the speaker
+   * really has stopped.
    *
-   * Nothing is ever held into the caption after it. Where the recogniser
-   * hands back overlapping words -- it does, at chunk boundaries -- that cap
-   * pulls the end BACK instead, because two caption layers lit at once is
-   * worse than one a few frames short.
+   * Being one rule matters. As two -- bridge a hole under the threshold,
+   * otherwise hold to a minimum -- the behaviour jumped at the boundary: a
+   * 1.20s pause played continuous and a 1.21s pause blanked for nearly a
+   * second. Written this way the blank grows from nothing as the silence
+   * does, which is what it looks like it should do.
    */
-  function hold(captions, opts) {
-    // A mode may bridge less than this, never more. Sentence mode sets
-    // maxGapS to 99 to say "never CUT on a pause", and that must not be read
-    // as "hold type through any silence" -- the two thresholds happen to
-    // share a name, not a meaning.
-    var bridge = Math.min(opts.maxGapS, MAX_HOLD_S);
-
+  function hold(captions) {
     for (var i = 0; i < captions.length; i++) {
-      var caption = captions[i];
       var next = captions[i + 1];
-      var limit = next ? next.start : Infinity;
-      var end = caption.end;
-
-      if (next && next.start - end <= bridge) end = limit;
-      if (end - caption.start < opts.minDurationS) {
-        end = Math.min(caption.start + opts.minDurationS, limit);
-      }
-      // This cannot invert a caption: the words arrive ordered by start, so
-      // the next caption never begins before this one does, and both rules
-      // above are bounded by it. Contradictory timings invert in
-      // buildCaption, before ever reaching here, and the host gives a
-      // zero-length layer its one frame.
-      caption.end = end;
+      // Never into the caption after it: where the recogniser hands back
+      // overlapping words, which it does at chunk boundaries, this pulls the
+      // end BACK. Two caption layers lit at once is worse than one a few
+      // frames short. It cannot invert a caption -- words arrive ordered by
+      // start, so the next caption never begins before this one does.
+      captions[i].end = Math.min(
+        captions[i].end + MAX_HOLD_S,
+        next ? next.start : Infinity
+      );
     }
     return captions;
   }
@@ -264,7 +258,7 @@
     for (var i = 0; i < words.length; i += step) {
       captions.push(buildCaption(words.slice(i, i + step), opts));
     }
-    return hold(captions, opts);
+    return hold(captions);
   }
 
   /** Length of these words once joined with single spaces. */
@@ -401,7 +395,7 @@
     var groups = rebalance(groupByPhrase(words, opts), opts);
     return hold(groups.map(function (group) {
       return buildCaption(group, opts);
-    }), opts);
+    }));
   }
 
   /**
@@ -439,7 +433,7 @@
       if (SENTENCE_END.test(word.text)) flush();
     }
     flush();
-    return hold(captions, opts);
+    return hold(captions);
   }
 
   /**
@@ -570,6 +564,7 @@
     SQUARE_DEFAULTS: SQUARE_DEFAULTS,
     SENTENCE_DEFAULTS: SENTENCE_DEFAULTS,
     PARTS_DEFAULTS: PARTS_DEFAULTS,
+    MAX_HOLD_S: MAX_HOLD_S,
     COUNT_MODES: COUNT_MODES,
     chooseLayout: chooseLayout,
     wrapLines: wrapLines,
