@@ -1564,3 +1564,54 @@ test("no path at all is not an error", () => {
   const host = load();
   assert.strictEqual(host.call("capsetDiscardRender", {}).removed, false);
 });
+
+
+// --- undo groups -------------------------------------------------------------
+
+test("no undo group is open while the render queue runs", () => {
+  // Reported from After Effects: every auto-caption left the host warning
+  // "Undo group mismatch, will attempt to fix" the next time a caption layer
+  // was moved. AE keeps its own undo bookkeeping during a render, so a script
+  // group held open across one comes back unbalanced — and the warning
+  // surfaces later, on the next undoable thing the user does, which makes it
+  // look like the captions broke the project.
+  const h = load();
+  withAudio(h);
+  h.call("capsetRenderAudio", { scope: "composition" });
+  assert.strictEqual(h.fake.project.renderQueue.undoDepthAtRender, 0,
+    "rendered with " + h.fake.project.renderQueue.undoDepthAtRender +
+    " undo group(s) open");
+});
+
+test("rendering audio leaves the undo stack balanced", () => {
+  const h = load();
+  withAudio(h);
+  h.call("capsetRenderAudio", { scope: "composition" });
+  assert.strictEqual(h.fake.app._undoStack.length, 0,
+    "left " + h.fake.app._undoStack.length + " undo group(s) open");
+});
+
+test("a failed render still leaves the undo stack balanced", () => {
+  // The error path is where an unbalanced group is easiest to leave behind,
+  // and it is the path a user hits when something is wrong already.
+  const h = load({ templates: [] });
+  withAudio(h);
+  // Fails on the missing audio output template, having got as far as opening
+  // the setup group — which is the point.
+  assert.throws(() => h.call("capsetRenderAudio", { scope: "composition" }),
+    /output module template/);
+  assert.strictEqual(h.fake.app._undoStack.length, 0,
+    "left " + h.fake.app._undoStack.length + " undo group(s) open after a failure");
+});
+
+test("the work area is still restored after a render", () => {
+  // It is restored in the teardown group now rather than the setup one, so
+  // the thing that group exists for is worth asserting directly.
+  const h = load();
+  withAudio(h);
+  h.comp.workAreaStart = 1.5;
+  h.comp.workAreaDuration = 2.0;
+  h.call("capsetRenderAudio", { scope: "composition" });
+  assert.strictEqual(h.comp.workAreaStart, 1.5);
+  assert.strictEqual(h.comp.workAreaDuration, 2.0);
+});

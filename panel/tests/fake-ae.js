@@ -371,6 +371,10 @@ class RenderQueue {
     // Every item render() actually rendered, in order — the whole point of
     // the queue fake, since renderQueue.render() renders EVERYTHING enabled.
     this.rendered = [];
+    // How deep app's undo stack was when render() ran. After Effects does its
+    // own undo bookkeeping during a render, so a script group held open
+    // across one comes back unbalanced.
+    this.undoDepthAtRender = null;
     this.items = {
       add: (comp) => {
         const item = new RenderQueueItem(this, comp, this._templates);
@@ -387,6 +391,7 @@ class RenderQueue {
     return found;
   }
   render() {
+    this.undoDepthAtRender = app._undoStack.length;
     this._items.forEach((item) => {
       if (!item.render) return;
       this.rendered.push(item);

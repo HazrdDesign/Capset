@@ -860,6 +860,21 @@ function capsetRenderAudio(payloadJson) {
 
         // Only ours. See capsetSuspendQueue.
         suspended = capsetSuspendQueue(item);
+
+        // Close our undo group BEFORE rendering, and do not hold one across
+        // the render.
+        //
+        // After Effects does its own undo bookkeeping while the render queue
+        // runs. A script group held open across it comes back unbalanced, and
+        // the host then says "Undo group mismatch, will attempt to fix" --
+        // not at render time, but the next time the user does something
+        // undoable, so it surfaces as a warning when they nudge a caption
+        // layer and reads like the captions broke something.
+        if (undoOpen) {
+            app.endUndoGroup();
+            undoOpen = false;
+        }
+
         app.project.renderQueue.render();
 
         // AE appends its own extension when the template disagrees with the
@@ -917,21 +932,35 @@ function capsetRenderAudio(payloadJson) {
     } catch (e) {
         return capsetErr(e.message);
     } finally {
-        // Restore before anything else: leaving a user's queue disabled is a
-        // silent failure they would discover hours later, when the render
-        // they set going overnight turns out not to have run.
-        capsetResumeQueue(suspended);
-        capsetRestoreSolo(soloRestore);
-        if (item !== null) {
-            try { item.remove(); } catch (e) {}
+        // The setup group is normally already closed by this point -- it is
+        // shut before the render. It is still open only when something threw
+        // on the way there, and the teardown below belongs in a group of its
+        // own either way: these are the changes worth being one undo step,
+        // and putting them in the setup group would mean holding that group
+        // across the render again.
+        if (undoOpen) {
+            app.endUndoGroup();
+            undoOpen = false;
         }
-        if (comp && savedStart !== null) {
-            try {
-                comp.workAreaStart = savedStart;
-                comp.workAreaDuration = savedDuration;
-            } catch (e) {}
+        app.beginUndoGroup("Capset: restore after render");
+        try {
+            // Restore before anything else: leaving a user's queue disabled
+            // is a silent failure they would discover hours later, when the
+            // render they set going overnight turns out not to have run.
+            capsetResumeQueue(suspended);
+            capsetRestoreSolo(soloRestore);
+            if (item !== null) {
+                try { item.remove(); } catch (e) {}
+            }
+            if (comp && savedStart !== null) {
+                try {
+                    comp.workAreaStart = savedStart;
+                    comp.workAreaDuration = savedDuration;
+                } catch (e) {}
+            }
+        } finally {
+            app.endUndoGroup();
         }
-        if (undoOpen) app.endUndoGroup();
     }
 }
 
