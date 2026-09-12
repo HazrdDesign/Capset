@@ -675,3 +675,151 @@ test("sentence mode does not hold type through a silence", () => {
     "held for " + (out.captions[0].end - 0.60).toFixed(2) + "s of silence");
   assert.ok(out.captions[0].end < out.captions[1].start);
 });
+
+
+// --- cutting on the speech, not on the word count ---------------------------
+
+/**
+ * Words from [text, spokenSeconds] pairs, where a null text is a silence.
+ * Ordinary articulation leaves 0.06s between words unless said otherwise.
+ */
+function spoken(spec, spacing = 0.06) {
+  let t = 0;
+  const out = [];
+  for (const [text, dur] of spec) {
+    if (text === null) { t += dur; continue; }
+    out.push({ text, start: +t.toFixed(3), end: +(t + dur).toFixed(3) });
+    t += dur + spacing;
+  }
+  return out;
+}
+
+const REPORTED_LINE = spoken([
+  ["Going",.30],["into",.20],["my",.14],["career,",.40],["I",.12],["think",.28],
+  ["it's",.20],["more",.26],["important",.44],["for",.16],["me",.14],["to",.16],
+  [null,.35],
+  ["find",.26],["the",.12],["place",.30],["that",.18],["really",.30],["finds",.30],
+  ["me",.14],["and",.16],["chooses",.38],["me",.14],["as",.14],["a",.10],["person,",.40],
+  [null,.35],
+  ["holds",.30],["me",.14],["with",.18],["value",.32],["and",.16],["supports",.44],
+  ["me.",.24]
+]);
+
+test("a caption the budget closes is cut at the speaker's breath", () => {
+  // Reported from After Effects. The line filled up at fourteen words twice,
+  // and fourteen words is a number rather than a place: it cut after "find
+  // the" and after "holds me with", mid-phrase both times. The speaker had
+  // paused after "for me to" and after "as a person," -- 0.35s, plainly
+  // audible, and both under the 0.6s that counts as a pause worth cutting on.
+  assert.deepStrictEqual(
+    texts(seg.segment(REPORTED_LINE, { mode: "smart", width: 1920, height: 1080 })),
+    [
+      "Going into my career, I think it's more important for me to",
+      "find the place that really finds me and chooses me as a person,",
+      "holds me with value and supports me."
+    ]
+  );
+});
+
+test("a breath too short to hear does not move the cut", () => {
+  // Below MIN_BREATH_S there is no break to cut on, however much it stands
+  // out from the gaps around it. Moving the cut for one would only make
+  // captions shorter than they need to be.
+  const w = spoken([
+    ["one",.2],["two",.2],["three",.2],["four",.2],["five",.2],["six",.2],
+    ["seven",.2],["eight",.2],["nine",.2],["ten",.2],["eleven",.2],
+    [null,.09],                                  // 0.09 + 0.03 spacing = 0.12s
+    ["twelve",.2],["thirteen",.2],["fourteen",.2],["fifteen",.2],["sixteen",.2]
+  ], 0.03);
+  const out = seg.segment(w, { mode: "smart", width: 1920, height: 1080 });
+  assert.strictEqual(out.captions[0].words.length, 14,
+    "cut moved to a " + seg.MIN_BREATH_S + "s-or-under gap: " + texts(out)[0]);
+});
+
+test("a gap that does not stand out from the speaker does not move the cut", () => {
+  // Someone slow and deliberate leaves air between every word. A gap a little
+  // wider than their normal one is not a breath, it is them talking, and
+  // cutting on it would chop the line for no reason.
+  const w = spoken([
+    ["one",.2],["two",.2],["three",.2],["four",.2],["five",.2],["six",.2],
+    ["seven",.2],["eight",.2],["nine",.2],["ten",.2],["eleven",.2],
+    [null,.15],                                  // 0.45s against a 0.30s norm
+    ["twelve",.2],["thirteen",.2],["fourteen",.2],["fifteen",.2],["sixteen",.2]
+  ], 0.30);
+  // This window is closed by the duration cap rather than the word count --
+  // slow speech runs out of seconds first -- which is budget either way. The
+  // claim is only that the cut did not move back onto the 0.45s gap, so it
+  // is the word after that gap that has to still be there.
+  const out = seg.segment(w, { mode: "smart", width: 1920, height: 1080 });
+  assert.ok(/ twelve$/.test(texts(out)[0]),
+    "cut moved for a gap only 1.5x the median: " + texts(out)[0]);
+});
+
+test("a breath early in the window does not leave a half-empty caption", () => {
+  // The budget is what put us here, so the caption is entitled to its line.
+  // A break three words in is a real breath and still the wrong place.
+  const w = spoken([
+    ["one",.2],["two",.2],["three",.2],
+    [null,.34],                                  // 0.40s, but far too early
+    ["four",.2],["five",.2],["six",.2],["seven",.2],["eight",.2],["nine",.2],
+    ["ten",.2],["eleven",.2],["twelve",.2],["thirteen",.2],["fourteen",.2],
+    ["fifteen",.2],["sixteen",.2]
+  ]);
+  const out = seg.segment(w, { mode: "smart", width: 1920, height: 1080 });
+  assert.ok(out.captions[0].words.length >= 7,
+    "cut at word " + out.captions[0].words.length + " of a 14-word window");
+});
+
+test("the speaker's own pause still cuts exactly where it falls", () => {
+  // Nothing above may weaken this: a gap over maxGapS ends the caption there
+  // whatever the budget has left, and bestCut never sees it.
+  const w = spoken([
+    ["stop",.3],["right",.3],["there",.3],
+    [null,.8],                                   // 0.86s — over maxGapS
+    ["and",.2],["then",.2],["carry",.3],["on",.2]
+  ]);
+  assert.deepStrictEqual(
+    texts(seg.segment(w, { mode: "smart", width: 1920, height: 1080 }))[0],
+    "stop right there"
+  );
+});
+
+test("sentence mode does not strand the last word of a long sentence", () => {
+  // Reported alongside the above: one sentence running past the duration cap
+  // put "me." on a layer of its own. A cut the cap made is a cut arithmetic
+  // made, exactly like a phrase cut by the word budget, and gets the same
+  // treatment.
+  const w = spoken(
+    ("Going into my career I think it is more important for me to find the " +
+     "place that really finds me and chooses me as a person holds me with " +
+     "value and supports me.").split(" ").map((t) => [t, 0.22]), 0.025);
+  const out = seg.segment(w, { mode: "sentence", width: 1920, height: 1080 });
+  assert.ok(out.captions.length > 1, "the duration cap did not fire");
+  out.captions.forEach((c) => assert.ok(c.words.length >= 2,
+    "stranded " + JSON.stringify(c.text)));
+});
+
+test("sentence mode still lets a short sentence be short", () => {
+  // The floor must not glue two sentences together to make a word count.
+  const w = spoken([["No.",.3],["Stop.",.35],["Listen",.3],["to",.12],["me.",.25]]);
+  assert.deepStrictEqual(
+    texts(seg.segment(w, { mode: "sentence", width: 1920, height: 1080 })),
+    ["No.", "Stop.", "Listen to me."]
+  );
+});
+
+test("two equally good breaths cut at the later one", () => {
+  // The caption should be as full as it can be, so a tie goes to the break
+  // that uses more of the line.
+  const w = spoken([
+    ["one",.2],["two",.2],["three",.2],["four",.2],["five",.2],["six",.2],
+    ["seven",.2],["eight",.2],
+    [null,.24],                                  // 0.30s
+    ["nine",.2],["ten",.2],["eleven",.2],
+    [null,.24],                                  // 0.30s — the same, later
+    ["twelve",.2],["thirteen",.2],["fourteen",.2],["fifteen",.2],["sixteen",.2]
+  ]);
+  assert.ok(/ eleven$/.test(texts(seg.segment(w, { mode: "smart", width: 1920, height: 1080 }))[0]),
+    "cut at the earlier of two equal breaths: " +
+    texts(seg.segment(w, { mode: "smart", width: 1920, height: 1080 }))[0]);
+});

@@ -65,7 +65,11 @@
     maxCharsPerLine: 42,
     maxLines: 3,
     maxWords: 40,
-    minWords: 1,
+    // A sentence cut by the duration cap is cut by arithmetic, exactly like a
+    // phrase cut by the word budget, and strands a word the same way: the
+    // reported case ended "...and supports" / "me." rebalance() needs a floor
+    // above 1 to have anything to enforce.
+    minWords: 2,
     maxGapS: 99,
     hardGapS: 99,
     maxDurationS: 8.0
@@ -100,6 +104,15 @@
   // without that, a caption sits on screen through a silence, which is the
   // "word held for six seconds" bug in ARCHITECTURE.md.
   var MAX_HOLD_S = 1.2;
+
+  // The shortest silence between two words that is heard as a break rather
+  // than as ordinary articulation. Below this there is nothing to cut on.
+  var MIN_BREATH_S = 0.15;
+
+  // ...and how far it must stand out from the speaker's own rhythm to count.
+  // Measured against the median gap around it, so the same number works for
+  // someone rattling through a script and someone leaving air between words.
+  var BREATH_RATIO = 2;
 
   function assign(target, source) {
     if (!source) return target;
@@ -274,65 +287,125 @@
   }
 
   /**
-   * Group words into phrase-sized runs.
+   * How far this caption may run, and whether it stopped because it wanted to.
    *
-   * A run is closed when adding the next word would exceed the character or
-   * word budget, when the pause before it is long enough to be a natural
-   * break, when the run has gone on too long, or after sentence-ending
-   * punctuation.
+   * Three things end a run. Two are the speaker's -- a pause long enough to
+   * break on, and a sentence ending -- and land exactly where they fall. The
+   * third is the budget, which lands wherever the arithmetic runs out, and
+   * that is a position with no meaning at all. `byBudget` says which, because
+   * only the third is worth moving.
+   */
+  function reach(words, start, opts) {
+    var budget = opts.maxCharsPerLine * opts.maxLines;
+    var length = words[start].text.length;
+    var end = start + 1;
+
+    if (SENTENCE_END.test(words[start].text)) {
+      return { end: end, byBudget: false };
+    }
+
+    while (end < words.length) {
+      var word = words[end];
+      var gap = word.start - words[end - 1].end;
+      var count = end - start;
+
+      // A floor, so a half-second pause after the first word of a phrase
+      // cannot emit a one-word caption and degrade the mode into word-by-word
+      // on hesitant speech. Not absolute: a stop long enough to be
+      // punctuation breaks anyway, or the start of a new thought gets glued
+      // to the end of the old one.
+      if ((count >= opts.minWords || gap > opts.hardGapS) && gap > opts.maxGapS) {
+        return { end: end, byBudget: false };
+      }
+
+      if (length + 1 + word.text.length > budget ||
+          count >= opts.maxWords ||
+          word.end - words[start].start > opts.maxDurationS) {
+        return { end: end, byBudget: true };
+      }
+
+      length += 1 + word.text.length;
+      end++;
+      if (SENTENCE_END.test(word.text)) {
+        return { end: end, byBudget: false };
+      }
+    }
+    return { end: end, byBudget: false };
+  }
+
+  /**
+   * Where to cut a caption the budget closed.
+   *
+   * This is the reported bug. On a 16:9 comp a caption fills up at fourteen
+   * words, and fourteen words is not a place -- it is a number. The line
+   *
+   *   "Going into my career, I think it's more important for me to find the"
+   *   "place that really finds me and chooses me as a person, holds me with"
+   *
+   * is cut twice in the middle of a phrase, and the speaker had paused in
+   * neither spot. They paused after "for me to" and after "as a person," --
+   * 0.35s each, real breaths, plainly audible, and both ignored because they
+   * are under the 0.6s that counts as a pause worth CUTTING on.
+   *
+   * Those two thresholds are doing different jobs. maxGapS asks "is this
+   * break so clear the caption should end here even though it has room
+   * left?" -- a high bar, correctly. This asks a much easier question: the
+   * caption has to end somewhere in the next few words, so which of them is
+   * least bad? A 0.35s breath is an obvious answer to the second and an
+   * obvious no to the first.
+   *
+   * So: the largest gap in the back half of the window. The back half because
+   * the budget is what put us here -- a break three words in would throw away
+   * line space the caption is entitled to, and a half-empty caption is its
+   * own kind of wrong.
+   *
+   * What counts as a gap at all is measured against the speaker rather than
+   * the clock. A pause has to clear MIN_BREATH_S, below which nobody hears a
+   * break, AND stand out from the rhythm of the words around it: 0.2s is a
+   * real pause from someone speaking quickly and nothing at all from someone
+   * slow and deliberate. Judging it against their own median keeps this
+   * working at both speeds without a threshold per speaker. When no gap
+   * clears both, the cut stays where the budget put it -- in speech with no
+   * breaks in it there is nothing better, and inventing one would only make
+   * captions shorter for no reason.
+   */
+  function bestCut(words, start, limit, opts) {
+    var floor = Math.max(1, opts.minWords || 1);
+    var earliest = Math.max(start + floor,
+                            start + Math.ceil((limit - start) / 2));
+    if (earliest > limit) return limit;
+
+    var gaps = [];
+    for (var k = start + 1; k <= limit; k++) {
+      gaps.push(words[k].start - words[k - 1].end);
+    }
+    var sorted = gaps.slice().sort(function (a, b) { return a - b; });
+    var median = sorted[Math.floor(sorted.length / 2)];
+
+    var at = limit;
+    // Must be beaten, not matched, to move the cut off the budget's position.
+    var best = Math.max(MIN_BREATH_S, median * BREATH_RATIO);
+    for (var c = earliest; c <= limit; c++) {
+      var gap = words[c].start - words[c - 1].end;
+      // >= so that when two breaths are equally good the later one wins and
+      // the caption is as full as it can be.
+      if (gap >= best) { best = gap; at = c; }
+    }
+    return at;
+  }
+
+  /**
+   * Group words into phrase-sized runs, cutting where the speech does.
    */
   function groupByPhrase(words, opts) {
-    var budget = opts.maxCharsPerLine * opts.maxLines;
     var groups = [];
-    var current = [];
-
-    function flush() {
-      if (current.length) {
-        groups.push(current);
-        current = [];
-      }
+    var start = 0;
+    while (start < words.length) {
+      var run = reach(words, start, opts);
+      var end = run.byBudget ? bestCut(words, start, run.end, opts) : run.end;
+      groups.push(words.slice(start, end));
+      start = end;
     }
-
-    for (var i = 0; i < words.length; i++) {
-      var word = words[i];
-
-      if (current.length) {
-        var previous = current[current.length - 1];
-        var gap = word.start - previous.end;
-        var textLength = joinedLength(current) + 1 + word.text.length;
-        var span = word.end - current[0].start;
-
-        // A floor, so "2 to 5 words" means what it says. Without it a
-        // half-second pause after the first word of a phrase emits a
-        // one-word caption, and the mode silently degrades into word-by-word
-        // on hesitant speech -- exactly the delivery where it happens most.
-        //
-        // But the floor is not absolute. A real stop -- someone finishing a
-        // thought, "Right. ... Anyway" -- must still break, or the first
-        // words of the new thought get glued onto the end of the old one,
-        // which reads worse than a short caption. hardGapS is where a pause
-        // stops being hesitation and starts being punctuation. (ASR
-        // punctuation is unreliable, so this cannot be left to SENTENCE_END.)
-        var atFloor = current.length >= opts.minWords;
-        var realStop = gap > opts.hardGapS;
-
-        if (
-          ((atFloor || realStop) && gap > opts.maxGapS) ||
-          textLength > budget ||
-          current.length >= opts.maxWords ||
-          span > opts.maxDurationS
-        ) {
-          flush();
-        }
-      }
-
-      current.push(word);
-      // Punctuation still wins over the floor: a caption that runs past the
-      // end of a sentence to make up its word count reads worse than a short
-      // one, and "Right." is a legitimate caption.
-      if (SENTENCE_END.test(word.text)) flush();
-    }
-    flush();
     return groups;
   }
 
@@ -437,6 +510,22 @@
   }
 
   /**
+   * One caption per sentence, with the duration cap's cuts tidied.
+   *
+   * segmentBySentence groups; this is where a cut the cap made gets the same
+   * treatment a phrase cut gets. rebalance() only ever moves a cut that
+   * landed on arithmetic: it leaves anything after a full stop alone, which
+   * in this mode is every cut but the capped ones. "No." stays "No."
+   */
+  function sentenceCaptions(words, opts) {
+    var captions = segmentBySentence(words, opts);
+    var groups = rebalance(captions.map(function (c) { return c.words; }), opts);
+    return hold(groups.map(function (group) {
+      return buildCaption(group, opts);
+    }));
+  }
+
+  /**
    * Choose a shape from the comp, then group on the pauses within it.
    *
    * This is the only "smart" mode. It used to be one of two -- comp-aware
@@ -493,7 +582,7 @@
           "One caption per sentence, wrapped at " + chars +
           " characters per line for this " + layout.orientation + " comp."
       },
-      captions: segmentBySentence(words, merge(shaped, options))
+      captions: sentenceCaptions(words, merge(shaped, options))
     };
   }
 
@@ -565,6 +654,8 @@
     SENTENCE_DEFAULTS: SENTENCE_DEFAULTS,
     PARTS_DEFAULTS: PARTS_DEFAULTS,
     MAX_HOLD_S: MAX_HOLD_S,
+    MIN_BREATH_S: MIN_BREATH_S,
+    BREATH_RATIO: BREATH_RATIO,
     COUNT_MODES: COUNT_MODES,
     chooseLayout: chooseLayout,
     wrapLines: wrapLines,
