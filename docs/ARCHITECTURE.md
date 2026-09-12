@@ -368,6 +368,75 @@ This applies wherever `minWords` is above 1, which today means Smart. Phrase
 keeps `minWords: 1` and so has no floor to enforce — its historical behaviour
 is deliberate.
 
+**When a caption is on screen (added 2026-09).** A caption goes up the instant
+its first word is spoken and nothing may change that — sync against the audio
+is the only reference a viewer has, so reading time is never bought by starting
+a caption early. The END is free, and leaving it exactly on the last word was
+wrong twice over: a caption the budget cut mid-breath cleared a frame or two
+before its successor arrived and the screen blinked between them, and a caption
+holding one short word ("Wait." at 0.18s) was gone before it could be read.
+
+One rule in `hold()` answers both, and only ever by holding a caption longer:
+
+```
+caption.end = min(last word's end + MAX_HOLD_S, next caption's start)
+```
+
+Speech that keeps going puts the next caption inside that window, so the screen
+never blanks between them. A silence longer than `MAX_HOLD_S` clears it,
+because by then the speaker really has stopped — without that bound a caption
+sits through the silence, which is the "word held for six seconds" bug above.
+
+**Where to CUT and whether to BLANK are different questions.** Tying the second
+to the first was the mistake worth recording. Each mode's `maxGapS` says where
+a pause is a good place to END a caption — 0.45s on a vertical comp, because
+that is how the speaker phrased the line. It is a terrible place to show
+nothing: at that length the screen just flickers. Holding only to `maxGapS`
+left Smart blanking four times in a twenty-second clip, twice mid-sentence.
+`MAX_HOLD_S` (1.2s) is the separate, single answer to the second question:
+longer than any ordinary pause between phrases or sentences, shorter than a
+beat a speaker takes on purpose.
+
+**One rule, not two.** The first version bridged a hole under the ceiling and
+otherwise held to a per-mode `minDurationS`, and that jumped at the boundary: a
+1.20s pause played continuous, a 1.21s pause blanked for nearly a second.
+Written as one `min()` the blank grows from nothing as the silence does. It
+also made `minDurationS` provably dead — `end + 1.2` exceeds `start + 0.5` for
+every caption, and both are capped by the same limit — so it was removed from
+all five defaults blocks rather than left sitting there looking like a knob.
+
+Nothing is ever held into the caption after it. Where the recogniser hands back
+overlapping words, which it does at chunk boundaries, that cap pulls the end
+back instead: two caption layers lit at once is worse than one a few frames
+short.
+
+Word-by-word is the one place captions are still brief, and irreducibly so. A
+word spoken in 0.12s cannot stay up past the next word without the next caption
+arriving late, which is the one thing the start rule forbids. That is the mode,
+not a defect in it.
+
+**A work-area rebuild replaces only the work area (added 2026-09).** Adding
+captions clears the Capset layers already in the comp, because running it
+twice should not leave two sets fighting over the same frames. With in and out
+points set it cleared them anyway — so redoing one line word by word threw
+away the whole pass around it. The panel now sends `replaceRange` for a
+work-area run (and nothing for a full-composition one, which still replaces
+everything), and the host removes only the caption layers overlapping it. That
+is what makes "Smart over the whole comp, then Word-by-Word over one line"
+work.
+
+Overlap is half-open at both ends. Captions sit end to end now that each is
+held until the next arrives, so one out point IS the next in point, and
+counting a touch as an overlap would take the neighbour on each side of every
+range. A caption straddling an edge IS replaced: leaving it would put two
+captions on screen at once, which is worse than replacing slightly more than
+was asked.
+
+A range cannot reach inside a precomp — those captions are layers of another
+composition, and removing the one layer holding them takes the ones outside
+the range too. Nothing in the host can prevent that, so it is reported and the
+panel says so rather than losing them quietly.
+
 ---
 
 ## 4b. SRT export

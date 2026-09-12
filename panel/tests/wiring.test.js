@@ -372,3 +372,22 @@ test("captions are inserted without an animation", () => {
   assert.strictEqual(animationArg[1], "null",
     "the insert path passes " + animationArg[1] + "; the Motion tab applies those");
 });
+
+test("a work-area run tells the host to replace only that range", () => {
+  // The scoping itself lives in the host and is covered there. But the host
+  // only scopes when the panel hands it a range, and a panel that sends null
+  // for every run looks exactly like the feature not existing. main.js cannot
+  // be executed under node, so this is a source check.
+  const at = main.indexOf("capsetBuildCaptions");
+  assert.notStrictEqual(at, -1, "the capsetBuildCaptions call has moved");
+  const call = main.slice(at, at + 1400);
+
+  const arg = call.match(/^\s*replaceRange:\s*(.+?),?\s*$/m);
+  assert.ok(arg, "the build payload carries no replaceRange");
+  assert.match(arg[1], /payload\.range/,
+    "replaceRange is " + arg[1] + ", which the host cannot scope by");
+
+  assert.match(main, /range:\s*settings\.scope === "inout"/,
+    "the replace range is not tied to the In to Out scope, so either every " +
+    "run is partial or none is");
+});

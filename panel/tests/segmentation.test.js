@@ -72,12 +72,14 @@ test("a single word longer than the budget does not loop forever", () => {
 
 // --- word mode ------------------------------------------------------------
 
-test("word mode emits one caption per word with its own timing", () => {
+test("word mode emits one caption per word, starting on that word", () => {
   const out = seg.segment(SENTENCE, { mode: "word" });
   assert.strictEqual(out.captions.length, SENTENCE.length);
   assert.strictEqual(out.captions[0].text, "the");
   assert.strictEqual(out.captions[0].start, SENTENCE[0].start);
-  assert.strictEqual(out.captions[0].end, SENTENCE[0].end);
+  // The START is the word's, exactly. The END is held to the next caption
+  // rather than blinking off for the 0.05s between words -- see hold().
+  assert.strictEqual(out.captions[0].end, out.captions[1].start);
 });
 
 // --- phrase mode ----------------------------------------------------------
@@ -133,11 +135,16 @@ test("no word is lost or duplicated during grouping", () => {
   assert.deepStrictEqual(flat, SENTENCE.map((w) => w.text));
 });
 
-test("caption timings come from their first and last words", () => {
+test("caption timings come from their words, with the end held", () => {
   const out = seg.segment(SENTENCE, { mode: "phrase" });
   for (const caption of out.captions) {
     assert.strictEqual(caption.start, caption.words[0].start);
-    assert.strictEqual(caption.end, caption.words[caption.words.length - 1].end);
+    // The end is the last word's, held on (see hold()) -- never before it,
+    // which would clear the caption while it is still being spoken.
+    const spoken = caption.words[caption.words.length - 1].end;
+    assert.ok(caption.end >= spoken, "cleared before its last word finished");
+    assert.ok(caption.end <= spoken + seg.MAX_HOLD_S + 1e-9,
+      "held " + (caption.end - spoken).toFixed(2) + "s past the speech");
     assert.ok(caption.end > caption.start);
   }
 });
@@ -249,13 +256,16 @@ test("count modes ignore pauses entirely", () => {
     ["a b", "c d"]);
 });
 
-test("count timings come from the words, not the grouping", () => {
+test("count captions start on their words, not on the grouping", () => {
   const words = evenWords("alpha bravo charlie delta");
   const out = seg.segment(words, { mode: "two" });
   assert.strictEqual(out.captions[0].start, words[0].start);
-  assert.strictEqual(out.captions[0].end, words[1].end);
   assert.strictEqual(out.captions[1].start, words[2].start);
-  assert.strictEqual(out.captions[1].end, words[3].end);
+  // Ends are held (see hold()), so they are the next caption's start rather
+  // than the last word's end -- the one place the two differ.
+  assert.strictEqual(out.captions[0].end, words[1].end + (words[2].start - words[1].end));
+  assert.strictEqual(out.captions[0].end, out.captions[1].start);
+  assert.ok(out.captions[1].end >= words[3].end, "the last caption was cut short");
 });
 
 test("one and word are the same mode", () => {
@@ -340,7 +350,10 @@ test("sentence mode still caps runaway unpunctuated speech", () => {
   const out = seg.segment(words, { mode: "sentence" });
   assert.ok(out.captions.length > 1, "no cap applied: " + texts(out).join(" | "));
   out.captions.forEach((c) => {
-    assert.ok(c.end - c.start <= seg.SENTENCE_DEFAULTS.maxDurationS + 1.0);
+    // The cap governs how much SPEECH goes in a caption. What hold() adds
+    // after the last word is a separate decision, measured separately.
+    const spoken = c.words[c.words.length - 1].end - c.words[0].start;
+    assert.ok(spoken <= seg.SENTENCE_DEFAULTS.maxDurationS + 1.0);
   });
 });
 
@@ -538,4 +551,127 @@ test("sentence mode reports the layout it wrapped to", () => {
     { mode: "sentence", width: 1080, height: 1920 });
   assert.strictEqual(out.layout.orientation, "vertical");
   assert.match(out.layout.rationale, /sentence/i);
+});
+
+
+// --- when a caption is on screen --------------------------------------------
+
+test("every caption starts exactly on its first word, in every mode", () => {
+  // The one invariant hold() may never trade away. Type that leads or lags
+  // the voice is wrong against the only reference the viewer has.
+  const w = words("here is a line of speech with a pause in it".split(" "));
+  w[6].start += 1.4;                       // shove a real pause into the middle
+  w[6].end += 1.4;
+  for (let i = 7; i < w.length; i++) { w[i].start += 1.4; w[i].end += 1.4; }
+
+  for (const mode of ["smart", "sentence", "one", "two", "three", "phrase", "parts"]) {
+    seg.segment(w, { mode, width: 1080, height: 1920 }).captions.forEach((c) => {
+      assert.strictEqual(c.start, c.words[0].start,
+        mode + ' caption "' + c.text + '" does not start on its word');
+    });
+  }
+});
+
+test("a caption the budget cut runs on to the next one", () => {
+  // Two captions from one breath: the screen must not blink between them.
+  const out = seg.segment(evenWords("I really enjoyed making this.", 0.35),
+    { mode: "smart", width: 1080, height: 1920 });
+  assert.strictEqual(out.captions.length, 2);
+  assert.strictEqual(out.captions[0].end, out.captions[1].start,
+    "a hole opened up where the budget cut");
+});
+
+test("a real silence still clears the screen", () => {
+  // Holding type through a silence is the bug the v0.4.0 notes call "a word
+  // held for six seconds", not a feature. The caption runs on past its last
+  // word, then stops; it does not reach for the next one.
+  const w = [
+    { text: "Done.", start: 0.00, end: 0.60 },
+    { text: "Then", start: 3.40, end: 3.70 },   // 2.8s of silence
+    { text: "again", start: 3.75, end: 4.10 }
+  ];
+  const out = seg.segment(w, { mode: "smart", width: 1080, height: 1920 });
+  assert.strictEqual(out.captions[0].end, 0.60 + seg.MAX_HOLD_S);
+  assert.ok(out.captions[0].end < out.captions[1].start,
+    "held all the way across a silence the speaker actually took");
+});
+
+test("a caption too brief to read is held, not started early", () => {
+  // "Wait." is spoken in 0.18s -- four frames. Nothing may move its start to
+  // buy reading time, so the time comes off the end.
+  const w = [
+    { text: "Wait.", start: 0.00, end: 0.18 },
+    { text: "I", start: 2.50, end: 2.60 },
+    { text: "know", start: 2.65, end: 2.90 },
+    { text: "this.", start: 2.95, end: 3.30 }
+  ];
+  const out = seg.segment(w, { mode: "smart", width: 1080, height: 1920 });
+  assert.strictEqual(out.captions[0].start, 0.00, "the start moved");
+  assert.strictEqual(out.captions[0].end, 0.18 + seg.MAX_HOLD_S);
+  assert.ok(out.captions[0].end - out.captions[0].start > 1.0,
+    "still on screen for " + (out.captions[0].end).toFixed(2) + "s");
+});
+
+test("the blank after a caption grows with the silence, in step", () => {
+  // This was two rules once -- bridge a hole under the ceiling, otherwise
+  // hold to a minimum -- and it jumped at the boundary: a 1.20s pause played
+  // continuous and a 1.21s pause blanked for nearly a second. One rule makes
+  // the blank grow from nothing as the silence does.
+  const blankAfter = (silence) => {
+    const out = seg.segment([
+      { text: "one", start: 0.0, end: 0.4 },
+      { text: "two", start: 0.4 + silence, end: 0.8 + silence }
+    ], { mode: "one" });
+    return out.captions[1].start - out.captions[0].end;
+  };
+  assert.strictEqual(blankAfter(seg.MAX_HOLD_S - 0.2), 0, "blanked early");
+  assert.strictEqual(blankAfter(seg.MAX_HOLD_S), 0, "blanked at the ceiling");
+  assert.ok(Math.abs(blankAfter(seg.MAX_HOLD_S + 0.01) - 0.01) < 1e-6,
+    "a hair over the ceiling blanks for " +
+    blankAfter(seg.MAX_HOLD_S + 0.01).toFixed(3) + "s, not 0.01s");
+});
+
+test("a caption is never held into the one after it", () => {
+  // The recogniser hands back overlapping words at chunk boundaries. Two
+  // caption layers lit at once is worse than one a few frames short, so the
+  // cap pulls the end back rather than letting them collide.
+  const w = [
+    { text: "one", start: 0.0, end: 0.5 },
+    { text: "two", start: 0.4, end: 0.9 },
+    { text: "three", start: 0.8, end: 1.3 },
+    { text: "four", start: 1.2, end: 1.7 },
+    { text: "five", start: 1.6, end: 2.1 },
+    { text: "six", start: 2.0, end: 2.5 }
+  ];
+  const out = seg.segment(w, { mode: "smart", width: 1080, height: 1920 });
+  for (let i = 1; i < out.captions.length; i++) {
+    assert.ok(out.captions[i].start >= out.captions[i - 1].end,
+      "captions " + (i - 1) + " and " + i + " are on screen together");
+  }
+  out.captions.forEach((c) => assert.ok(c.end >= c.start, "inverted caption"));
+});
+
+test("sentence captions are held together too", () => {
+  const w = [
+    { text: "No.", start: 0.00, end: 0.20 },
+    { text: "Stop.", start: 0.25, end: 0.60 }
+  ];
+  const out = seg.segment(w, { mode: "sentence", width: 1080, height: 1920 });
+  assert.strictEqual(out.captions.length, 2);
+  assert.strictEqual(out.captions[0].end, out.captions[1].start,
+    "the screen blinks between two sentences spoken back to back");
+});
+
+test("sentence mode does not hold type through a silence", () => {
+  // The trap in reusing maxGapS as the hold threshold: sentence mode sets it
+  // to 99 to mean "never CUT on a pause", which as a hold would leave a
+  // caption on screen for the whole silence after it.
+  const w = [
+    { text: "Done.", start: 0.00, end: 0.60 },
+    { text: "Later.", start: 6.00, end: 6.40 }
+  ];
+  const out = seg.segment(w, { mode: "sentence", width: 1080, height: 1920 });
+  assert.strictEqual(out.captions[0].end, 0.60 + seg.MAX_HOLD_S,
+    "held for " + (out.captions[0].end - 0.60).toFixed(2) + "s of silence");
+  assert.ok(out.captions[0].end < out.captions[1].start);
 });
