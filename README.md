@@ -1,33 +1,39 @@
 # Capset
 
 Auto-captioning for **After Effects**. Transcribes audio locally with NVIDIA
-Parakeet and builds timed, styled, animated text layers directly on the AE
-timeline — no cloud, no SRT round-trip, no manual keyframing.
+Parakeet and builds timed, styled text layers directly on the AE timeline — no
+cloud, no SRT round-trip, no manual keyframing.
 
-## Why
+Audio never leaves the machine. The speech model ships inside the installer,
+so there is nothing to download on first use and no account to sign into.
 
-Existing tools apply caption *animations* well in Premiere but leave After
-Effects underserved. Capset targets AE specifically, with two things the
-current options don't do:
+## What it does
 
-- **Duration-adaptive animations.** Animations are generated procedurally and
-  scale to each caption's length, so a 0.3s word and a 2.5s phrase both resolve
-  early instead of dragging. Preset/marker-driven tools can't do this.
-- **Global restyle.** A single controller layer that every caption is
-  expression-linked to, so font, color, and animation update everywhere at
-  once — still hand-editable per layer.
+- **Transcribes the composition** you are working in. Select the layer with
+  the dialogue, choose the whole comp or just the work area, and the captions
+  arrive as ordinary text layers you can edit like any others.
+- **Cuts where the speaker does.** Captions break on the pauses in the speech
+  rather than on a word count, sized to the composition — a 9:16 comp gets
+  short, punchy captions; a 16:9 comp gets broadcast-shaped ones.
+- **Global restyle.** Style one caption by hand, then push that style across
+  the composition or the whole project.
+- **Imports and exports SRT**, so captions can come from, or go to, anywhere
+  else in the pipeline.
+
+Segmentation offers **Smart** (grouped on the pauses), **Sentence** (grouped
+on punctuation), and **Word-by-Word**.
 
 ## Layout
 
 ```
 backend/    Local ASR service (Parakeet via ONNX). Audio in, word timestamps out.
-panel/      CEP extension: panel UI, ExtendScript, animation engine. (Phase 2)
+panel/      CEP extension: panel UI and ExtendScript host.
 installer/  Windows .exe (Inno Setup) and macOS .pkg builds.
-docs/       Architecture, API schema, research.
+docs/       Architecture, API schema, release notes.
 ```
 
-Start with **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — it carries the
-current decisions and supersedes the original scaffold where they conflict.
+**[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** carries the current design
+decisions and the reasoning behind them.
 
 ## Status
 
@@ -36,43 +42,26 @@ current decisions and supersedes the original scaffold where they conflict.
 | Backend (Parakeet, chunking, job API) | Implemented, 202 tests |
 | Panel (UI, segmentation, style sync) | Implemented, 367 tests |
 | Installer (Windows + macOS scripts, CI) | Implemented, shipping |
-| **Verified inside After Effects** | **Partly — see below** |
 
-501 automated tests, green in CI.
+569 automated tests, green in CI.
 
-The plugin now runs in real After Effects, and the first sessions there found
-four failures in a row that no amount of testing had caught: a one-character
-typo that stopped the host script parsing at all, a project sample rate the
-speech engine rejects outright, a silent render reported as a successful
-transcription of nothing, and — once the rest worked — animations that were
-never being applied, because the range selector was sweeping the wrong way.
+Pre-release. The Windows build runs in After Effects and is in regular use.
+The macOS package is built and verified in CI but has not yet been installed
+on a Mac, so it is unproven. Caption animation is not in this build: captions
+arrive timed and styled but static.
 
-Each of those hid the next, which is the thing to expect from here: nothing
-could be learned about the animations until Add Captions ran at all. What has
-run in a real host now works; what has not run is still unproven, and the list
-of what falls in that second group is in
-[`docs/RELEASE-NOTES-v0.1.md`](docs/RELEASE-NOTES-v0.1.md).
-
-The pattern behind all four is worth naming, because it is the one that keeps
-biting: each was verified by reading documentation rather than by running the
-code, against a test suite that shared the code's own assumptions. The fakes
-in `panel/tests/` have since been taught the semantics they were missing.
-
-To cut a release, see [`docs/RELEASING.md`](docs/RELEASING.md).
-
-## Phases
-
-1. **Backend** — Parakeet via ONNX with VAD chunking; measure CPU speed.
-2. **Panel** — CEP panel, audio extraction, segmentation (smart / sentence /
-   word-by-word).
-3. **Animation** — *restarting.* The procedural animator machinery works and
-   stays; the preset library and its preview grid were pulled from the panel
-   because too many presets read as the same animation. Next: capture an
-   animation built by hand in After Effects, the way the Update tab already
-   captures type. See [`panel/dormant/README.md`](panel/dormant/README.md).
-4. **Packaging** — Windows + macOS installers.
+Releases are at
+[Releases](https://github.com/HazrdDesign/Capset/releases); to cut one, see
+[`docs/RELEASING.md`](docs/RELEASING.md).
 
 ## Platforms
 
-Windows and macOS. The panel is portable; the ASR runtime and installer are
-per-platform (CUDA on Windows, CoreML/Metal on Apple Silicon).
+Windows and macOS (Apple Silicon only — the speech runtime publishes macOS
+builds for `arm64` alone). The panel is portable; the ASR runtime and
+installer are per-platform.
+
+## Licence
+
+Copyright (c) 2026 Jose Lopez. All rights reserved. Licensed, not sold — see
+[`LICENSE.txt`](LICENSE.txt), which also lists the third-party components and
+their licences.
