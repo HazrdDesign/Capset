@@ -7,6 +7,7 @@ from app.chunking import (
     merge_chunks,
     offset_words,
     plan_chunks,
+    unlag_words,
 )
 from app.models import Chunk, Word
 
@@ -259,3 +260,72 @@ def test_a_repeated_word_away_from_any_overlap_is_never_touched():
         "a repetition outside the overlap window was swallowed: %r"
         % [(w.text, w.start) for w in words]
     )
+
+
+# --- unlag_words -----------------------------------------------------------
+#
+# Parakeet marks the encoder frame where a word became certain, which is after
+# the sound that made it certain, so the whole transcript arrives late.
+
+
+def test_unlag_shifts_every_word_back():
+    out = unlag_words([word("a", 1.0, 1.3), word("b", 1.3, 1.6)], 0.146)
+    assert out[0].start == pytest.approx(0.854)
+    assert out[1].start == pytest.approx(1.154)
+
+
+def test_unlag_keeps_each_word_its_own_length():
+    # A lag is a shift, not a stretch. Changing durations here would undo the
+    # model's only real information about how long a word took.
+    words = [word("a", 1.0, 1.3), word("b", 1.3, 1.9)]
+    for before, after in zip(words, unlag_words(words, 0.146)):
+        assert after.end - after.start == pytest.approx(before.end - before.start)
+
+
+def test_unlag_clips_at_zero_without_inverting():
+    # The first word of a clip that opens on speech has less lag available
+    # than we want to remove. It may not start before the file does, and it
+    # may certainly not end before it starts.
+    out = unlag_words([word("Going", 0.083, 0.417)], 0.146)
+    assert out[0].start == 0.0
+    assert out[0].end >= out[0].start
+
+
+def test_unlag_never_reorders():
+    words = [word("a", 0.05, 0.2), word("b", 0.2, 0.4), word("c", 0.4, 0.6)]
+    out = unlag_words(words, 0.146)
+    assert [w.text for w in out] == ["a", "b", "c"]
+    assert all(out[i].start <= out[i + 1].start for i in range(len(out) - 1))
+
+
+def test_unlag_of_zero_changes_nothing():
+    words = [word("a", 1.0, 1.3)]
+    assert unlag_words(words, 0.0) == words
+
+
+def test_unlag_puts_measured_words_within_the_encoder_grid():
+    """The calibration, checked against the recording it came from.
+
+    Eight words hand-measured against a 23.976 comp, as (reported, true).
+    Before: every one late, by 1 to 6 frames. After: inside the 0.08s grid
+    the model can answer on, which is as close as its timestamps go.
+    """
+    frame = 1001 / 24000
+    measured = [
+        (0.083, 0.0), (0.417, 4 * frame), (0.542, 9 * frame), (0.626, 14 * frame),
+        (5.422, 127 * frame), (5.672, 132 * frame),
+        (5.839, 136 * frame), (5.923, 138 * frame),
+    ]
+    words = [word(str(i), rep, rep + 0.2) for i, (rep, _) in enumerate(measured)]
+    from app import config
+
+    out = unlag_words(words, config.WORD_LAG_S)
+    before = [rep - true for rep, true in measured]
+    after = [w.start - true for w, (_, true) in zip(out, measured)]
+
+    assert all(e > 0 for e in before), "the sample should be late throughout"
+    assert max(abs(e) for e in after) < 0.11, (
+        "worst error %.3fs (%.1f frames)"
+        % (max(abs(e) for e in after), max(abs(e) for e in after) / frame)
+    )
+    assert abs(sum(after) / len(after)) < 0.02, "the bias did not come out"

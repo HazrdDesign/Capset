@@ -87,6 +87,26 @@ SAMPLE_RATE = 16_000
 MAX_CHUNK_S = float(os.environ.get("CAPSET_MAX_CHUNK_S", "20.0"))
 OVERLAP_S = float(os.environ.get("CAPSET_OVERLAP_S", "2.0"))
 
+# How late the model reports a word, and how much to take back off it.
+#
+# Parakeet does not mark where a word begins; it marks the encoder frame where
+# it became confident, and that is always after the sound. Measured against a
+# real 23.976 comp, every word came back late and none came back early:
+#
+#     Going  +0.083   into  +0.250   my    +0.167   career,  +0.042
+#     me     +0.125   as    +0.166   a     +0.167   person,  +0.167
+#
+# Mean +0.146s, which is 1.8 of the encoder's 0.08s frames -- a lag, not
+# noise: noise has both signs. Taking a flat 0.146s back off every word turns
+# that spread of 1 to 6 frames late into 2.5 frames either side of nothing,
+# and the residual IS the 0.08s grid the model can only answer on.
+#
+# It is a calibration rather than a law: it comes from eight hand-measured
+# words in one recording, which is eight more than were behind the previous
+# value of zero. Widen the sample and this number should be revisited, which
+# is why it is an environment variable and not a literal in the pipeline.
+WORD_LAG_S = float(os.environ.get("CAPSET_WORD_LAG_S", "0.146"))
+
 # Finished jobs are held this long so the panel can collect results, then
 # dropped to bound memory.
 JOB_RETENTION_S = float(os.environ.get("CAPSET_JOB_RETENTION_S", "3600"))

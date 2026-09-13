@@ -20,7 +20,7 @@ from .audio import (
     read_with_format,
     slice_audio,
 )
-from .chunking import merge_chunks, plan_chunks
+from .chunking import merge_chunks, plan_chunks, unlag_words
 from .models import AudioDiagnostics, TranscriptionResult, Word
 from .tokens import merge_tokens_to_words, words_to_text
 from .vad import detect_speech
@@ -120,7 +120,9 @@ class Transcriber:
             )
 
         progress(0.99, "stitching")
-        words: list[Word] = merge_chunks(results)
+        # Absolute time first, then the lag comes off: the lag is a property
+        # of the model's reporting, not of where a chunk happened to start.
+        words: list[Word] = unlag_words(merge_chunks(results), config.WORD_LAG_S)
         if not words:
             # Audible, but nothing recognised. Say what was measured: at this
             # point the difference between "too quiet" and "no speech in it"

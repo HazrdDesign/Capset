@@ -17,8 +17,9 @@ and how long they stay up. Nothing about the backend, the installers or the
 transcription changed.
 
 > **Still under test.** Numbered as a patch for that reason rather than by
-> what changed: there is a new segmentation mode in here and the timing of
-> every caption moved, which is ordinarily a minor bump.
+> what changed: there is a new segmentation mode in here, every caption's
+> timing moved, and word timestamps are corrected against the model's
+> emission lag — ordinarily a minor bump.
 
 ## What's new in this build
 
@@ -77,6 +78,31 @@ One exception, and the panel says so when it happens: if the captions already
 there are precomposed, all of them are replaced. A range cannot reach inside a
 precomposition — those captions are layers of another composition, and
 removing the layer holding them takes the rest with it.
+
+**Captions land on the word now.** Every caption was arriving late — one to
+six frames on a 23.976 comp, and late every time, never early. The model does
+not mark where a word begins; it marks the encoder frame where it became
+certain, which is always after the sound. Measured against a real recording
+the whole transcript sat 0.146s behind, so that comes back off every word.
+What is left is inside the 0.08s grid the model can answer on: about two
+frames either side of nothing, instead of up to six frames in one direction.
+
+**Captions cut where the speaker breathes.** On a 16:9 comp a caption filled
+up at fourteen words and broke there, mid-phrase — "...for me to find the" /
+"place that really finds me...". Fourteen words is not a place, it is a
+number. A caption closed by the budget now moves its break to the clearest
+pause in reach, judged against the speaker's own rhythm rather than a fixed
+threshold, so a 0.35s breath is enough when the caption has to end anyway.
+
+**Sentence mode no longer strands the last word.** A sentence running past the
+duration cap put "me." on a layer of its own. That cut is made by arithmetic
+exactly as a phrase cut is, and now gets the same repair.
+
+**Moving a caption no longer warns about undo.** Every auto-caption left After
+Effects reporting "Undo group mismatch, will attempt to fix" the next time a
+layer was moved. The audio render held a script undo group open across the
+render queue, which comes back unbalanced; the warning then surfaced at the
+next undoable action, so it looked like the captions had broken the project.
 
 ## Install
 
