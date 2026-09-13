@@ -5,9 +5,6 @@ audio with NVIDIA's Parakeet model (fully local, no cloud calls) and generates
 correctly-timed, styled, animatable caption layers directly on the AE timeline —
 CapCut-style captions with zero manual keyframing and no SRT round-trip.
 
-Personal project (HAZRD). Not affiliated with or dependent on the DGNL internal
-transcription tool — this is a separate, standalone build.
-
 ## Why this exists
 
 Captioneer (existing AE plugin) already does Parakeet-based captioning, but

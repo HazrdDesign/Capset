@@ -1,5 +1,5 @@
 Capset — End User Licence Agreement
-Copyright (c) 2026 HAZRD. All rights reserved.
+Copyright (c) 2026 Jose Lopez. All rights reserved.
 
 This software is licensed, not sold. You may install and use Capset on
 machines you own or control, subject to the terms of your purchase.
