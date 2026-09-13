@@ -58,6 +58,35 @@ def plan_chunks(
     return chunks
 
 
+def unlag_words(words: list[Word], lag: float) -> list[Word]:
+    """Take the model's emission lag back off every word.
+
+    Parakeet marks the encoder frame where a word became certain, which is
+    after the sound that made it certain. The whole transcript therefore sits
+    late by roughly a constant, and a caption that appears after the word is
+    spoken is the one timing error an editor cannot miss.
+
+    Shifted whole, so a word keeps the length it was given: only where it
+    would cross zero is it clipped, and then its end is held so the word does
+    not invert. Order is preserved because every word moves by the same
+    amount -- this cannot reshuffle a transcript.
+    """
+    if lag <= 0:
+        return words
+    moved: list[Word] = []
+    for w in words:
+        start = max(0.0, w.start - lag)
+        moved.append(
+            Word(
+                text=w.text,
+                start=start,
+                end=max(start, w.end - lag),
+                confidence=w.confidence,
+            )
+        )
+    return moved
+
+
 def offset_words(words: list[Word], offset: float) -> list[Word]:
     """Shift chunk-relative timings into absolute source time."""
     return [

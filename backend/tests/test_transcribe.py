@@ -271,3 +271,42 @@ def test_native_sample_rate_is_passed_to_the_engine(monkeypatch):
 
     assert seen["rate"] == native, "engine received the wrong sample rate"
     assert result.duration_sec == pytest.approx(3.0), "duration computed at the wrong rate"
+
+
+def test_the_emission_lag_comes_off_in_the_pipeline(monkeypatch, audio_30s):
+    """The unit is covered in test_chunking; this is the wiring.
+
+    A lag removed in a pure function nothing calls is a lag still on screen.
+    """
+    _patch_audio(monkeypatch, audio_30s, [(0.0, 30.0)])
+    engine = FakeEngine()
+    engine.load()
+    monkeypatch.setattr(config, "WORD_LAG_S", 0.5)
+
+    lagged = Transcriber(engine).transcribe("ignored.wav")
+
+    monkeypatch.setattr(config, "WORD_LAG_S", 0.0)
+    raw = Transcriber(engine).transcribe("ignored.wav")
+
+    assert len(lagged.words) == len(raw.words)
+    # Every word that had room to move, moved by the lag. The first of a chunk
+    # can be clipped at zero, so compare the ones that were not.
+    moved = [
+        (r.start - l.start)
+        for l, r in zip(lagged.words, raw.words)
+        if r.start >= 0.5
+    ]
+    assert moved, "no word had room to move"
+    assert all(abs(m - 0.5) < 1e-6 for m in moved), moved
+
+
+def test_the_lag_never_pushes_a_word_before_the_file(monkeypatch, audio_30s):
+    _patch_audio(monkeypatch, audio_30s, [(0.0, 30.0)])
+    engine = FakeEngine()
+    engine.load()
+    monkeypatch.setattr(config, "WORD_LAG_S", 5.0)
+
+    result = Transcriber(engine).transcribe("ignored.wav")
+
+    assert all(w.start >= 0.0 for w in result.words)
+    assert all(w.end >= w.start for w in result.words)

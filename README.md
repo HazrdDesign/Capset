@@ -33,7 +33,7 @@ current decisions and supersedes the original scaffold where they conflict.
 
 | Component | State |
 |---|---|
-| Backend (Parakeet, chunking, job API) | Implemented, 194 tests |
+| Backend (Parakeet, chunking, job API) | Implemented, 202 tests |
 | Panel (UI, segmentation, style sync) | Implemented, 367 tests |
 | Installer (Windows + macOS scripts, CI) | Implemented, shipping |
 | **Verified inside After Effects** | **Partly — see below** |
