@@ -823,3 +823,91 @@ test("two equally good breaths cut at the later one", () => {
     "cut at the earlier of two equal breaths: " +
     texts(seg.segment(w, { mode: "smart", width: 1920, height: 1080 }))[0]);
 });
+
+
+// --- cutting on punctuation -------------------------------------------------
+//
+// These fixtures give every word an end equal to the next word's start, which
+// is what the speech model actually produces: it reports only token STARTS,
+// so the gap between any two words is exactly zero. Checked against a real
+// 55-word transcript -- all 54 gaps were 0.000. Any test here that invents a
+// pause is testing a situation that does not arise.
+
+/** Words with no measurable silence anywhere, as the recogniser reports them. */
+function backToBack(spec) {
+  let t = 0;
+  const out = [];
+  for (const [text, dur] of spec) {
+    out.push({ text, start: +t.toFixed(3), end: +(t + dur).toFixed(3) });
+    t += dur;
+  }
+  return out;
+}
+
+const REPORTED = backToBack([
+  ["Going",.334],["into",.125],["my",.084],["career,",.417],["I",.167],
+  ["think",.166],["it's",.209],["more",.250],["important",.334],["for",.250],
+  ["me",.209],["to",.250],["find",.417],["the",.125],["place",.334],
+  ["that",.167],["really",.333],["finds",.376],["me",.166],["and",.167],
+  ["chooses",.459],["me",.250],["as",.167],["a",.084],["person,",.458],
+  ["holds",.417],["me",.167],["with",.167],["value",.292],["and",.167],
+  ["supports",.417],["me.",.250]
+]);
+
+test("a sentence too long for the cap breaks at its last comma", () => {
+  // Reported: the cap fired wherever the seconds ran out and left "supports
+  // me." on a layer of its own. There is a comma in reach, and a comma is
+  // where the sentence already breaks.
+  const out = seg.segment(REPORTED, { mode: "sentence", width: 1920, height: 1080 });
+  assert.strictEqual(out.captions.length, 2);
+  assert.ok(/as a person,$/.test(out.captions[0].text),
+    "first caption ends: " + JSON.stringify(out.captions[0].text.slice(-30)));
+  assert.strictEqual(out.captions[1].text, "holds me with value and supports me.");
+});
+
+test("smart breaks at the comma too, with no pause to go on", () => {
+  const out = seg.segment(REPORTED, { mode: "smart", width: 1920, height: 1080 });
+  const texts_ = texts(out);
+  assert.ok(texts_.some((t) => /as a person,$/.test(t)),
+    "no caption ended on the comma: " + texts_.join(" | "));
+  assert.strictEqual(texts_[texts_.length - 1], "holds me with value and supports me.");
+});
+
+test("a comma outranks a pause when both are in reach", () => {
+  // The speaker's own punctuation is a stronger boundary than anything we can
+  // infer from the gaps around it.
+  const w = backToBack([
+    ["one",.2],["two",.2],["three",.2],["four",.2],["five",.2],["six",.2],
+    ["seven",.2],["eight,",.2],["nine",.2],["ten",.2],["eleven",.2],
+    ["twelve",.2],["thirteen",.2],["fourteen",.2],["fifteen",.2],["sixteen",.2]
+  ]);
+  // A wide pause after "eleven", later than the comma but weaker than it.
+  w.slice(11).forEach((x) => { x.start += 0.5; x.end += 0.5; });
+  assert.ok(/eight,$/.test(texts(seg.segment(w, { mode: "smart", width: 1920, height: 1080 }))[0]),
+    "cut away from the comma: " +
+    texts(seg.segment(w, { mode: "smart", width: 1920, height: 1080 }))[0]);
+});
+
+test("a word cut off mid-utterance is not a clause ending", () => {
+  // "holds me with-" is a speaker being interrupted, which is the opposite of
+  // a place to break.
+  const w = backToBack([
+    ["one",.2],["two",.2],["three",.2],["four",.2],["five",.2],["six",.2],
+    ["seven",.2],["with-",.2],["nine",.2],["ten",.2],["eleven",.2],
+    ["twelve",.2],["thirteen",.2],["fourteen",.2],["fifteen",.2],["sixteen",.2]
+  ]);
+  assert.ok(!/with-$/.test(texts(seg.segment(w, { mode: "smart", width: 1920, height: 1080 }))[0]),
+    "broke on a trailing hyphen");
+});
+
+test("a comma too early in the window is not worth breaking on", () => {
+  // Same rule as a pause: the budget put us here, so the caption is entitled
+  // to its line. A comma three words in would waste it.
+  const w = backToBack([
+    ["one,",.2],["two",.2],["three",.2],["four",.2],["five",.2],["six",.2],
+    ["seven",.2],["eight",.2],["nine",.2],["ten",.2],["eleven",.2],
+    ["twelve",.2],["thirteen",.2],["fourteen",.2],["fifteen",.2],["sixteen",.2]
+  ]);
+  const first = seg.segment(w, { mode: "smart", width: 1920, height: 1080 }).captions[0];
+  assert.ok(first.words.length >= 7, "cut at word " + first.words.length);
+});

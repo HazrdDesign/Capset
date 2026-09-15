@@ -88,6 +88,18 @@
 
   var SENTENCE_END = /[.!?]["')\]]?$/;
 
+  // A clause ending: the comma in "...as a person, holds me with value".
+  //
+  // Not a sentence, so it never CLOSES a caption on its own -- one that
+  // stopped at every comma would be shorter than it needs to be. But when a
+  // caption has to end somewhere anyway, this is the best place in reach: it
+  // is where the writing already breaks, so the cut reads as a decision
+  // rather than as running out of room.
+  //
+  // A trailing hyphen is deliberately absent. It marks a word cut off
+  // mid-utterance ("holds me with-"), which is the opposite of a boundary.
+  var CLAUSE_END = /[,;:]["')\]]?$/;
+
   // The longest silence a caption is held across.
   //
   // Where to CUT and whether to BLANK THE SCREEN are different questions, and
@@ -375,6 +387,14 @@
                             start + Math.ceil((limit - start) / 2));
     if (earliest > limit) return limit;
 
+    // Punctuation first, and the LAST of it: both the strongest boundary
+    // available and the one that fills the line. The speaker's own comma
+    // beats any measurement we could make of the gaps around it, because it
+    // is where the sentence itself breaks.
+    for (var p = limit; p >= earliest; p--) {
+      if (CLAUSE_END.test(words[p - 1].text)) return p;
+    }
+
     var gaps = [];
     for (var k = start + 1; k <= limit; k++) {
       gaps.push(words[k].start - words[k - 1].end);
@@ -483,46 +503,17 @@
    * a speaker who never lands a full stop would otherwise produce a single
    * caption spanning the whole clip -- unreadable, and worse than a slightly
    * early break.
+   *
+   * It is the phrase grouper with sentence-shaped budgets, which is all it
+   * ever was: maxGapS of 99 means no pause can cut it, and the duration is
+   * the only bound that binds. Sharing the machinery is not tidiness -- it is
+   * how the cap's cuts get placed. Left to itself the cap fired wherever the
+   * seconds ran out, which put "supports me." on a layer of its own; through
+   * bestCut it lands on the last comma instead and the sentence breaks after
+   * "...as a person," where it reads as intended.
    */
   function segmentBySentence(words, options) {
-    var opts = merge(SENTENCE_DEFAULTS, options);
-    var captions = [];
-    var current = [];
-
-    function flush() {
-      if (current.length) {
-        captions.push(buildCaption(current, opts));
-        current = [];
-      }
-    }
-
-    for (var i = 0; i < words.length; i++) {
-      var word = words[i];
-      if (current.length &&
-          word.end - current[0].start > opts.maxDurationS) {
-        flush();
-      }
-      current.push(word);
-      if (SENTENCE_END.test(word.text)) flush();
-    }
-    flush();
-    return hold(captions);
-  }
-
-  /**
-   * One caption per sentence, with the duration cap's cuts tidied.
-   *
-   * segmentBySentence groups; this is where a cut the cap made gets the same
-   * treatment a phrase cut gets. rebalance() only ever moves a cut that
-   * landed on arithmetic: it leaves anything after a full stop alone, which
-   * in this mode is every cut but the capped ones. "No." stays "No."
-   */
-  function sentenceCaptions(words, opts) {
-    var captions = segmentBySentence(words, opts);
-    var groups = rebalance(captions.map(function (c) { return c.words; }), opts);
-    return hold(groups.map(function (group) {
-      return buildCaption(group, opts);
-    }));
+    return segmentByPhrase(words, merge(SENTENCE_DEFAULTS, options));
   }
 
   /**
@@ -582,7 +573,7 @@
           "One caption per sentence, wrapped at " + chars +
           " characters per line for this " + layout.orientation + " comp."
       },
-      captions: sentenceCaptions(words, merge(shaped, options))
+      captions: segmentBySentence(words, merge(shaped, options))
     };
   }
 
