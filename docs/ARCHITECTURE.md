@@ -437,6 +437,41 @@ composition, and removing the one layer holding them takes the ones outside
 the range too. Nothing in the host can prevent that, so it is reported and the
 panel says so rather than losing them quietly.
 
+**What the audio does and does not tell us (measured 2026-09).** Three
+assumptions about the speech model were wrong, and all three were found by
+running real footage rather than by reading anything. Recorded here because
+each one silently disabled a feature that looked implemented.
+
+*The model reports no word endings.* Parakeet emits a START time per token and
+nothing else. Token ends were filled in with the next token's start, so a
+word's end WAS the next word's start and the gap between any two words
+measured exactly zero -- all 54 of them, in the transcript this was traced
+through. Every pause rule in `segmentation.js` was therefore measuring a
+constant. A token's end is now bounded by how long that piece could plausibly
+have been spoken, and the remainder is silence.
+
+*Its timestamps run late, and land on a grid.* The encoder steps 0.01s with a
+subsampling factor of 8, so word starts can only fall on an 0.08s grid -- 1.9
+frames at 23.976. They also arrive late, because the model marks where a word
+became certain rather than where it began: eight hand-measured words came in
+between 0.042s and 0.250s late, mean 0.146s, none early. `WORD_LAG_S` takes
+that back off. What is left is the grid itself, about two frames either side
+of nothing, and closing that needs a forced aligner rather than a parameter.
+
+*With music under the voice there is no silence at all.* This is the one that
+matters most for design, because the material this product is for is a voice
+over a music bed. On such a clip: energy-based onset detection cannot find the
+word boundaries (aligning all 55 word starts against measured onsets gives a
+flat curve, 0.048 to 0.096, with no peak), and Silero reports the entire
+fifteen seconds as ONE unbroken span of speech with its per-frame probability
+pinned at 1.000. `PAD_S`, `MIN_SILENCE_S` and VAD-driven chunking all do
+nothing on that material, and no rule that waits for quiet can ever fire.
+
+The consequence for segmentation is that silence is not available as a cue and
+the two that are must carry it: the speaker's own punctuation, and how long
+they hold a word relative to their own other sayings of that same word. Both
+are visible whatever plays underneath. See `bestCut` and `heldFor`.
+
 ---
 
 ## 4b. SRT export
