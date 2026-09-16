@@ -40,10 +40,10 @@ decisions and the reasoning behind them.
 | Component | State |
 |---|---|
 | Backend (Parakeet, chunking, job API) | Implemented, 205 tests |
-| Panel (UI, segmentation, style sync) | Implemented, 372 tests |
+| Panel (UI, segmentation, style sync) | Implemented, 374 tests |
 | Installer (Windows + macOS scripts, CI) | Implemented, shipping |
 
-577 automated tests, green in CI.
+579 automated tests, green in CI.
 
 Pre-release. The Windows build runs in After Effects and is in regular use.
 The macOS package is built and verified in CI but has not yet been installed
