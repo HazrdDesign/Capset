@@ -28,12 +28,18 @@ transcript sat 0.146s behind, so that now comes back off every word. What is
 left is inside the 0.08s grid the model can answer on: about two frames either
 side of nothing, instead of up to six frames in one direction.
 
-**Captions cut where the speaker breathes.** On a 16:9 comp a caption filled
-up at fourteen words and broke there, mid-phrase — "...for me to find the" /
-"place that really finds me...". Fourteen words is not a place, it is a
-number. A caption closed by the budget now moves its break to the clearest
-pause in reach, judged against the speaker's own rhythm rather than a fixed
-threshold, so a 0.35s breath is enough when the caption has to end anyway.
+**Captions closed by the budget look for a better place to break.** On a 16:9
+comp a caption filled up at fourteen words and broke there, mid-phrase —
+"...for me to find the" / "place that really finds me...". Fourteen words is
+not a place, it is a number.
+
+> **Correction, written after v0.6.3.** This release looked for that better
+> place by hunting for a pause, and on real material there is no pause to
+> find: the speech model reports no word end times, so the measured gap
+> between any two words is exactly zero, and with music under the voice there
+> is no silence in the audio either. The rule shipped here therefore almost
+> never fires. v0.6.3 finds the break by how long the speaker holds a word
+> instead, which is visible either way.
 
 **Sentence mode no longer strands the last word.** A sentence running past the
 duration cap put "me." on a layer of its own. That cut is made by arithmetic
