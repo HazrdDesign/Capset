@@ -88,6 +88,18 @@
 
   var SENTENCE_END = /[.!?]["')\]]?$/;
 
+  // A clause ending: the comma in "...as a person, holds me with value".
+  //
+  // Not a sentence, so it never CLOSES a caption on its own -- one that
+  // stopped at every comma would be shorter than it needs to be. But when a
+  // caption has to end somewhere anyway, this is the best place in reach: it
+  // is where the writing already breaks, so the cut reads as a decision
+  // rather than as running out of room.
+  //
+  // A trailing hyphen is deliberately absent. It marks a word cut off
+  // mid-utterance ("holds me with-"), which is the opposite of a boundary.
+  var CLAUSE_END = /[,;:]["')\]]?$/;
+
   // The longest silence a caption is held across.
   //
   // Where to CUT and whether to BLANK THE SCREEN are different questions, and
@@ -105,14 +117,7 @@
   // "word held for six seconds" bug in ARCHITECTURE.md.
   var MAX_HOLD_S = 1.2;
 
-  // The shortest silence between two words that is heard as a break rather
-  // than as ordinary articulation. Below this there is nothing to cut on.
-  var MIN_BREATH_S = 0.15;
 
-  // ...and how far it must stand out from the speaker's own rhythm to count.
-  // Measured against the median gap around it, so the same number works for
-  // someone rattling through a script and someone leaving air between words.
-  var BREATH_RATIO = 2;
 
   function assign(target, source) {
     if (!source) return target;
@@ -359,37 +364,118 @@
    * line space the caption is entitled to, and a half-empty caption is its
    * own kind of wrong.
    *
-   * What counts as a gap at all is measured against the speaker rather than
-   * the clock. A pause has to clear MIN_BREATH_S, below which nobody hears a
-   * break, AND stand out from the rhythm of the words around it: 0.2s is a
-   * real pause from someone speaking quickly and nothing at all from someone
-   * slow and deliberate. Judging it against their own median keeps this
-   * working at both speeds without a threshold per speaker. When no gap
-   * clears both, the cut stays where the budget put it -- in speech with no
-   * breaks in it there is nothing better, and inventing one would only make
-   * captions shorter for no reason.
+   * What it looks for is not silence. It used to be, and on this material
+   * there is no silence to find: the reported clip is a voice over a music
+   * bed, the gap between every pair of words measures exactly zero, energy
+   * detection cannot see the word boundaries through the music, and Silero
+   * reports the whole clip as one unbroken span of speech. A rule that waits
+   * for quiet never fires on the work this is for.
+   *
+   * What is visible, whatever plays underneath, is how long the speaker
+   * spends on a word -- see heldFor. When nothing in the window runs long,
+   * the cut stays where the budget put it: in speech with no holds in it
+   * there is nothing better, and inventing one would only make captions
+   * shorter for no reason.
    */
-  function bestCut(words, start, limit, opts) {
+  // How much longer than its own normal length a word must run to read as a
+  // hold. 1.4 is deliberately short of the 1.5 measured on the reported line,
+  // so that line is inside the rule rather than exactly on its edge.
+  var HELD_RATIO = 1.4;
+
+  // A word broken off mid-utterance -- "holds me with-". The speaker was
+  // interrupted, which is the opposite of a boundary, and such a word is
+  // often stretched, so it scores well on exactly the measure below unless
+  // it is excluded outright.
+  var FRAGMENT = /-$/;
+
+  function bareWord(text) {
+    return String(text).toLowerCase().replace(/[^a-z']/g, "");
+  }
+
+  /**
+   * How long each word normally takes THIS speaker, in THIS recording.
+   *
+   * The measurement that settled it. Asking whether a word ran long needs
+   * something to call normal, and every text-based guess at that was wrong:
+   * by characters "find" outranked "to" because it has two more letters, and
+   * by syllables they tied, because both are one. Neither can know that /tu/
+   * is half the length of /faInd/.
+   *
+   * A speaker who says a word twice has answered the question themselves. In
+   * the reported line, "to" ran 0.250s where the same speaker's other two
+   * "to"s ran 0.167s -- 1.50x -- while "find" ran 1.25x its own other
+   * instance. The hold is on "to", which is what was reported from listening
+   * to it, and no phonetics were needed to see it.
+   *
+   * The shortest instance is the baseline: it is the one least likely to have
+   * been stretched.
+   *
+   * A word said only once scores nothing at all, and that is the point. The
+   * first version estimated a baseline for those from syllables and word
+   * class, and the estimate is not in the same units as the measurement: it
+   * put "for" -- said once -- at 2.94x against a guessed 0.085s, beating the
+   * 1.50x that "to" genuinely measured against its own 0.167s. A guess and a
+   * measurement cannot be ranked against each other. Where the speaker has
+   * not shown us their own normal for a word, we do not know, and the honest
+   * score for "do not know" is zero.
+   */
+  function baselinesFor(words) {
+    var seen = {};
+    for (var i = 0; i < words.length - 1; i++) {
+      var key = bareWord(words[i].text);
+      if (!key) continue;
+      var span = words[i + 1].start - words[i].start;
+      if (!(key in seen) || span < seen[key]) seen[key] = span;
+    }
+    // A word said once needs no filtering out: it is its own shortest
+    // instance, so it scores exactly 1.0 and can never reach HELD_RATIO.
+    // "Do not know" and "not held" come to the same answer here.
+    return seen;
+  }
+
+  /**
+   * How far past its own normal length this word runs.
+   *
+   * Critically, this never looks for silence. On the material this is for --
+   * a voice over a music bed, which is what the reported clip is -- there is
+   * no silence to find: the music fills every gap, energy detection cannot
+   * see the word boundaries, and Silero reports the whole clip as one
+   * unbroken span of speech. A rule that waits for quiet never fires. The
+   * time the speaker spends on a word is visible whatever is playing
+   * underneath it.
+   */
+  function heldFor(words, i, baselines) {
+    if (i + 1 >= words.length) return 0;
+    if (FRAGMENT.test(words[i].text)) return 0;
+    var span = words[i + 1].start - words[i].start;
+    var key = bareWord(words[i].text);
+    var normal = baselines[key];
+    if (normal === undefined || normal <= 0) return 0;
+    return span / normal;
+  }
+
+  function bestCut(words, start, limit, opts, baselines) {
     var floor = Math.max(1, opts.minWords || 1);
     var earliest = Math.max(start + floor,
                             start + Math.ceil((limit - start) / 2));
     if (earliest > limit) return limit;
 
-    var gaps = [];
-    for (var k = start + 1; k <= limit; k++) {
-      gaps.push(words[k].start - words[k - 1].end);
+    // Punctuation first, and the LAST of it: both the strongest boundary
+    // available and the one that fills the line. The speaker's own comma
+    // beats any measurement we could make of the gaps around it, because it
+    // is where the sentence itself breaks.
+    for (var p = limit; p >= earliest; p--) {
+      if (CLAUSE_END.test(words[p - 1].text)) return p;
     }
-    var sorted = gaps.slice().sort(function (a, b) { return a - b; });
-    var median = sorted[Math.floor(sorted.length / 2)];
 
     var at = limit;
     // Must be beaten, not matched, to move the cut off the budget's position.
-    var best = Math.max(MIN_BREATH_S, median * BREATH_RATIO);
+    var best = HELD_RATIO;
     for (var c = earliest; c <= limit; c++) {
-      var gap = words[c].start - words[c - 1].end;
-      // >= so that when two breaths are equally good the later one wins and
-      // the caption is as full as it can be.
-      if (gap >= best) { best = gap; at = c; }
+      var held = heldFor(words, c - 1, baselines);
+      // >= so that when two holds are equally long the later one wins and the
+      // caption is as full as it can be.
+      if (held >= best) { best = held; at = c; }
     }
     return at;
   }
@@ -399,10 +485,13 @@
    */
   function groupByPhrase(words, opts) {
     var groups = [];
+    var baselines = baselinesFor(words);
     var start = 0;
     while (start < words.length) {
       var run = reach(words, start, opts);
-      var end = run.byBudget ? bestCut(words, start, run.end, opts) : run.end;
+      var end = run.byBudget
+        ? bestCut(words, start, run.end, opts, baselines)
+        : run.end;
       groups.push(words.slice(start, end));
       start = end;
     }
@@ -483,46 +572,17 @@
    * a speaker who never lands a full stop would otherwise produce a single
    * caption spanning the whole clip -- unreadable, and worse than a slightly
    * early break.
+   *
+   * It is the phrase grouper with sentence-shaped budgets, which is all it
+   * ever was: maxGapS of 99 means no pause can cut it, and the duration is
+   * the only bound that binds. Sharing the machinery is not tidiness -- it is
+   * how the cap's cuts get placed. Left to itself the cap fired wherever the
+   * seconds ran out, which put "supports me." on a layer of its own; through
+   * bestCut it lands on the last comma instead and the sentence breaks after
+   * "...as a person," where it reads as intended.
    */
   function segmentBySentence(words, options) {
-    var opts = merge(SENTENCE_DEFAULTS, options);
-    var captions = [];
-    var current = [];
-
-    function flush() {
-      if (current.length) {
-        captions.push(buildCaption(current, opts));
-        current = [];
-      }
-    }
-
-    for (var i = 0; i < words.length; i++) {
-      var word = words[i];
-      if (current.length &&
-          word.end - current[0].start > opts.maxDurationS) {
-        flush();
-      }
-      current.push(word);
-      if (SENTENCE_END.test(word.text)) flush();
-    }
-    flush();
-    return hold(captions);
-  }
-
-  /**
-   * One caption per sentence, with the duration cap's cuts tidied.
-   *
-   * segmentBySentence groups; this is where a cut the cap made gets the same
-   * treatment a phrase cut gets. rebalance() only ever moves a cut that
-   * landed on arithmetic: it leaves anything after a full stop alone, which
-   * in this mode is every cut but the capped ones. "No." stays "No."
-   */
-  function sentenceCaptions(words, opts) {
-    var captions = segmentBySentence(words, opts);
-    var groups = rebalance(captions.map(function (c) { return c.words; }), opts);
-    return hold(groups.map(function (group) {
-      return buildCaption(group, opts);
-    }));
+    return segmentByPhrase(words, merge(SENTENCE_DEFAULTS, options));
   }
 
   /**
@@ -582,7 +642,7 @@
           "One caption per sentence, wrapped at " + chars +
           " characters per line for this " + layout.orientation + " comp."
       },
-      captions: sentenceCaptions(words, merge(shaped, options))
+      captions: segmentBySentence(words, merge(shaped, options))
     };
   }
 
@@ -654,8 +714,6 @@
     SENTENCE_DEFAULTS: SENTENCE_DEFAULTS,
     PARTS_DEFAULTS: PARTS_DEFAULTS,
     MAX_HOLD_S: MAX_HOLD_S,
-    MIN_BREATH_S: MIN_BREATH_S,
-    BREATH_RATIO: BREATH_RATIO,
     COUNT_MODES: COUNT_MODES,
     chooseLayout: chooseLayout,
     wrapLines: wrapLines,
