@@ -1615,3 +1615,30 @@ test("the work area is still restored after a render", () => {
   assert.strictEqual(h.comp.workAreaStart, 1.5);
   assert.strictEqual(h.comp.workAreaDuration, 2.0);
 });
+
+test("a work-area caption does not run past the out point", () => {
+  // hold() extends the last caption past its final word so the screen does
+  // not blank between captions. In a work-area rebuild that would push it
+  // over the out point and sit on top of the captions the rebuild was told
+  // to leave alone.
+  const h = load();
+  const second = h.call("capsetBuildCaptions", {
+    captions: [{ text: "held", start: 6.0, end: 9.9 }],   // 0.9s past the out
+    style: {}, options: {},
+    replaceRange: { start: 6.0, duration: 3.0 }
+  });
+  assert.strictEqual(second.created, 1);
+  const layer = captionLayers(h.comp)[0];
+  assert.ok(layer.outPoint <= 9.0 + 1e-6,
+    "ran to " + layer.outPoint.toFixed(2) + "s, past an out point at 9.00s");
+  assert.ok(layer.outPoint > layer.inPoint, "clamped to nothing");
+});
+
+test("a whole-composition caption is not clamped", () => {
+  // No range, no clamp: the final caption of a full pass is entitled to hold.
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: [{ text: "held", start: 6.0, end: 9.9 }], style: {}, options: {}
+  });
+  assert.ok(captionLayers(h.comp)[0].outPoint > 9.5);
+});

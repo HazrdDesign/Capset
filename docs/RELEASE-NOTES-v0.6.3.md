@@ -51,6 +51,18 @@ me."
 piece could plausibly have been spoken, so the silence between words — where
 there is any — is finally visible to everything downstream.
 
+**Captions no longer hold past the out point.** A work-area rebuild is meant
+to replace only the stretch between the in and out markers, and its last
+caption was running on for over a second beyond the out — on top of the
+captions the rebuild had deliberately left standing. It is clamped to the out
+point now.
+
+> **Known issue.** Re-captioning a section is still not fully trustworthy:
+> captions after the out point have been reported as disappearing on a
+> work-area run. The layer removal is scoped correctly in every test that
+> covers it and the cause is not yet found, so treat "run Smart over the comp,
+> then Word-by-Word on one line" as unproven until it is.
+
 ## Install
 
 **Windows** — run `Capset-Setup-0.6.3.exe`, restart After Effects,

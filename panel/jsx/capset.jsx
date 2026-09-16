@@ -1660,6 +1660,16 @@ function capsetBuildCaptions(payloadJson) {
             //
             // Either way the layer would have zero length and never appear, so
             // the caption silently goes missing rather than being brief.
+            // A caption may not outlive the stretch that was captioned.
+            // hold() runs the last one on past its final word so the screen
+            // does not blank, and in a work-area run that pushes it beyond
+            // the out point -- on top of the captions this rebuild
+            // deliberately left standing there. Reported as "the last word of
+            // the out held on for like a second and a half".
+            if (range) {
+                var rangeEnd = capsetSnap(comp, range.start + range.duration);
+                if (outPoint > rangeEnd) outPoint = rangeEnd;
+            }
             if (outPoint <= inPoint) {
                 outPoint = inPoint + comp.frameDuration;
             }
