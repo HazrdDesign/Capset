@@ -63,6 +63,19 @@ point now.
 > covers it and the cause is not yet found, so treat "run Smart over the comp,
 > then Word-by-Word on one line" as unproven until it is.
 
+**The transcription service now requires a token.** It runs on your machine
+and listens only on localhost, which sounds airtight and is not: a web page
+you visit is also running on your machine, and could reach it. Any page could
+ask the service whether a given file existed, and have it transcribe any audio
+file it could read. The panel now proves it can read the service's own port
+file — something a web page cannot do — and the service refuses anything that
+cannot. Nothing changes in how the panel is used.
+
+**Long comps use far less memory.** Checking the audio level allocated about
+four times the size of the audio itself — roughly 2.8 GB on an hour-long
+comp — to produce two numbers. It now allocates almost nothing and runs
+faster, which matters most on the long renders that were closest to the edge.
+
 ## Install
 
 **Windows** — run `Capset-Setup-0.6.3.exe`, restart After Effects,
