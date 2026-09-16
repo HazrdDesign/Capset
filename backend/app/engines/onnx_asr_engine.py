@@ -203,6 +203,21 @@ class OnnxAsrEngine:
 # long; used only for the final token of a chunk whose duration is unknown.
 _NOMINAL_TOKEN_S = 0.08
 
+# The longest one token may be held to be SPOKEN for.
+#
+# Every token but the last used to end where the next one starts, which reads
+# as a definition but is an assumption: that the speaker never stops. Under it
+# a word's end is always the next word's start, so the gap between any two
+# words is exactly zero -- checked against a real transcript, all 54 of them.
+# Every pause rule in the panel's segmentation therefore measured nothing, and
+# "group on the pauses" grouped on a constant.
+#
+# The time between two token starts is one token being spoken and then,
+# maybe, silence. The two cannot be separated exactly without the audio, but
+# they can be bounded: past this much, a subword piece is no longer being
+# said and what remains is the speaker stopping.
+_MAX_TOKEN_S = 0.20
+
 # The longest a chunk's FINAL token may be stretched.
 #
 # Every other token ends where the next one starts, which is real information.
@@ -274,7 +289,9 @@ def _tokens_from_result(result, duration: float = 0.0) -> list[Token]:
     for index in range(count):
         start = float(starts[index])
         if index + 1 < count:
-            end = float(starts[index + 1])
+            # Not the next token's start: that would assume every gap between
+            # words is silence-free. Whatever is left over is the pause.
+            end = min(float(starts[index + 1]), start + _MAX_TOKEN_S)
         else:
             # The chunk's duration bounds this token; it does not measure it.
             end = min(

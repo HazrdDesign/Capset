@@ -694,46 +694,51 @@ function spoken(spec, spacing = 0.06) {
   return out;
 }
 
-const REPORTED_LINE = spoken([
-  ["Going",.30],["into",.20],["my",.14],["career,",.40],["I",.12],["think",.28],
-  ["it's",.20],["more",.26],["important",.44],["for",.16],["me",.14],["to",.16],
-  [null,.35],
-  ["find",.26],["the",.12],["place",.30],["that",.18],["really",.30],["finds",.30],
-  ["me",.14],["and",.16],["chooses",.38],["me",.14],["as",.14],["a",.10],["person,",.40],
-  [null,.35],
-  ["holds",.30],["me",.14],["with",.18],["value",.32],["and",.16],["supports",.44],
-  ["me.",.24]
+/**
+ * The reported clip, exactly as the recogniser timed it: 55 words, and the
+ * end of every one is the start of the next, so there is not one measurable
+ * gap in the whole transcript. Voice over a music bed, which is what these
+ * captions are for -- there is no silence in it to find.
+ */
+const REPORTED_FULL = backToBack([
+  ["Going",0.334],["into",0.125],["my",0.084],["career,",0.417],["I",0.167],
+  ["think",0.166],["it's",0.209],["more",0.250],["important",0.334],
+  ["for",0.250],["me",0.209],["to",0.250],["find",0.417],["the",0.125],
+  ["place",0.334],["that",0.167],["really",0.333],["finds",0.376],
+  ["me",0.166],["and",0.167],["chooses",0.459],["me",0.250],["as",0.167],
+  ["a",0.084],["person,",0.458],["holds",0.417],["me",0.167],["with",0.167],
+  ["value",0.292],["and",0.167],["supports",0.417],["me.",0.250],
+  ["And",0.209],["that's",0.333],["more",0.251],["important",0.292],
+  ["to",0.167],["me",0.333],["than",0.250],["trying",0.376],["to",0.167],
+  ["find,",0.333],["you",0.167],["know,",0.125],["the",0.251],
+  ["best",0.333],["position",0.459],["or",0.250],["the",0.084],
+  ["best",0.333],["job",0.292],["or",0.167],["the",0.167],["best",0.250],
+  ["place.",0.250]
 ]);
 
-test("a caption the budget closes is cut at the speaker's breath", () => {
-  // Reported from After Effects. The line filled up at fourteen words twice,
-  // and fourteen words is a number rather than a place: it cut after "find
-  // the" and after "holds me with", mid-phrase both times. The speaker had
-  // paused after "for me to" and after "as a person," -- 0.35s, plainly
-  // audible, and both under the 0.6s that counts as a pause worth cutting on.
-  assert.deepStrictEqual(
-    texts(seg.segment(REPORTED_LINE, { mode: "smart", width: 1920, height: 1080 })),
-    [
-      "Going into my career, I think it's more important for me to",
-      "find the place that really finds me and chooses me as a person,",
-      "holds me with value and supports me."
-    ]
-  );
+test("a caption the budget closes is cut where the speaker held a word", () => {
+  // The reported line, with the timings the recogniser actually produced:
+  // every word ends where the next begins, so there is not one measurable
+  // gap in it. The cut has to come from somewhere else.
+  //
+  // This speaker says "to" three times. Twice it takes 0.167s; here it takes
+  // 0.250s, because they hang on it while deciding what comes next. That is
+  // 1.50x their own normal, and it is the whole signal.
+  const out = seg.segment(REPORTED_FULL, { mode: "smart", width: 1920, height: 1080 });
+  assert.strictEqual(texts(out)[0],
+    "Going into my career, I think it's more important for me to");
+  assert.strictEqual(texts(out)[1],
+    "find the place that really finds me and chooses me as a person,");
 });
 
-test("a breath too short to hear does not move the cut", () => {
-  // Below MIN_BREATH_S there is no break to cut on, however much it stands
-  // out from the gaps around it. Moving the cut for one would only make
-  // captions shorter than they need to be.
-  const w = spoken([
-    ["one",.2],["two",.2],["three",.2],["four",.2],["five",.2],["six",.2],
-    ["seven",.2],["eight",.2],["nine",.2],["ten",.2],["eleven",.2],
-    [null,.09],                                  // 0.09 + 0.03 spacing = 0.12s
-    ["twelve",.2],["thirteen",.2],["fourteen",.2],["fifteen",.2],["sixteen",.2]
-  ], 0.03);
-  const out = seg.segment(w, { mode: "smart", width: 1920, height: 1080 });
-  assert.strictEqual(out.captions[0].words.length, 14,
-    "cut moved to a " + seg.MIN_BREATH_S + "s-or-under gap: " + texts(out)[0]);
+test("a word said once is not evidence of anything", () => {
+  // It scores nothing rather than being estimated. An earlier version guessed
+  // a baseline from syllables and word class for these, and the guess was in
+  // different units from the measurement: "for", said once, scored 2.94x
+  // against an invented 0.085s and beat the 1.50x that "to" really measured.
+  const out = seg.segment(REPORTED_FULL, { mode: "smart", width: 1920, height: 1080 });
+  assert.ok(!/ for$/.test(texts(out)[0]),
+    "cut on a word with no baseline: " + texts(out)[0]);
 });
 
 test("a gap that does not stand out from the speaker does not move the cut", () => {
@@ -808,18 +813,136 @@ test("sentence mode still lets a short sentence be short", () => {
   );
 });
 
-test("two equally good breaths cut at the later one", () => {
+test("two equally long holds cut at the later one", () => {
   // The caption should be as full as it can be, so a tie goes to the break
-  // that uses more of the line.
-  const w = spoken([
+  // that uses more of the line. Durations are quarters of a second because
+  // those are exact in binary: at 0.2 and 0.3 the two holds differ in the
+  // sixteenth decimal and the "tie" is decided by rounding rather than by
+  // the rule under test.
+  const w = backToBack([
+    ["one",.25],["two",.25],["three",.25],["four",.25],["five",.25],
+    ["six",.25],["seven",.25],["hold",.5],["early",.25],["ten",.25],
+    ["hold",.5],["late",.25],["thirteen",.25],["fourteen",.25],
+    ["hold",.25],["done",.25]
+  ]);
+  const first = texts(seg.segment(w, { mode: "smart", width: 1920, height: 1080 }))[0];
+  assert.ok(/ hold$/.test(first), "did not cut on a hold: " + first);
+  assert.ok(/early/.test(first),
+    "cut on the FIRST of two equal holds, wasting the line: " + first);
+});
+
+test("a word broken off mid-utterance is never the cut", () => {
+  // A restart -- "I want- I want to" -- stretches the fragment, so it scores
+  // like a hold and repeats often enough to earn a baseline. It is a speaker
+  // losing the thread, which is the worst place to end a caption.
+  const w = backToBack([
     ["one",.2],["two",.2],["three",.2],["four",.2],["five",.2],["six",.2],
-    ["seven",.2],["eight",.2],
-    [null,.24],                                  // 0.30s
-    ["nine",.2],["ten",.2],["eleven",.2],
-    [null,.24],                                  // 0.30s — the same, later
+    ["seven",.2],["with-",.3],["nine",.2],["ten",.2],["eleven",.2],
+    ["with-",.2],["thirteen",.2],["fourteen",.2],["fifteen",.2],["sixteen",.2]
+  ]);
+  const first = texts(seg.segment(w, { mode: "smart", width: 1920, height: 1080 }))[0];
+  assert.ok(!/with-$/.test(first), "broke on a cut-off word: " + first);
+});
+
+
+// --- cutting on punctuation -------------------------------------------------
+//
+// These fixtures give every word an end equal to the next word's start, which
+// is what the speech model actually produces: it reports only token STARTS,
+// so the gap between any two words is exactly zero. Checked against a real
+// 55-word transcript -- all 54 gaps were 0.000. Any test here that invents a
+// pause is testing a situation that does not arise.
+
+/** Words with no measurable silence anywhere, as the recogniser reports them. */
+function backToBack(spec) {
+  let t = 0;
+  const out = [];
+  for (const [text, dur] of spec) {
+    out.push({ text, start: +t.toFixed(3), end: +(t + dur).toFixed(3) });
+    t += dur;
+  }
+  return out;
+}
+
+const REPORTED = backToBack([
+  ["Going",.334],["into",.125],["my",.084],["career,",.417],["I",.167],
+  ["think",.166],["it's",.209],["more",.250],["important",.334],["for",.250],
+  ["me",.209],["to",.250],["find",.417],["the",.125],["place",.334],
+  ["that",.167],["really",.333],["finds",.376],["me",.166],["and",.167],
+  ["chooses",.459],["me",.250],["as",.167],["a",.084],["person,",.458],
+  ["holds",.417],["me",.167],["with",.167],["value",.292],["and",.167],
+  ["supports",.417],["me.",.250]
+]);
+
+test("a sentence too long for the cap breaks at its last comma", () => {
+  // Reported: the cap fired wherever the seconds ran out and left "supports
+  // me." on a layer of its own. There is a comma in reach, and a comma is
+  // where the sentence already breaks.
+  const out = seg.segment(REPORTED, { mode: "sentence", width: 1920, height: 1080 });
+  assert.strictEqual(out.captions.length, 2);
+  assert.ok(/as a person,$/.test(out.captions[0].text),
+    "first caption ends: " + JSON.stringify(out.captions[0].text.slice(-30)));
+  assert.strictEqual(out.captions[1].text, "holds me with value and supports me.");
+});
+
+test("smart breaks at the comma too, with no pause to go on", () => {
+  const out = seg.segment(REPORTED, { mode: "smart", width: 1920, height: 1080 });
+  const texts_ = texts(out);
+  assert.ok(texts_.some((t) => /as a person,$/.test(t)),
+    "no caption ended on the comma: " + texts_.join(" | "));
+  assert.strictEqual(texts_[texts_.length - 1], "holds me with value and supports me.");
+});
+
+test("a comma outranks a pause when both are in reach", () => {
+  // The speaker's own punctuation is a stronger boundary than anything we can
+  // infer from the gaps around it.
+  const w = backToBack([
+    ["one",.2],["two",.2],["three",.2],["four",.2],["five",.2],["six",.2],
+    ["seven",.2],["eight,",.2],["nine",.2],["ten",.2],["eleven",.2],
     ["twelve",.2],["thirteen",.2],["fourteen",.2],["fifteen",.2],["sixteen",.2]
   ]);
-  assert.ok(/ eleven$/.test(texts(seg.segment(w, { mode: "smart", width: 1920, height: 1080 }))[0]),
-    "cut at the earlier of two equal breaths: " +
+  // A wide pause after "eleven", later than the comma but weaker than it.
+  w.slice(11).forEach((x) => { x.start += 0.5; x.end += 0.5; });
+  assert.ok(/eight,$/.test(texts(seg.segment(w, { mode: "smart", width: 1920, height: 1080 }))[0]),
+    "cut away from the comma: " +
     texts(seg.segment(w, { mode: "smart", width: 1920, height: 1080 }))[0]);
+});
+
+test("a word cut off mid-utterance is not a clause ending", () => {
+  // "holds me with-" is a speaker being interrupted, which is the opposite of
+  // a place to break.
+  const w = backToBack([
+    ["one",.2],["two",.2],["three",.2],["four",.2],["five",.2],["six",.2],
+    ["seven",.2],["with-",.2],["nine",.2],["ten",.2],["eleven",.2],
+    ["twelve",.2],["thirteen",.2],["fourteen",.2],["fifteen",.2],["sixteen",.2]
+  ]);
+  assert.ok(!/with-$/.test(texts(seg.segment(w, { mode: "smart", width: 1920, height: 1080 }))[0]),
+    "broke on a trailing hyphen");
+});
+
+test("a comma too early in the window is not worth breaking on", () => {
+  // Same rule as a pause: the budget put us here, so the caption is entitled
+  // to its line. A comma three words in would waste it.
+  const w = backToBack([
+    ["one,",.2],["two",.2],["three",.2],["four",.2],["five",.2],["six",.2],
+    ["seven",.2],["eight",.2],["nine",.2],["ten",.2],["eleven",.2],
+    ["twelve",.2],["thirteen",.2],["fourteen",.2],["fifteen",.2],["sixteen",.2]
+  ]);
+  const first = seg.segment(w, { mode: "smart", width: 1920, height: 1080 }).captions[0];
+  assert.ok(first.words.length >= 7, "cut at word " + first.words.length);
+});
+
+test("with two commas in reach, the later one is the cut", () => {
+  // Both are real boundaries; the later one leaves a fuller caption. Reported
+  // as "cutting after the second comma, and not leaving a few words stranded
+  // near the end".
+  const w = backToBack([
+    ["one",.25],["two",.25],["three",.25],["four",.25],["five",.25],
+    ["six",.25],["seven",.25],["first,",.25],["nine",.25],["ten",.25],
+    ["eleven",.25],["second,",.25],["thirteen",.25],["fourteen",.25],
+    ["fifteen",.25],["sixteen",.25]
+  ]);
+  const first = texts(seg.segment(w, { mode: "smart", width: 1920, height: 1080 }))[0];
+  assert.ok(/ second,$/.test(first),
+    "cut at the earlier comma, stranding the rest: " + first);
 });

@@ -70,8 +70,17 @@ def test_the_old_reading_produced_nothing_from_this_exact_input():
     assert [w.text for w in merge_tokens_to_words(_tokens_from_result(result, 0.5))]
 
 
-def test_each_token_ends_where_the_next_begins():
-    """Zero-length tokens are what produced zero-length captions."""
+def test_a_token_is_bounded_by_how_long_it_could_be_spoken():
+    """Tokens used to end where the next one starts, and that is an assumption.
+
+    It says the speaker never stops: whatever silence follows a word is
+    charged to the word. A transcript built that way has a gap of exactly zero
+    between every pair of words -- all 54 of them, in the one this was checked
+    against -- so every pause rule downstream measured a constant.
+
+    0.50 - 0.10 is 0.40s, which is too long for "a" to have been said for. The
+    token takes what it plausibly used and the rest becomes silence.
+    """
     result = Result(
         text="a b c",
         tokens=["▁a", "▁b", "▁c"],
@@ -79,9 +88,32 @@ def test_each_token_ends_where_the_next_begins():
     )
     tokens = _tokens_from_result(result, duration=1.4)
     assert [t.start for t in tokens] == [0.10, 0.50, 1.10]
-    assert [t.end for t in tokens] == [0.50, 1.10, 1.40]
+    assert [round(t.end, 3) for t in tokens] == [0.30, 0.70, 1.40]
     for token in tokens:
         assert token.end > token.start, "a token with no duration times nothing"
+
+
+def test_the_silence_between_words_survives_to_the_caller():
+    """The whole point: a gap that is actually there can be measured."""
+    result = Result(
+        text="pause here",
+        tokens=["▁pause", "▁here"],
+        timestamps=[0.00, 1.00],
+    )
+    tokens = _tokens_from_result(result, duration=1.5)
+    gap = tokens[1].start - tokens[0].end
+    assert gap > 0.5, "a full second between two words reported as %.2fs" % gap
+
+
+def test_words_spoken_back_to_back_leave_no_gap():
+    """And the other half: silence is not invented where there is none."""
+    result = Result(
+        text="quick quick",
+        tokens=["▁quick", "▁quick"],
+        timestamps=[0.00, 0.10],
+    )
+    tokens = _tokens_from_result(result, duration=0.3)
+    assert tokens[1].start - tokens[0].end == pytest.approx(0.0)
 
 
 def test_the_last_token_is_not_stretched_across_a_music_tail():
@@ -106,7 +138,8 @@ def test_the_last_token_is_not_stretched_across_a_music_tail():
     last = tokens[-1]
     assert last.end - last.start <= 0.6, "the final word swallowed the music tail"
     # ...while the tokens that DO have a following token keep their real ends.
-    assert [t.end for t in tokens[:-1]] == [8.30, 8.60, 8.90]
+    # Bounded by how long each could have been spoken, not by the next start.
+    assert [round(t.end, 3) for t in tokens[:-1]] == [8.20, 8.50, 8.80]
 
 
 def test_a_short_chunk_still_ends_its_last_token_at_the_chunk_edge():
