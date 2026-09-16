@@ -1642,3 +1642,43 @@ test("a whole-composition caption is not clamped", () => {
   });
   assert.ok(captionLayers(h.comp)[0].outPoint > 9.5);
 });
+
+
+// --- port file -------------------------------------------------------------
+
+function writePortFile(h, text) {
+  // capsetPortFile resolves a per-platform user directory the fake host does
+  // not model, so it is stubbed: what is under test here is the parsing of
+  // the file's contents, and the path itself is covered by source checks in
+  // jsx.test.js that pin it against the backend's own spelling.
+  const path = "/fake/capset/port";
+  h.sandbox.capsetPortFile = function () { return path; };
+  h.fake.existingFolders.add("/fake/capset");
+  const f = new h.sandbox.File(path);
+  f.open("w"); f.write(text); f.close();
+  return path;
+}
+
+test("the port file yields both the port and the token", () => {
+  // The token is what the service checks on /jobs: a web page on this machine
+  // can reach the service but cannot read this file.
+  const h = load();
+  writePortFile(h, "8756\nsEcReT-token-value\n");
+  assert.deepStrictEqual(h.call("capsetBackendPort"),
+    { port: 8756, token: "sEcReT-token-value" });
+});
+
+test("a port file from an older build still reads", () => {
+  // One line, no token. The port still has to work; the panel simply has no
+  // token to send, which the service will refuse — a clear 401 beats the
+  // panel failing to find the service at all.
+  const h = load();
+  writePortFile(h, "8756");
+  assert.deepStrictEqual(h.call("capsetBackendPort"), { port: 8756, token: "" });
+});
+
+test("a junk port file is not a port", () => {
+  const h = load();
+  writePortFile(h, "not-a-port\ntoken");
+  assert.strictEqual(h.call("capsetBackendPort"), null);
+});

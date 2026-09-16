@@ -189,6 +189,10 @@ function capsetGetUserDataDir() {
  * and the panel simply falls back to the default port.
  */
 function capsetBackendPort() {
+    // Returns {port, token}, or null when nothing has been published. The
+    // token is what proves a caller read this file: the service refuses /jobs
+    // without it, because a web page on this machine can reach the service
+    // but cannot read a file. See _require_token in backend/app/main.py.
     var file = null;
     try {
         var path = capsetPortFile();
@@ -199,9 +203,16 @@ function capsetBackendPort() {
         var text = String(file.read());
         file.close();
         file = null;
-        var port = parseInt(text.replace(/^\s+|\s+$/g, ""), 10);
+        // Port on the first line, token on the second. parseInt stops at the
+        // newline, so this still reads a file written in the old one-line
+        // format -- and the token is simply absent there.
+        var lines = text.split(/[\r\n]+/);
+        var port = parseInt(lines[0].replace(/^\s+|\s+$/g, ""), 10);
         if (isNaN(port) || port < 1 || port > 65535) return capsetOk(null);
-        return capsetOk(port);
+        var token = lines.length > 1
+            ? lines[1].replace(/^\s+|\s+$/g, "")
+            : "";
+        return capsetOk({ port: port, token: token });
     } catch (e) {
         // Discovery must never break the panel; the default port still works.
         if (file) { try { file.close(); } catch (ignored) {} }

@@ -11,6 +11,9 @@
   var DEFAULT_PORT = 8756;
   var DEFAULT_BASE = "http://127.0.0.1:" + DEFAULT_PORT;
 
+  // Must match TOKEN_HEADER in backend/app/main.py.
+  var TOKEN_HEADER = "x-capset-token";
+
   function baseForPort(port) {
     return "http://127.0.0.1:" + port;
   }
@@ -22,6 +25,9 @@
     this._sleep = options.sleep || function (ms) {
       return new Promise(function (r) { setTimeout(r, ms); });
     };
+    // Proves to the service that we could read its port file. Empty until
+    // discovery finds one; the service answers 401 without it.
+    this.token = options.token || "";
     this.pollIntervalMs = options.pollIntervalMs || 400;
     // Generous: a long video on CPU is legitimately slow, and killing a job
     // that was going to succeed is worse than waiting.
@@ -30,6 +36,17 @@
 
   CapsetBackend.prototype._url = function (path) {
     return this.baseUrl.replace(/\/+$/, "") + path;
+  };
+
+  /** Request options carrying the token, merged over anything given. */
+  CapsetBackend.prototype._opts = function (options) {
+    var out = {};
+    for (var key in options) {
+      if (Object.prototype.hasOwnProperty.call(options, key)) out[key] = options[key];
+    }
+    out.headers = out.headers || {};
+    if (this.token) out.headers[TOKEN_HEADER] = this.token;
+    return out;
   };
 
   CapsetBackend.prototype.health = function () {
@@ -134,7 +151,7 @@
     } else {
       form.append("file", source, filename || "audio.wav");
     }
-    return this._fetch(this._url("/jobs"), { method: "POST", body: form })
+    return this._fetch(this._url("/jobs"), this._opts({ method: "POST", body: form }))
       .then(function (res) {
         return res.json().then(function (body) {
           if (res.status === 503) {
@@ -149,7 +166,7 @@
   };
 
   CapsetBackend.prototype.job = function (jobId) {
-    return this._fetch(this._url("/jobs/" + jobId)).then(function (res) {
+    return this._fetch(this._url("/jobs/" + jobId), this._opts()).then(function (res) {
       if (res.status === 404) throw new Error("Job not found: " + jobId);
       if (!res.ok) throw new Error("Job poll failed: HTTP " + res.status);
       return res.json();
@@ -157,7 +174,7 @@
   };
 
   CapsetBackend.prototype.cancel = function (jobId) {
-    return this._fetch(this._url("/jobs/" + jobId), { method: "DELETE" })
+    return this._fetch(this._url("/jobs/" + jobId), this._opts({ method: "DELETE" }))
       .then(function (res) { return res.json(); });
   };
 

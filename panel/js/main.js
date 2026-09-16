@@ -284,7 +284,13 @@
   /** One connect attempt: rediscover the port, then probe. */
   function probeBackend() {
     if (config.backendUrl) return backend.health();
-    return publishedPort().then(function (port) {
+    return publishedPort().then(function (published) {
+      // The same file carries the token the service requires on /jobs. A web
+      // page on this machine can reach the service but cannot read this file,
+      // which is what stops it driving the panel's backend -- see
+      // _require_token in backend/app/main.py.
+      backend.token = (published && published.token) || "";
+      var port = published && published.port;
       return backend.connect(port ? [port] : []);
     });
   }
