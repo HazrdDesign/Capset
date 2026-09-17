@@ -1555,6 +1555,24 @@ function capsetClearCaptions(payloadJson) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Is this a range that can actually be rebuilt within?
+ *
+ * Every way a range can be wrong ends with too much being deleted or nothing
+ * being deleted, and both look like a bug in the captions rather than in the
+ * range. NaN is the one worth naming: it arrives from arithmetic on a missing
+ * field, and every comparison against it is false, so a NaN range silently
+ * removes nothing at all.
+ */
+function capsetUsableRange(range) {
+    if (!range) return false;
+    var start = Number(range.start);
+    var duration = Number(range.duration);
+    if (isNaN(start) || isNaN(duration)) return false;
+    if (start < 0 || duration <= 0) return false;
+    return true;
+}
+
+/**
  * Does this layer show anything inside the stretch being rebuilt?
  *
  * Half-open at both ends on purpose. Captions sit end to end -- one out point
@@ -1579,6 +1597,27 @@ function capsetBuildCaptions(payloadJson) {
         // Absent for a whole-composition run, which replaces everything as it
         // always has. Present for a work-area one, which must not.
         var range = payload.replaceRange || null;
+
+        // A scoped rebuild that has lost its range must NOT quietly become a
+        // full one. Replacing every caption in the composition is the most
+        // destructive thing this function can do, and doing it by accident --
+        // because a range went missing somewhere between the panel and here
+        // -- is indistinguishable, from the timeline, from the feature simply
+        // not working. Reported exactly that way: "everything afterwards got
+        // deleted" on a work-area run.
+        //
+        // The panel says which kind of run it meant, separately from the
+        // range itself, so the two can be checked against each other. Refusing
+        // costs the user one more click; the silent version costs them the
+        // rest of their captions.
+        if (payload.scoped && !capsetUsableRange(range)) {
+            throw new Error(
+                "This was meant to rebuild only the work area, but the panel " +
+                "did not say which stretch. Nothing has been changed. Please " +
+                "report this, then use Full Composition if you need to " +
+                "continue."
+            );
+        }
 
         if (!captions.length) throw new Error("No captions to build.");
 
@@ -1735,6 +1774,8 @@ function capsetBuildCaptions(payloadJson) {
             // So the panel can say "replaced 4 in the work area" rather than
             // implying it cleared the comp.
             ranged: range !== null,
+            rangeStart: range ? range.start : null,
+            rangeDuration: range ? range.duration : null,
             precompOverrun: precompOverrun
         });
     } catch (e) {

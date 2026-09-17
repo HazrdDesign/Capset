@@ -473,6 +473,110 @@ test("a whole-composition rebuild still replaces everything", () => {
   assert.strictEqual(captionLayers(h.comp).length, 1);
 });
 
+// A scoped rebuild whose range has gone missing is the one failure that looks
+// exactly like the feature not working: every caption in the composition is
+// removed, which is what was reported — "everything afterwards got deleted" on
+// a work-area run. The range and the claim to be scoped are derived from
+// different things on the panel side precisely so the host can tell.
+
+test("a scoped rebuild with no range refuses instead of clearing the comp", () => {
+  const h = load();
+  h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+
+  assert.throws(
+    () => h.call("capsetBuildCaptions", {
+      captions: [{ text: "redone", start: 1.3, end: 2.4 }],
+      style: {}, options: {},
+      scoped: true                    // ...but no replaceRange
+    }),
+    /work area/,
+    "a scoped run with no range did not say what went wrong"
+  );
+  assert.deepStrictEqual(
+    captionLayers(h.comp).map((l) => l.name).sort(),
+    ["first caption", "second caption", "third caption"],
+    "it went ahead and replaced captions it was not given a range for"
+  );
+});
+
+test("a scoped rebuild refuses a range missing its duration", () => {
+  // Number(undefined) is NaN, and every comparison against NaN is false, so
+  // this range matches no layer at all: the rebuild would add captions on top
+  // of the ones already there rather than replacing them.
+  const h = load();
+  h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+  assert.throws(() => h.call("capsetBuildCaptions", {
+    captions: [{ text: "redone", start: 1.3, end: 2.4 }],
+    style: {}, options: {},
+    scoped: true, replaceRange: { start: 1.2 }
+  }), /work area/);
+  assert.strictEqual(captionLayers(h.comp).length, 3);
+});
+
+test("a scoped rebuild refuses an empty range", () => {
+  // A zero-length work area removes nothing and builds anyway, leaving two
+  // captions on screen at once.
+  const h = load();
+  h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+  assert.throws(() => h.call("capsetBuildCaptions", {
+    captions: [{ text: "redone", start: 1.3, end: 2.4 }],
+    style: {}, options: {},
+    scoped: true, replaceRange: { start: 1.2, duration: 0 }
+  }), /work area/);
+  assert.strictEqual(captionLayers(h.comp).length, 3);
+});
+
+test("a scoped rebuild refuses a range starting before the comp", () => {
+  const h = load();
+  h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+  assert.throws(() => h.call("capsetBuildCaptions", {
+    captions: [{ text: "redone", start: 1.3, end: 2.4 }],
+    style: {}, options: {},
+    scoped: true, replaceRange: { start: -1, duration: 2 }
+  }), /work area/);
+  assert.strictEqual(captionLayers(h.comp).length, 3);
+});
+
+test("a scoped rebuild with a usable range goes ahead", () => {
+  // The guard must not stand in the way of the feature it protects.
+  const h = load();
+  h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+  const second = h.call("capsetBuildCaptions", {
+    captions: [{ text: "redone", start: 1.3, end: 2.4 }],
+    style: {}, options: {},
+    scoped: true, replaceRange: { start: 1.2, duration: 1.3 }
+  });
+  assert.strictEqual(second.replaced, 1);
+  assert.deepStrictEqual(
+    captionLayers(h.comp).map((l) => l.name).sort(),
+    ["first caption", "redone", "third caption"]
+  );
+});
+
+test("a scoped rebuild reports the stretch it replaced within", () => {
+  // So the panel can say which seconds it touched. "replaced 1 in the work
+  // area" is the same sentence whether the range was right or wrong, which is
+  // no help at all to someone watching captions disappear.
+  const h = load();
+  h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+  const second = h.call("capsetBuildCaptions", {
+    captions: [{ text: "redone", start: 1.3, end: 2.4 }],
+    style: {}, options: {},
+    scoped: true, replaceRange: { start: 1.2, duration: 1.3 }
+  });
+  assert.strictEqual(second.rangeStart, 1.2);
+  assert.strictEqual(second.rangeDuration, 1.3);
+});
+
+test("a full rebuild reports no stretch", () => {
+  const h = load();
+  const result = h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: {}
+  });
+  assert.strictEqual(result.rangeStart, null);
+  assert.strictEqual(result.rangeDuration, null);
+});
+
 test("a work-area rebuild says when a precomp forced its hand", () => {
   // A range cannot reach inside a precomp — the captions there are layers of
   // another composition — so removing the layer takes the ones outside the

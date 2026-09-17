@@ -391,3 +391,23 @@ test("a work-area run tells the host to replace only that range", () => {
     "the replace range is not tied to the In to Out scope, so either every " +
     "run is partial or none is");
 });
+
+test("the scoped claim comes from the payload, not the Duration radio", () => {
+  // The host refuses a scoped run whose range went missing, and it can only
+  // do that if the claim and the range come from different places. Reading
+  // settings.scope here would also break SRT import, which replaces the whole
+  // composition whatever the radio says and never builds a range. main.js
+  // cannot be executed under node, so this is a source check.
+  const at = main.indexOf("capsetBuildCaptions");
+  const call = main.slice(at, at + 1600);
+
+  const arg = call.match(/^\s*scoped:\s*(.+?),?\s*$/m);
+  assert.ok(arg, "the build payload does not say whether the run was scoped");
+  assert.match(arg[1], /payload\.scoped/,
+    "scoped is " + arg[1] + "; reading the radio here would refuse every " +
+    "SRT import made while In to Out is selected");
+
+  assert.match(main, /scoped:\s*settings\.scope === "inout"/,
+    "the transcription path never sets scoped, so no work-area run is " +
+    "checked against its range");
+});
