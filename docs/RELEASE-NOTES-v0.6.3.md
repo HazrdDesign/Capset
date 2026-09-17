@@ -57,11 +57,21 @@ caption was running on for over a second beyond the out — on top of the
 captions the rebuild had deliberately left standing. It is clamped to the out
 point now.
 
-> **Known issue.** Re-captioning a section is still not fully trustworthy:
-> captions after the out point have been reported as disappearing on a
-> work-area run. The layer removal is scoped correctly in every test that
-> covers it and the cause is not yet found, so treat "run Smart over the comp,
-> then Word-by-Word on one line" as unproven until it is.
+**A section rebuild can no longer clear the composition by accident.** The
+reported failure — everything after the out point disappearing on a work-area
+run — has one shape that is indistinguishable from the feature not working at
+all: the run loses the stretch it was meant to rebuild within, and a rebuild
+with no stretch replaces every caption there is. The panel now states which
+kind of run it meant, separately from the stretch itself, and the two are
+checked against each other. If they disagree, the run stops and says so with
+nothing changed.
+
+> **Known issue.** That is a guard, not a diagnosis. The underlying report is
+> still not reproduced — layer removal is scoped correctly in every test that
+> covers it — so treat "run Smart over the comp, then Word-by-Word on one
+> line" as unproven. What has changed is that the worst outcome now refuses
+> instead of happening quietly. **If you see that refusal, please report it:**
+> its message is the evidence that has been missing.
 
 **The transcription service now requires a token.** It runs on your machine
 and listens only on localhost, which sounds airtight and is not: a web page
