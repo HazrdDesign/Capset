@@ -5,13 +5,17 @@
 | | |
 |---|---|
 | **Shipped** | **v0.6.2** — tag `v0.6.2` on `ca13cd6` |
-| **Next** | **v0.6.3** — READY TO TAG on `f504429` (merge of #33) |
+| **Next** | **v0.6.3** — READY TO TAG at the head of `main` |
 | | Notes written at `docs/RELEASE-NOTES-v0.6.3.md`. |
 
-Nothing is outstanding for v0.6.3 but the two commands below, once CI is green
-on that commit. If `f504429` is no longer the head of `main`, tag whatever the
-head is instead and check that the notes still describe it — this line has
-been re-pointed once already, because work kept landing after it was written.
+Nothing is outstanding for v0.6.3 but the commands below, once CI is green on
+whatever `main` currently points at.
+
+**No commit hash is written here on purpose.** One was, twice, and both were
+stale before the commit that wrote them had finished merging: naming a hash in
+a file that lives in the same repository is a regress -- every correction to
+it moves the head again. The head of `main` is the answer, and `git rev-parse`
+is how to ask.
 
 Keep this table current: update it in the same commit that adds the next
 version's notes, so the number is answerable from the repository rather than
@@ -46,8 +50,14 @@ To ship the version named above: merge to `main`, then
 
 ```bash
 git fetch origin main
-git tag -a v0.6.3 <merge commit> -m "Capset v0.6.3"
+git tag -a v0.6.3 origin/main -m "Capset v0.6.3"
 git push origin v0.6.3
+```
+
+Check what that resolved to before pushing, and that the notes describe it:
+
+```bash
+git log --oneline -1 origin/main
 ```
 
 The Windows installer is built by `.github/workflows/release.yml` on a
