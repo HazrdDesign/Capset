@@ -310,3 +310,33 @@ test("the header name matches the backend's", () => {
   assert.ok(declared[1] in opts.headers,
     "panel sends " + Object.keys(opts.headers) + ", backend wants " + declared[1]);
 });
+
+test("a refused request says what to do, not what the header is called", () => {
+  // Before the token existed a missing port file just meant the default port
+  // was used and everything worked. Now it means 401 on every job, so the
+  // message has to be one a person can act on.
+  const backend = new CapsetBackend({
+    fetch: () => Promise.resolve({
+      ok: false, status: 401,
+      json: () => Promise.resolve({ detail: "missing or wrong x-capset-token" })
+    })
+  });
+  return backend.submit({ path: "/tmp/a.wav" }, "a.wav").then(
+    () => assert.fail("a 401 should reject"),
+    (err) => {
+      assert.match(err.message, /Restart After Effects/);
+      assert.ok(!/x-capset-token/.test(err.message), err.message);
+    }
+  );
+});
+
+test("a refused poll says the same thing", () => {
+  const backend = new CapsetBackend({
+    fetch: () => Promise.resolve({ ok: false, status: 401,
+      json: () => Promise.resolve({}) })
+  });
+  return backend.job("j1").then(
+    () => assert.fail("a 401 should reject"),
+    (err) => assert.match(err.message, /Restart After Effects/)
+  );
+});

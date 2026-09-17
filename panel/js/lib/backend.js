@@ -34,6 +34,20 @@
     this.timeoutMs = options.timeoutMs || 30 * 60 * 1000;
   }
 
+  // What a 401 actually means to someone using the panel.
+  //
+  // The service refuses /jobs without the token it published in its port
+  // file. The panel reads that file at discovery, so a 401 means it could
+  // not -- the service wrote the file before this build started publishing a
+  // token, or writing it failed, or the file is from an older run. None of
+  // that is the user's fault or worth explaining in those terms, and the
+  // backend's own message ("missing or wrong x-capset-token") is written for
+  // whoever is reading the code, not for whoever is captioning a video.
+  var UNAUTHORISED =
+    "The transcription service would not accept this request. Restart After " +
+    "Effects, or quit the Capset service and click Retry, so the panel can " +
+    "pick up its credentials again.";
+
   CapsetBackend.prototype._url = function (path) {
     return this.baseUrl.replace(/\/+$/, "") + path;
   };
@@ -157,6 +171,7 @@
           if (res.status === 503) {
             throw new Error(body.detail || "The transcription model is not ready.");
           }
+          if (res.status === 401) throw new Error(UNAUTHORISED);
           if (!res.ok) {
             throw new Error(body.detail || "Upload failed: HTTP " + res.status);
           }
@@ -168,6 +183,7 @@
   CapsetBackend.prototype.job = function (jobId) {
     return this._fetch(this._url("/jobs/" + jobId), this._opts()).then(function (res) {
       if (res.status === 404) throw new Error("Job not found: " + jobId);
+      if (res.status === 401) throw new Error(UNAUTHORISED);
       if (!res.ok) throw new Error("Job poll failed: HTTP " + res.status);
       return res.json();
     });
