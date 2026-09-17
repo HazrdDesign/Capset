@@ -12,7 +12,14 @@ import wave
 import numpy as np
 import pytest
 
-from app.audio import AudioError, describe_level, load_audio, measure, slice_audio
+from app.audio import (
+    AudioError,
+    _resample,
+    describe_level,
+    load_audio,
+    measure,
+    slice_audio,
+)
 
 
 def write_wav(path, samples, rate=48000, channels=1, width=2):
@@ -344,3 +351,57 @@ def test_resampling_preserves_a_constant():
 
     out = _resample(np.full(9600, 0.5, dtype=np.float32), 96000, 16000)
     assert np.allclose(out, 0.5, atol=1e-4)
+
+
+# --- measure() on long audio -----------------------------------------------
+#
+# The naive spelling -- audio.astype(np.float64), abs, ** 2 -- allocates about
+# four times the audio's own size to produce two scalars. An hour of 48 kHz
+# mono is 691 MB, so that is ~2.8 GB of transient allocation on exactly the
+# long comps most likely to be running near the limit already.
+
+
+def test_measure_matches_the_whole_array_computation():
+    """Blocking must not change the answer, including across block edges."""
+    rng = np.random.default_rng(7)
+    for size in (1, 1000, (1 << 20) - 1, 1 << 20, (1 << 20) + 13, (1 << 21) + 5):
+        audio = ((rng.random(size) - 0.5) * 1.8).astype(np.float32)
+        wide = audio.astype(np.float64)
+        peak, rms = measure(audio)
+        assert peak == pytest.approx(float(np.max(np.abs(wide))))
+        assert rms == pytest.approx(float(np.sqrt(np.mean(wide ** 2))), rel=1e-9)
+
+
+def test_measure_does_not_allocate_a_copy_of_the_audio():
+    import tracemalloc
+
+    audio = np.zeros(4 << 20, dtype=np.float32)      # 16 MB
+    audio[::3] = 0.5
+    tracemalloc.start()
+    measure(audio)
+    _, peak_bytes = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert peak_bytes < audio.nbytes // 2, (
+        "measure() held %.1f MB of temporaries for a %.1f MB buffer"
+        % (peak_bytes / 1e6, audio.nbytes / 1e6)
+    )
+
+
+def test_resample_refuses_audio_it_cannot_hold():
+    """The Fourier method needs the whole signal at once.
+
+    Every rate After Effects actually renders at is accepted directly, so this
+    only fires on an odd one -- and dying inside numpy with no explanation is
+    worse than saying which knob to turn.
+    """
+    hours_of_16k = np.zeros(2 * 60 * 60 * 16_000, dtype=np.float32)
+    with pytest.raises(AudioError) as caught:
+        _resample(hours_of_16k, 47_999, 16_000)
+    assert "48 kHz" in str(caught.value), str(caught.value)
+
+
+def test_resample_still_works_on_an_ordinary_length():
+    tone = np.sin(np.linspace(0, 40 * np.pi, 8_000, dtype=np.float64)).astype(np.float32)
+    out = _resample(tone, 8_000, 16_000)
+    assert out.dtype == np.float32
+    assert abs(out.size - 16_000) <= 1

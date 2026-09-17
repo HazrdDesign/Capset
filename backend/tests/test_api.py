@@ -42,6 +42,21 @@ def client(monkeypatch):
     monkeypatch.setattr(main_mod, "transcriber", Transcriber(engine))
     monkeypatch.setattr(main_mod, "load_error", None)
 
+    # The panel proves it could read the port file; these tests stand in for
+    # the panel. test_token_* below cover what happens without it.
+    with TestClient(
+        main_mod.app, headers={main_mod.TOKEN_HEADER: main_mod._TOKEN}
+    ) as c:
+        yield c
+
+
+@pytest.fixture
+def anonymous(client):
+    """The same service as anything else on the machine sees it.
+
+    A browser on this machine is 127.0.0.1, so the loopback check that guards
+    local-path reads does not distinguish it from the panel.
+    """
     with TestClient(main_mod.app) as c:
         yield c
 
@@ -239,7 +254,9 @@ def test_rejects_upload_when_model_not_loaded(monkeypatch):
     monkeypatch.setattr(main_mod, "transcriber", Transcriber(FailingEngine()))
     monkeypatch.setattr(main_mod, "load_error", None)
 
-    with TestClient(main_mod.app) as c:
+    with TestClient(
+        main_mod.app, headers={main_mod.TOKEN_HEADER: main_mod._TOKEN}
+    ) as c:
         response = c.post("/jobs", files=_upload())
         assert response.status_code == 503
         assert "model missing" in response.json()["detail"]
@@ -261,3 +278,64 @@ def test_health_reports_degraded_when_load_failed(monkeypatch):
         assert body["status"] == "degraded"
         assert body["model_loaded"] is False
         assert "onnx-asr" in body["error"]
+
+
+# --- the token -------------------------------------------------------------
+#
+# The service binds to loopback, which is not the boundary it appears to be:
+# a web page the user visits runs on this machine too. A form-encoded POST is
+# a CORS "simple request" needing no preflight, and CORS here allows every
+# origin, so before the token any page could submit an arbitrary local path
+# and read the answer. Measured at the time: 202 for a path that existed with
+# Access-Control-Allow-Origin: *, and 400 naming the path when it did not,
+# which is a file-existence oracle for the whole filesystem.
+
+
+def test_jobs_needs_the_token(anonymous):
+    r = anonymous.post("/jobs", data={"path": __file__},
+                       headers={"Origin": "https://evil.example"})
+    assert r.status_code == 401, r.text
+
+
+def test_a_wrong_token_is_not_enough(anonymous):
+    r = anonymous.post("/jobs", data={"path": __file__},
+                       headers={main_mod.TOKEN_HEADER: "not-the-token"})
+    assert r.status_code == 401
+
+
+def test_the_refusal_says_nothing_about_the_path(anonymous):
+    """No existence oracle: present and absent must be indistinguishable."""
+    here = anonymous.post("/jobs", data={"path": __file__})
+    gone = anonymous.post("/jobs", data={"path": "/definitely/not/here.wav"})
+    assert here.status_code == gone.status_code == 401
+    assert here.json() == gone.json()
+    assert "not/here" not in gone.text
+
+
+def test_reading_and_cancelling_a_job_need_the_token(client, anonymous):
+    job = client.post("/jobs", files=_upload()).json()["id"]
+    assert anonymous.get("/jobs/" + job).status_code == 401
+    assert anonymous.delete("/jobs/" + job).status_code == 401
+    # ...and the panel, holding the token, is unaffected.
+    assert client.get("/jobs/" + job).status_code == 200
+
+
+def test_health_stays_open(anonymous):
+    """Discovery happens before the panel has read anything, and readiness
+    is not worth protecting."""
+    assert anonymous.get("/health").status_code == 200
+
+
+def test_the_token_is_published_with_the_port(tmp_path, monkeypatch):
+    """Port first so a reader that only wants the port still parses it."""
+    from app import logging_setup
+    monkeypatch.setattr(logging_setup, "data_dir", lambda: tmp_path)
+    main_mod._publish_port(4242)
+    written = (tmp_path / config.PORT_FILE_NAME).read_text(encoding="utf-8")
+    lines = written.split("\n")
+    assert lines[0] == "4242"
+    assert lines[1] == main_mod._TOKEN
+    assert len(main_mod._TOKEN) >= 32
+    # int() on the whole text would fail; parseInt in ExtendScript stops at
+    # the newline, which is what keeps the old readers working.
+    assert int(lines[0]) == 4242

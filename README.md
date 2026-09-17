@@ -39,20 +39,21 @@ decisions and the reasoning behind them.
 
 | Component | State |
 |---|---|
-| Backend (Parakeet, chunking, job API) | Implemented, 205 tests |
-| Panel (UI, segmentation, style sync) | Implemented, 374 tests |
+| Backend (Parakeet, chunking, job API) | Implemented, 213 tests |
+| Panel (UI, segmentation, style sync) | Implemented, 384 tests |
 | Installer (Windows + macOS scripts, CI) | Implemented, shipping |
 
-579 automated tests, green in CI.
+597 automated tests, green in CI.
 
 Pre-release. The Windows build runs in After Effects and is in regular use.
 The macOS package is built and verified in CI but has not yet been installed
 on a Mac, so it is unproven. Caption animation is not in this build: captions
 arrive timed and styled but static.
 
-Releases are at
-[Releases](https://github.com/HazrdDesign/Capset/releases); to cut one, see
-[`docs/RELEASING.md`](docs/RELEASING.md).
+**v0.6.2 is the latest published release. v0.6.3 is merged, green and waiting
+to be tagged** — see [`docs/RELEASING.md`](docs/RELEASING.md), which carries
+the commit to tag and the two commands to do it. Published releases are at
+[Releases](https://github.com/HazrdDesign/Capset/releases).
 
 ## Platforms
 

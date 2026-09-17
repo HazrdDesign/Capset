@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 import shutil
-import tempfile
 import socket
+import tempfile
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -148,6 +149,41 @@ def _result_to_dict(result: TranscriptionResult) -> dict:
 # file read if the bind address is ever widened.
 _LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost", "testclient"})
 
+# A secret the panel can read and a web page cannot.
+#
+# The loopback check above is not the boundary it looks like. A browser
+# running on this machine IS 127.0.0.1, so any page the user visits can POST
+# to this service -- a form-encoded POST is a CORS "simple request" and needs
+# no preflight -- and read the answer, because CORS here allows every origin.
+# Confirmed by request: an arbitrary local path came back 202 with
+# Access-Control-Allow-Origin: *, and a path that did not exist came back 400
+# naming it, which is a file-existence oracle for the whole filesystem. Any
+# readable WAV or AIFF on the machine could be submitted and its transcript
+# read back.
+#
+# What a page cannot do is read a file. The token is written next to the port,
+# in a directory only a local process can reach, so the panel has it and a web
+# page does not. Sending it in a header is also what forces a preflight on
+# cross-origin requests, so the simple-request route closes too.
+#
+# Regenerated every run: it lives as long as the process and never goes to
+# disk anywhere but the port file.
+TOKEN_HEADER = "x-capset-token"
+_TOKEN = secrets.token_urlsafe(32)
+
+
+def _require_token(request: Request) -> None:
+    """Reject anything that cannot prove it read the port file."""
+    if secrets.compare_digest(request.headers.get(TOKEN_HEADER, ""), _TOKEN):
+        return
+    raise HTTPException(
+        status_code=401,
+        detail=(
+            "missing or wrong %s. The panel reads it from the port file; a "
+            "web page cannot." % TOKEN_HEADER
+        ),
+    )
+
 
 def _local_source(request: Request, path: str) -> str:
     """Validate a path the panel asked us to read in place.
@@ -184,6 +220,7 @@ async def create_job(
     file: UploadFile = File(None),
     path: str = Form(None),
 ) -> dict:
+    _require_token(request)
     if not transcriber.is_loaded():
         raise HTTPException(
             status_code=503,
@@ -230,6 +267,7 @@ def _update(job, progress: float, stage: str) -> None:
 
 @app.get("/jobs/{job_id}")
 def get_job(request: Request, job_id: str) -> dict:
+    _require_token(request)
     job = request.app.state.jobs.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="no such job")
@@ -238,6 +276,7 @@ def get_job(request: Request, job_id: str) -> dict:
 
 @app.delete("/jobs/{job_id}", status_code=202)
 def cancel_job(request: Request, job_id: str) -> dict:
+    _require_token(request)
     store = request.app.state.jobs
     if store.get(job_id) is None:
         raise HTTPException(status_code=404, detail="no such job")
@@ -280,7 +319,15 @@ def _publish_port(port: int) -> None:
     try:
         path = logging_setup.data_dir() / config.PORT_FILE_NAME
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(str(port), encoding="utf-8")
+        # Port first, token second. A reader that only wants the port can
+        # still parseInt the whole thing -- it stops at the newline -- so this
+        # stays readable by anything that read the old one-line format.
+        path.write_text("%d\n%s\n" % (port, _TOKEN), encoding="utf-8")
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            # Best effort. On Windows the directory is already per-user.
+            pass
         log.info("listening on %d (published to %s)", port, path)
     except Exception as exc:
         log.warning("could not publish the port file: %s", exc)

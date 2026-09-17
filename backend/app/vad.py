@@ -112,7 +112,10 @@ def _energy_spans(audio: np.ndarray, sample_rate: int) -> list[tuple[float, floa
     if usable == 0:
         return []
     frames = audio[:usable].reshape(-1, frame)
-    rms = np.sqrt(np.mean(frames.astype(np.float64) ** 2, axis=1))
+    # dtype= accumulates in float64 without materialising a float64 copy of
+    # the whole file first, which astype() would: see measure() in audio.py
+    # for the same trap and what it costs on a long comp.
+    rms = np.sqrt(np.mean(np.square(frames, dtype=np.float64), axis=1))
     if not np.any(rms > 0):
         return []
 

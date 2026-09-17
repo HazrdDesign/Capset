@@ -1615,3 +1615,70 @@ test("the work area is still restored after a render", () => {
   assert.strictEqual(h.comp.workAreaStart, 1.5);
   assert.strictEqual(h.comp.workAreaDuration, 2.0);
 });
+
+test("a work-area caption does not run past the out point", () => {
+  // hold() extends the last caption past its final word so the screen does
+  // not blank between captions. In a work-area rebuild that would push it
+  // over the out point and sit on top of the captions the rebuild was told
+  // to leave alone.
+  const h = load();
+  const second = h.call("capsetBuildCaptions", {
+    captions: [{ text: "held", start: 6.0, end: 9.9 }],   // 0.9s past the out
+    style: {}, options: {},
+    replaceRange: { start: 6.0, duration: 3.0 }
+  });
+  assert.strictEqual(second.created, 1);
+  const layer = captionLayers(h.comp)[0];
+  assert.ok(layer.outPoint <= 9.0 + 1e-6,
+    "ran to " + layer.outPoint.toFixed(2) + "s, past an out point at 9.00s");
+  assert.ok(layer.outPoint > layer.inPoint, "clamped to nothing");
+});
+
+test("a whole-composition caption is not clamped", () => {
+  // No range, no clamp: the final caption of a full pass is entitled to hold.
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: [{ text: "held", start: 6.0, end: 9.9 }], style: {}, options: {}
+  });
+  assert.ok(captionLayers(h.comp)[0].outPoint > 9.5);
+});
+
+
+// --- port file -------------------------------------------------------------
+
+function writePortFile(h, text) {
+  // capsetPortFile resolves a per-platform user directory the fake host does
+  // not model, so it is stubbed: what is under test here is the parsing of
+  // the file's contents, and the path itself is covered by source checks in
+  // jsx.test.js that pin it against the backend's own spelling.
+  const path = "/fake/capset/port";
+  h.sandbox.capsetPortFile = function () { return path; };
+  h.fake.existingFolders.add("/fake/capset");
+  const f = new h.sandbox.File(path);
+  f.open("w"); f.write(text); f.close();
+  return path;
+}
+
+test("the port file yields both the port and the token", () => {
+  // The token is what the service checks on /jobs: a web page on this machine
+  // can reach the service but cannot read this file.
+  const h = load();
+  writePortFile(h, "8756\nsEcReT-token-value\n");
+  assert.deepStrictEqual(h.call("capsetBackendPort"),
+    { port: 8756, token: "sEcReT-token-value" });
+});
+
+test("a port file from an older build still reads", () => {
+  // One line, no token. The port still has to work; the panel simply has no
+  // token to send, which the service will refuse — a clear 401 beats the
+  // panel failing to find the service at all.
+  const h = load();
+  writePortFile(h, "8756");
+  assert.deepStrictEqual(h.call("capsetBackendPort"), { port: 8756, token: "" });
+});
+
+test("a junk port file is not a port", () => {
+  const h = load();
+  writePortFile(h, "not-a-port\ntoken");
+  assert.strictEqual(h.call("capsetBackendPort"), null);
+});

@@ -64,6 +64,11 @@ function makeFile() {
   // and so does write -- code that assumes exceptions would treat a failed
   // write as a successful one, so the fake answers the same way.
   File.prototype.open = function (mode) {
+    // Reading answers the same way ExtendScript does: a boolean, false when
+    // there is nothing there. capsetBackendPort opens the port file this way,
+    // and without it that whole path was untestable -- which is how its
+    // return shape came to have no coverage at all.
+    if (mode === "r") return fake.writtenText.has(this.fsName);
     if (mode !== "w") return false;
     if (!fake.existingFolders.has(this.parent.fsName)) return false;  // no folder
     this._writing = "";

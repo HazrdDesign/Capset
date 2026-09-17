@@ -5,11 +5,32 @@
 | | |
 |---|---|
 | **Shipped** | **v0.6.2** — tag `v0.6.2` on `ca13cd6` |
-| **Next** | **v0.6.3** — notes written, at `docs/RELEASE-NOTES-v0.6.3.md` |
+| **Next** | **v0.6.3** — READY TO TAG on `a1d8435` (merge of #32) |
+| | Notes written at `docs/RELEASE-NOTES-v0.6.3.md`. CI green on that commit: backend, panel, payload staging, installer lint. |
+
+Nothing is outstanding for v0.6.3 but the two commands below. If `a1d8435` is
+no longer the head of `main`, tag whatever the head is instead and check that
+the notes still describe it.
 
 Keep this table current: update it in the same commit that adds the next
 version's notes, so the number is answerable from the repository rather than
-from memory or a chat log. The rule for choosing it is ordinary semver — a
+from memory or a chat log.
+
+**It has gone stale three releases running** — v0.6.0, v0.6.1 and v0.6.2 were
+each tagged while the next change was still in review, and each time the table
+still named the tag that had just shipped as "next". The failure is always the
+same shape: a tag gets pushed from a terminal, and nothing in the repository
+learns about it. So when picking up this file, do not trust the table before
+checking it:
+
+```bash
+git ls-remote --tags origin | grep -o 'v[0-9.]*$' | sort -V | tail -3
+```
+
+If the tag named as "next" already exists, the work since it needs a NEW
+number and its own notes file. Do not re-tag or move a published tag: the
+release body on GitHub is a copy taken at tag time and does not follow the
+file. The rule for choosing it is ordinary semver — a
 new feature or a change to how something behaves is a minor bump, a fix on
 its own is a patch.
 
