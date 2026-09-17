@@ -51,41 +51,6 @@ me."
 piece could plausibly have been spoken, so the silence between words — where
 there is any — is finally visible to everything downstream.
 
-**Captions no longer hold past the out point.** A work-area rebuild is meant
-to replace only the stretch between the in and out markers, and its last
-caption was running on for over a second beyond the out — on top of the
-captions the rebuild had deliberately left standing. It is clamped to the out
-point now.
-
-**A section rebuild can no longer clear the composition by accident.** The
-reported failure — everything after the out point disappearing on a work-area
-run — has one shape that is indistinguishable from the feature not working at
-all: the run loses the stretch it was meant to rebuild within, and a rebuild
-with no stretch replaces every caption there is. The panel now states which
-kind of run it meant, separately from the stretch itself, and the two are
-checked against each other. If they disagree, the run stops and says so with
-nothing changed.
-
-> **Known issue.** That is a guard, not a diagnosis. The underlying report is
-> still not reproduced — layer removal is scoped correctly in every test that
-> covers it — so treat "run Smart over the comp, then Word-by-Word on one
-> line" as unproven. What has changed is that the worst outcome now refuses
-> instead of happening quietly. **If you see that refusal, please report it:**
-> its message is the evidence that has been missing.
-
-**The transcription service now requires a token.** It runs on your machine
-and listens only on localhost, which sounds airtight and is not: a web page
-you visit is also running on your machine, and could reach it. Any page could
-ask the service whether a given file existed, and have it transcribe any audio
-file it could read. The panel now proves it can read the service's own port
-file — something a web page cannot do — and the service refuses anything that
-cannot. Nothing changes in how the panel is used.
-
-**Long comps use far less memory.** Checking the audio level allocated about
-four times the size of the audio itself — roughly 2.8 GB on an hour-long
-comp — to produce two numbers. It now allocates almost nothing and runs
-faster, which matters most on the long renders that were closest to the edge.
-
 ## Install
 
 **Windows** — run `Capset-Setup-0.6.3.exe`, restart After Effects,

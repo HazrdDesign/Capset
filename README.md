@@ -50,9 +50,10 @@ The macOS package is built and verified in CI but has not yet been installed
 on a Mac, so it is unproven. Caption animation is not in this build: captions
 arrive timed and styled but static.
 
-**v0.6.2 is the latest published release. v0.6.3 is merged, green and waiting
+**v0.6.3 is the latest published release. v0.6.4 is merged, green and waiting
 to be tagged** — see [`docs/RELEASING.md`](docs/RELEASING.md), which carries
-the commit to tag and the two commands to do it. Published releases are at
+the commands to do it and a note on why v0.6.3 shipped short of its own
+notes. Published releases are at
 [Releases](https://github.com/HazrdDesign/Capset/releases).
 
 ## Platforms
