@@ -5,12 +5,13 @@
 | | |
 |---|---|
 | **Shipped** | **v0.6.2** — tag `v0.6.2` on `ca13cd6` |
-| **Next** | **v0.6.3** — READY TO TAG on `a1d8435` (merge of #32) |
-| | Notes written at `docs/RELEASE-NOTES-v0.6.3.md`. CI green on that commit: backend, panel, payload staging, installer lint. |
+| **Next** | **v0.6.3** — READY TO TAG on `f504429` (merge of #33) |
+| | Notes written at `docs/RELEASE-NOTES-v0.6.3.md`. |
 
-Nothing is outstanding for v0.6.3 but the two commands below. If `a1d8435` is
-no longer the head of `main`, tag whatever the head is instead and check that
-the notes still describe it.
+Nothing is outstanding for v0.6.3 but the two commands below, once CI is green
+on that commit. If `f504429` is no longer the head of `main`, tag whatever the
+head is instead and check that the notes still describe it — this line has
+been re-pointed once already, because work kept landing after it was written.
 
 Keep this table current: update it in the same commit that adds the next
 version's notes, so the number is answerable from the repository rather than
