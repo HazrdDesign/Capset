@@ -16,10 +16,11 @@ Scoped rebuilds and a closed hole in the transcription service. A patch number
 for a security fix and three behaviour fixes, because the build is still under
 test — see the note on numbering in `docs/RELEASING.md`.
 
-> **v0.6.3 shipped early.** It was tagged at a commit that predated four of
-> the changes its notes described, so the work below is not in the installers
-> published there, whatever that release page says. If you are running
-> v0.6.3, this is the build to take.
+> **Four of these were written into v0.6.3's notes after it shipped.** That
+> release went out on 2026-09-16 and does not contain them, whatever its
+> notes file in the repository said afterwards. Its release page is correct;
+> the file had drifted, and has been put back. If you are running v0.6.3,
+> this is the build to take.
 
 ## What's new in this build
 

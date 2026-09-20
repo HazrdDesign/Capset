@@ -11,20 +11,23 @@
 Nothing is outstanding for v0.6.4 but the commands below, once CI is green on
 whatever `main` currently points at.
 
-**v0.6.3 shipped four changes short of its own notes.** The tag was pushed at
-a merge that predated the token requirement, the memory fix, the out-point
-clamp and its follow-up, so the release page describes a build and the
-installers on it are a different one. The notes file in this repository has
-been trimmed back to what actually shipped and the missing work moved to
-v0.6.4; the release body on GitHub is a copy taken at tag time and cannot be
-corrected from here.
+**v0.6.3 shipped, and then four more changes were written into its notes.**
+It was published on 2026-09-16 from `a1d8435`, and its notes were accurate
+for that build. The next day the token requirement, the memory fix, the
+out-point clamp and its follow-up merged to `main` -- and each added a section
+to `RELEASE-NOTES-v0.6.3.md`, because the table above still called v0.6.3
+"next, ready to tag" when it had already gone out. So the file grew four
+claims the installers on that release page do not contain.
 
-The lesson is the one already written below and worth stating as a rule:
-**tag `origin/main` and check what it resolved to before pushing.** A tag
-pushed at anything else -- a local branch, a commit that felt recent, an
-unfetched `main` -- ships whatever that commit contained, and the release
-notes are read from the tag too, so nothing in the pipeline notices the
-mismatch.
+That file has been trimmed back to what shipped and the four items moved to
+v0.6.4. The release body on GitHub cannot be corrected from here: it is a copy
+taken when the release was published.
+
+**The check that catches this is the `git ls-remote --tags` one below, and it
+is not optional.** Nothing in the pipeline notices a version being written up
+twice -- `release.yml` reads the notes file at release time and never looks at
+it again, so a later edit to a shipped version's notes is silent. Run the tag
+check before writing a version's notes, not only before releasing.
 
 **No commit hash is written here on purpose.** One was, twice, and both were
 stale before the commit that wrote them had finished merging: naming a hash in
@@ -61,18 +64,29 @@ about how small the change was. Minor numbers are not the scarce resource
 here — v0.12.0 and v0.30.0 are ordinary — so this is about signalling
 confidence, nothing else.
 
-To ship the version named above: merge to `main`, then
+To ship the version named above: merge to `main`, then dispatch the workflow
+(see below). **Every release so far -- all 27 runs -- has been a manual
+dispatch, not a tag push**, so read that path as the real one whatever the
+"preferred" note says. It matters because of where the tag comes from: on a
+dispatch, `softprops/action-gh-release` *creates* the tag at whatever `main`
+pointed to when the run started. The tag is a product of the run, not an input
+to it, so dispatching before a merge lands ships without it and tags that
+commit as the version.
+
+So check what `main` points at, and that the notes describe it, before
+dispatching:
+
+```bash
+git fetch origin main
+git log --oneline -1 origin/main
+```
+
+To tag by hand instead:
 
 ```bash
 git fetch origin main
 git tag -a v0.6.4 origin/main -m "Capset v0.6.4"
 git push origin v0.6.4
-```
-
-Check what that resolved to before pushing, and that the notes describe it:
-
-```bash
-git log --oneline -1 origin/main
 ```
 
 The Windows installer is built by `.github/workflows/release.yml` on a
@@ -82,7 +96,9 @@ Inno Setup is Windows-only.
 
 ## Two ways to trigger it
 
-**Push a tag** (preferred — the tag is the release record):
+**Push a tag** (the tag is then the release record, and names the commit
+outright rather than inheriting it from `main` at dispatch time — but note
+that in practice every release here has gone out by dispatch):
 
 ```bash
 git tag -a v0.1 -m "Capset v0.1"
