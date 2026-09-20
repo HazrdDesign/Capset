@@ -4,12 +4,27 @@
 
 | | |
 |---|---|
-| **Shipped** | **v0.6.2** — tag `v0.6.2` on `ca13cd6` |
-| **Next** | **v0.6.3** — READY TO TAG at the head of `main` |
-| | Notes written at `docs/RELEASE-NOTES-v0.6.3.md`. |
+| **Shipped** | **v0.6.3** — tag `v0.6.3`, published 2026-09-16 |
+| **Next** | **v0.6.4** — READY TO TAG at the head of `main` |
+| | Notes written at `docs/RELEASE-NOTES-v0.6.4.md`. |
 
-Nothing is outstanding for v0.6.3 but the commands below, once CI is green on
+Nothing is outstanding for v0.6.4 but the commands below, once CI is green on
 whatever `main` currently points at.
+
+**v0.6.3 shipped four changes short of its own notes.** The tag was pushed at
+a merge that predated the token requirement, the memory fix, the out-point
+clamp and its follow-up, so the release page describes a build and the
+installers on it are a different one. The notes file in this repository has
+been trimmed back to what actually shipped and the missing work moved to
+v0.6.4; the release body on GitHub is a copy taken at tag time and cannot be
+corrected from here.
+
+The lesson is the one already written below and worth stating as a rule:
+**tag `origin/main` and check what it resolved to before pushing.** A tag
+pushed at anything else -- a local branch, a commit that felt recent, an
+unfetched `main` -- ships whatever that commit contained, and the release
+notes are read from the tag too, so nothing in the pipeline notices the
+mismatch.
 
 **No commit hash is written here on purpose.** One was, twice, and both were
 stale before the commit that wrote them had finished merging: naming a hash in
@@ -21,9 +36,9 @@ Keep this table current: update it in the same commit that adds the next
 version's notes, so the number is answerable from the repository rather than
 from memory or a chat log.
 
-**It has gone stale three releases running** — v0.6.0, v0.6.1 and v0.6.2 were
-each tagged while the next change was still in review, and each time the table
-still named the tag that had just shipped as "next". The failure is always the
+**It has gone stale four releases running** — v0.6.0, v0.6.1, v0.6.2 and
+v0.6.3 were each tagged while the next change was still in review, and each
+time the table still named the tag that had just shipped as "next". The failure is always the
 same shape: a tag gets pushed from a terminal, and nothing in the repository
 learns about it. So when picking up this file, do not trust the table before
 checking it:
@@ -50,8 +65,8 @@ To ship the version named above: merge to `main`, then
 
 ```bash
 git fetch origin main
-git tag -a v0.6.3 origin/main -m "Capset v0.6.3"
-git push origin v0.6.3
+git tag -a v0.6.4 origin/main -m "Capset v0.6.4"
+git push origin v0.6.4
 ```
 
 Check what that resolved to before pushing, and that the notes describe it:

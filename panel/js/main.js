@@ -529,7 +529,13 @@
           // run replaces the lot, which is what it has always done.
           range: settings.scope === "inout"
             ? { start: source.start || 0, duration: source.duration }
-            : null
+            : null,
+          // Derived from the radio, where the range is derived from what the
+          // render actually produced. Two separate sources for the same
+          // decision is the point: the host compares them, and a range that
+          // goes missing on the way there stops the run instead of quietly
+          // turning it into a full replace.
+          scoped: settings.scope === "inout"
         };
       });
     });
@@ -569,8 +575,14 @@
           options: settings.options,
           timeOffset: payload.offset,
           // Null unless this run captioned the work area only. The host
-          // replaces every caption layer when it is null.
-          replaceRange: payload.range || null
+          // replaces every caption layer when it is null -- so it is also
+          // told which kind of run this was, and refuses rather than
+          // replacing everything if the two disagree.
+          replaceRange: payload.range || null,
+          // Not settings.scope: an SRT import replaces the whole composition
+          // whatever the Duration radio says, so only the path that built a
+          // range may claim to be scoped.
+          scoped: !!payload.scoped
         }) + ")");
       })
       .then(function (data) {
@@ -578,7 +590,10 @@
         var parts = ["Built " + data.created + " caption layers"];
         if (data.replaced) {
           parts.push("replaced " + data.replaced +
-                     (data.ranged ? " in the work area" : ""));
+                     (data.ranged
+                        ? " in " + data.rangeStart.toFixed(2) + "s-" +
+                          (data.rangeStart + data.rangeDuration).toFixed(2) + "s"
+                        : " (whole composition)"));
         }
         if (data.precomposed) parts.push("precomposed");
         if (data.parented) parts.push("parented to controller");
