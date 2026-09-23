@@ -109,6 +109,13 @@ function makeFolder() {
 
 function load(options = {}) {
   const comp = fake.reset(options);
+  // What addText() hands back as a caption layer's inherited styling, i.e.
+  // AE's Character panel -- set here, AFTER reset() (which clears it), so it
+  // is in place before capset.jsx ever runs and a test can assert the
+  // controller rig seeds itself from exactly this rather than fixed defaults.
+  if (options.characterPanelDefaults) {
+    fake.setCharacterPanelDefaults(options.characterPanelDefaults);
+  }
   const source = fs.readFileSync(JSX_PATH, "utf8")
     .replace(/^\s*#include.*$/gm, "");
 

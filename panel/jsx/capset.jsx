@@ -978,15 +978,25 @@ function capsetRenderAudio(payloadJson) {
 // ---------------------------------------------------------------------------
 // controller rig
 //
-// One null layer every caption is expression-linked to, so font size, colour
-// and baseline update everywhere at once while each layer stays individually
+// One null layer every caption is expression-linked to, so type, layout and
+// visibility update everywhere at once while each layer stays individually
 // editable. This is the original project differentiator: Captioneer requires
 // restyling every layer by hand.
 //
-// Font size and fill colour are driven through Source Text, which needs the
-// JavaScript expression engine (AE 16.0+). Position is driven through
-// Transform, which works on any engine, so a project stuck on the legacy
-// engine still gets baseline control rather than nothing.
+// Font Size, Fill Color, Stroke, Tracking, Leading and All Caps are driven
+// through Source Text via the Text Style expression API, which needs the
+// JavaScript expression engine (AE 17.0+) -- see the citations above the
+// expression in capsetLinkToController for exactly what was verified.
+// Position and Opacity are driven through Transform with ordinary property
+// references, which work on any engine, so a project stuck on the legacy
+// engine still gets baseline, horizontal position, global opacity and fades
+// rather than nothing. Drop Shadow is a per-caption effect rather than a
+// Source Text style, so it too works on either engine.
+//
+// capsetControllerEffectSpecs is the single source of truth for what the rig
+// carries: name, AAE effect type, and default value. Both a brand new
+// controller and an upgrade of an existing one (capsetUpgradeControllerEffects)
+// are built from the same list, so the two can never drift apart.
 // ---------------------------------------------------------------------------
 
 function capsetUsesJsEngine() {
@@ -1004,9 +1014,221 @@ function capsetFindController(comp) {
     return null;
 }
 
+/**
+ * What the controller rig carries: name, effect match name, and a default
+ * value function. This is read by three places -- building a brand new
+ * controller, upgrading an existing one, and Sync Style writing into a
+ * controller's effects -- so all three agree on names and defaults by
+ * construction rather than by three copies staying in sync by hand.
+ *
+ * Grouped Text / Layout / Visibility / Shadow, in the order they are meant
+ * to read in the Effect Controls panel.
+ *
+ * Defaults here are the FALLBACK used when there is no better source: an
+ * upgrade adding an effect a legacy controller never had, or Sync Style
+ * seeding one from a captured style. They are chosen to change nothing where
+ * there is no evidence to the contrary -- stroke, fades and the shadow off,
+ * tracking untouched, leading auto, fill on, horizontal position centred.
+ *
+ * A brand new controller is seeded from something better: the actual
+ * TextDocument of the first caption layer just created, i.e. whatever the
+ * Character panel was already set to (see capsetSeedControllerFromDoc,
+ * called once from capsetBuildCaptions right after that layer exists). These
+ * specs' own `value()` is what that controller starts with for the instant
+ * before the doc-based seed overwrites it, and is what an EXISTING
+ * controller's newly-added effects get instead, since re-seeding a
+ * controller the user already has would overwrite sliders that are theirs,
+ * not Capset's, to change.
+ */
+function capsetControllerEffectSpecs(style) {
+    return [
+        // --- text ------------------------------------------------------------
+        {
+            name: "Font Size", type: "ADBE Slider Control",
+            valueProp: "ADBE Slider Control-0001",
+            value: function () { return style && style.fontSize ? style.fontSize : 72; }
+        },
+        {
+            name: "Fill", type: "ADBE Checkbox Control",
+            valueProp: "ADBE Checkbox Control-0001",
+            // On unless a style explicitly says otherwise: a legacy controller
+            // (built before this checkbox existed) always forced fill on, so
+            // backfilling it onto one must not turn fill off for anybody.
+            value: function () { return style && style.applyFill === false ? 0 : 1; }
+        },
+        {
+            name: "Fill Color", type: "ADBE Color Control",
+            valueProp: "ADBE Color Control-0001",
+            // Renamed from "Fill Colour" (UK spelling) -- capsetUpgradeControllerEffects
+            // renames a legacy controller's effect in place rather than adding
+            // a second one, so the value the user already set survives.
+            legacyNames: ["Fill Colour"],
+            value: function () {
+                return style && style.fillColor ? style.fillColor.concat([1]) : [1, 1, 1, 1];
+            }
+        },
+        {
+            name: "Stroke", type: "ADBE Checkbox Control",
+            valueProp: "ADBE Checkbox Control-0001",
+            value: function () { return style && style.applyStroke ? 1 : 0; }
+        },
+        {
+            name: "Stroke Color", type: "ADBE Color Control",
+            valueProp: "ADBE Color Control-0001",
+            value: function () {
+                return style && style.strokeColor ? style.strokeColor.concat([1]) : [0, 0, 0, 1];
+            }
+        },
+        {
+            name: "Stroke Width", type: "ADBE Slider Control",
+            valueProp: "ADBE Slider Control-0001",
+            value: function () { return style && style.strokeWidth ? style.strokeWidth : 2; }
+        },
+        {
+            name: "Tracking", type: "ADBE Slider Control",
+            valueProp: "ADBE Slider Control-0001",
+            value: function () { return style && style.tracking ? style.tracking : 0; }
+        },
+        {
+            name: "Leading", type: "ADBE Slider Control",
+            valueProp: "ADBE Slider Control-0001",
+            // This fallback is always 0, never a captured style's number. 0
+            // means "auto leading" (see capsetLinkToController), which is
+            // also what a brand new text layer already does -- so an
+            // untouched slider changes nothing. A plain captured `style`
+            // carries only a NUMBER (the leading AE computed at capture
+            // time), not whether auto-leading produced it, so trusting that
+            // number here could silently turn auto-leading off for a layer
+            // that had it on. capsetSeedControllerFromDoc, which seeds a
+            // BRAND NEW controller, reads the document's own `autoLeading`
+            // flag directly and does not have that problem.
+            value: function () { return 0; }
+        },
+        {
+            name: "All Caps", type: "ADBE Checkbox Control",
+            valueProp: "ADBE Checkbox Control-0001",
+            value: function () { return 0; }
+        },
+        // --- layout ------------------------------------------------------------
+        {
+            name: "Horizontal %", type: "ADBE Slider Control",
+            valueProp: "ADBE Slider Control-0001",
+            value: function () { return 50; }
+        },
+        {
+            name: "Baseline %", type: "ADBE Slider Control",
+            valueProp: "ADBE Slider Control-0001",
+            value: function () {
+                return style && style.positionY !== undefined
+                    ? style.positionY * 100
+                    : CAPSET_BASELINE * 100;
+            }
+        },
+        // --- visibility ------------------------------------------------------------
+        {
+            name: "Opacity", type: "ADBE Slider Control",
+            valueProp: "ADBE Slider Control-0001",
+            value: function () { return 100; }
+        },
+        {
+            name: "Fade In (frames)", type: "ADBE Slider Control",
+            valueProp: "ADBE Slider Control-0001",
+            value: function () { return 0; }
+        },
+        {
+            name: "Fade Out (frames)", type: "ADBE Slider Control",
+            valueProp: "ADBE Slider Control-0001",
+            value: function () { return 0; }
+        },
+        // --- shadow ------------------------------------------------------------
+        {
+            name: "Drop Shadow", type: "ADBE Checkbox Control",
+            valueProp: "ADBE Checkbox Control-0001",
+            value: function () { return 0; }
+        },
+        {
+            name: "Shadow Color", type: "ADBE Color Control",
+            valueProp: "ADBE Color Control-0001",
+            value: function () { return [0, 0, 0, 1]; }
+        },
+        {
+            name: "Shadow Opacity", type: "ADBE Slider Control",
+            valueProp: "ADBE Slider Control-0001",
+            value: function () { return 50; }
+        },
+        {
+            name: "Shadow Distance", type: "ADBE Slider Control",
+            valueProp: "ADBE Slider Control-0001",
+            value: function () { return 5; }
+        },
+        {
+            name: "Shadow Softness", type: "ADBE Slider Control",
+            valueProp: "ADBE Slider Control-0001",
+            value: function () { return 10; }
+        }
+    ];
+}
+
+function capsetFindEffectByName(effects, name) {
+    for (var i = 1; i <= effects.numProperties; i++) {
+        if (effects.property(i).name === name) return effects.property(i);
+    }
+    return null;
+}
+
+function capsetAddControllerEffect(effects, spec) {
+    var fx = effects.addProperty(spec.type);
+    fx.name = spec.name;
+    fx.property(spec.valueProp).setValue(spec.value());
+    return fx;
+}
+
+/**
+ * Bring an EXISTING controller null up to the current effect rig, without
+ * disturbing anything the user has already dialled in.
+ *
+ * Two things can be true of a controller a past version of Capset built:
+ *
+ *   - it may carry "Fill Colour" (UK spelling) where the rig now expects
+ *     "Fill Color" -- renamed IN PLACE, so the effect keeps its identity and
+ *     current value, and every expression that already reads "Fill Color"
+ *     (a fresh caption added to this same comp) finds it.
+ *   - it is missing every effect added since it was built -- Stroke,
+ *     Tracking, Opacity, the fades... -- added fresh, seeded the same way a
+ *     brand new controller would be.
+ *
+ * An effect that is already correctly named is left completely alone. This
+ * runs on every Add Captions and every Sync Style, and resetting sliders the
+ * user has already moved on every rebuild would be its own bug report.
+ */
+function capsetUpgradeControllerEffects(controller, specs) {
+    var effects = controller.property("ADBE Effect Parade");
+    for (var i = 0; i < specs.length; i++) {
+        var spec = specs[i];
+        if (capsetFindEffectByName(effects, spec.name)) continue;
+
+        var legacy = null;
+        var legacyNames = spec.legacyNames || [];
+        for (var j = 0; j < legacyNames.length; j++) {
+            legacy = capsetFindEffectByName(effects, legacyNames[j]);
+            if (legacy) break;
+        }
+        if (legacy) {
+            legacy.name = spec.name;
+        } else {
+            capsetAddControllerEffect(effects, spec);
+        }
+    }
+}
+
 function capsetEnsureController(comp, style) {
+    var specs = capsetControllerEffectSpecs(style);
+
     var existing = capsetFindController(comp);
-    if (existing) return existing;
+    if (existing) {
+        capsetUpgradeControllerEffects(existing, specs);
+        return existing;
+    }
 
     var controller = comp.layers.addNull();
     controller.name = CAPSET_CONTROLLER;
@@ -1015,28 +1237,139 @@ function capsetEnsureController(comp, style) {
     controller.moveToBeginning();
 
     var effects = controller.property("ADBE Effect Parade");
-
-    var fontSize = effects.addProperty("ADBE Slider Control");
-    fontSize.name = "Font Size";
-    fontSize.property("ADBE Slider Control-0001").setValue(
-        style && style.fontSize ? style.fontSize : 72
-    );
-
-    var baseline = effects.addProperty("ADBE Slider Control");
-    baseline.name = "Baseline %";
-    baseline.property("ADBE Slider Control-0001").setValue(
-        style && style.positionY !== undefined
-            ? style.positionY * 100
-            : CAPSET_BASELINE * 100
-    );
-
-    var fill = effects.addProperty("ADBE Color Control");
-    fill.name = "Fill Colour";
-    fill.property("ADBE Color Control-0001").setValue(
-        style && style.fillColor ? style.fillColor.concat([1]) : [1, 1, 1, 1]
-    );
+    for (var i = 0; i < specs.length; i++) {
+        capsetAddControllerEffect(effects, specs[i]);
+    }
 
     return controller;
+}
+
+/**
+ * Re-seed a BRAND NEW controller's text-styling sliders from the actual
+ * TextDocument of the caption layer that was just created -- i.e. whatever
+ * the Character panel was already set to when the user clicked Add Captions.
+ *
+ * Why this exists: captions inherit the Character panel on purpose
+ * (capsetStyleText never touches font/size/colour), so a controller seeded
+ * with fixed defaults (72pt, white, no stroke...) instead of the document's
+ * OWN values meant ticking "Parent to Controller" silently changed how every
+ * caption looked the moment the Source Text expression started actually
+ * working -- a user with 110pt yellow text and a black stroke got 72pt white
+ * text with no stroke. Reading the real document is the only way to make
+ * parenting change nothing by default.
+ *
+ * Called EXACTLY ONCE per build, for the FIRST caption layer actually
+ * created (empty captions are skipped, so it cannot be the caption that
+ * never got a layer), and ONLY when capsetEnsureController just created the
+ * controller rather than reusing one: an existing controller's sliders
+ * belong to the user, and re-seeding them from whatever the Character panel
+ * happens to be set to on THIS run would overwrite a look they chose on
+ * purpose, the same mistake this function exists to fix for a new one.
+ *
+ * `style` is the build's own captured-style payload (normally {}); it is
+ * still consulted, AFTER the document, for any field the document could not
+ * answer -- keeping capsetControllerEffectSpecs' fallback chain intact for
+ * everything downstream of this (Sync Style, an upgrade with no fresh layer
+ * to read) rather than replacing it.
+ */
+function capsetSeedControllerFromDoc(controller, doc, style) {
+    var docStyle = capsetReadStyleFromDoc(doc);
+    var effects = controller.property("ADBE Effect Parade");
+
+    function set(name, valueProp, value) {
+        var fx = capsetFindEffectByName(effects, name);
+        if (!fx) return;
+        try { fx.property(valueProp).setValue(value); } catch (e) {}
+    }
+
+    set("Font Size", "ADBE Slider Control-0001",
+        docStyle.fontSize ? docStyle.fontSize
+            : (style && style.fontSize ? style.fontSize : 72));
+
+    var applyFill = docStyle.applyFill !== undefined ? docStyle.applyFill
+        : !(style && style.applyFill === false);
+    set("Fill", "ADBE Checkbox Control-0001", applyFill ? 1 : 0);
+    set("Fill Color", "ADBE Color Control-0001",
+        (docStyle.fillColor || (style && style.fillColor) || [1, 1, 1]).concat([1]));
+
+    var applyStroke = docStyle.applyStroke !== undefined ? docStyle.applyStroke
+        : !!(style && style.applyStroke);
+    set("Stroke", "ADBE Checkbox Control-0001", applyStroke ? 1 : 0);
+    set("Stroke Color", "ADBE Color Control-0001",
+        (docStyle.strokeColor || (style && style.strokeColor) || [0, 0, 0]).concat([1]));
+    set("Stroke Width", "ADBE Slider Control-0001",
+        docStyle.strokeWidth !== undefined ? docStyle.strokeWidth
+            : (style && style.strokeWidth ? style.strokeWidth : 2));
+
+    set("Tracking", "ADBE Slider Control-0001",
+        docStyle.tracking ? docStyle.tracking : (style && style.tracking ? style.tracking : 0));
+
+    set("All Caps", "ADBE Checkbox Control-0001", docStyle.allCaps ? 1 : 0);
+
+    // 0 tells the Source Text expression to leave auto-leading ON (see
+    // capsetLinkToController), so a document that already has auto-leading
+    // on seeds a slider that changes nothing, and one that has it off seeds
+    // its own explicit leading number instead of a guess.
+    set("Leading", "ADBE Slider Control-0001",
+        docStyle.autoLeading ? 0 : (docStyle.leading || 0));
+}
+
+/**
+ * Add a Drop Shadow effect to a caption layer and link it to the controller.
+ *
+ * Ordinary effect-parameter expressions, not the Text Style API, so this
+ * works on either expression engine. Match names and property names below
+ * are the standard, long-documented "Drop Shadow" (ADBE Drop Shadow) effect
+ * -- not something this rewrite is introducing -- but its scripting/expression
+ * surface was NOT independently re-verified against Adobe's reference during
+ * this change the way the Text Style API below was, since no fetchable
+ * reference for it turned up; the fake host models it from long-standing
+ * community documentation of its property names, and it should be confirmed
+ * against a real Effect Controls panel (Shadow Color / Opacity / Direction /
+ * Distance / Softness / Shadow Only) before this ships.
+ *
+ * Direction is deliberately left alone: nothing in the controller drives it,
+ * so it stays whatever AE's own default is.
+ */
+function capsetLinkShadowToController(layer) {
+    var parade = layer.property("ADBE Effect Parade");
+    var shadow = parade.addProperty("ADBE Drop Shadow");
+    shadow.name = "Capset Shadow";
+
+    // `thisComp.layer(...)` is looked up INSIDE the try, not before it: a
+    // missing controller (deleted by hand while captions stayed parented to
+    // it) makes that lookup itself throw in real AE, and a throw outside the
+    // try would leave a red layer -- precisely the outcome try/catch exists
+    // to prevent.
+    shadow.property("Shadow Color").expression =
+        'try {\r' +
+        '  var c = thisComp.layer("' + CAPSET_CONTROLLER + '");\r' +
+        '  var col = c.effect("Shadow Color")("Color");\r' +
+        '  [col[0], col[1], col[2], 1];\r' +
+        '} catch (err) { value; }';
+
+    // The checkbox lives here, not on the effect's enabled state, so
+    // switching it off is one slider read rather than a per-layer toggle --
+    // and so a caption that was individually re-enabled by hand is not
+    // silently re-hidden by the next rebuild.
+    shadow.property("Opacity").expression =
+        'try {\r' +
+        '  var c = thisComp.layer("' + CAPSET_CONTROLLER + '");\r' +
+        '  c.effect("Drop Shadow")("Checkbox") === 1\r' +
+        '    ? c.effect("Shadow Opacity")("Slider") : 0;\r' +
+        '} catch (err) { value; }';
+
+    shadow.property("Distance").expression =
+        'try {\r' +
+        '  var c = thisComp.layer("' + CAPSET_CONTROLLER + '");\r' +
+        '  c.effect("Shadow Distance")("Slider");\r' +
+        '} catch (err) { value; }';
+
+    shadow.property("Softness").expression =
+        'try {\r' +
+        '  var c = thisComp.layer("' + CAPSET_CONTROLLER + '");\r' +
+        '  c.effect("Shadow Softness")("Slider");\r' +
+        '} catch (err) { value; }';
 }
 
 /**
@@ -1062,9 +1395,9 @@ function capsetLinkToController(layer, useJsEngine) {
     // leaves a red layer -- much worse than falling back to the layer's own
     // value.
     position.expression =
-        'var c = thisComp.layer("' + CAPSET_CONTROLLER + '");\r' +
         'try {\r' +
-        '  var p = [thisComp.width / 2,\r' +
+        '  var c = thisComp.layer("' + CAPSET_CONTROLLER + '");\r' +
+        '  var p = [thisComp.width * c.effect("Horizontal %")("Slider") / 100,\r' +
         '           thisComp.height * c.effect("Baseline %")("Slider") / 100];\r' +
         '  if (hasParent) {\r' +
         '    var q = parent.fromComp(p);\r' +
@@ -1074,17 +1407,99 @@ function capsetLinkToController(layer, useJsEngine) {
         '  }\r' +
         '} catch (err) { value; }';
 
+    // Opacity is ordinary Transform, not Source Text, so global opacity and
+    // per-caption fades work on either expression engine. Fades measure from
+    // the LAYER'S OWN inPoint/outPoint, not the controller's, so retiming one
+    // caption keeps its fade attached to where it actually starts and ends;
+    // "linear()" is a core expression function present on both engines. A
+    // fade of 0 frames (the default) leaves that ramp at a constant 1, so it
+    // multiplies away to nothing and Opacity == the controller's own slider,
+    // which itself defaults to 100 -- the current look, unchanged.
+    var opacity = layer.property("Transform").property("Opacity");
+    opacity.expression =
+        'try {\r' +
+        '  var c = thisComp.layer("' + CAPSET_CONTROLLER + '");\r' +
+        '  var op = c.effect("Opacity")("Slider") / 100;\r' +
+        '  var fd = thisComp.frameDuration;\r' +
+        '  var fadeInFrames = c.effect("Fade In (frames)")("Slider");\r' +
+        '  var fadeOutFrames = c.effect("Fade Out (frames)")("Slider");\r' +
+        '  var fadeIn = fadeInFrames > 0\r' +
+        '    ? linear(time, inPoint, inPoint + fadeInFrames * fd, 0, 1) : 1;\r' +
+        '  var fadeOut = fadeOutFrames > 0\r' +
+        '    ? linear(time, outPoint - fadeOutFrames * fd, outPoint, 1, 0) : 1;\r' +
+        '  value * op * fadeIn * fadeOut;\r' +
+        '} catch (err) { value; }';
+
+    capsetLinkShadowToController(layer);
+
     if (!useJsEngine) return false;
 
+    // VERIFIED against the After Effects Text Style expression API, AE 17.0+,
+    // JavaScript expression engine only (capsetUsesJsEngine gates this whole
+    // block on exactly that):
+    //   https://ae-expressions.docsforadobe.dev/text/style/            (TextStyle methods)
+    //   https://helpx.adobe.com/after-effects/using/expressions-text-properties.html
+    //     ("Use expressions to edit and access text properties" -- the official page)
+    //   https://motiondeveloper.com/blog/text-style-expressions
+    //     (worked chained example: text.sourceText.style.setFontSize(...).setFont(...))
+    //
+    // What was confirmed there and is relied on below:
+    //   - a TextDocument's properties (t.fontSize = ...) CANNOT be assigned
+    //     inside an expression -- that assignment is silently a no-op, which
+    //     is the entire bug this replaces. `text.sourceText.style` returns a
+    //     TextStyle object instead, and that object's setXxx() methods are
+    //     the supported way to restyle text from an expression.
+    //   - every setXxx() method returns a NEW TextStyle rather than mutating
+    //     the one it was called on, so each call must be reassigned (chaining
+    //     works because each method also returns `this`-equivalent for the
+    //     NEXT call), and the expression's last statement must evaluate to a
+    //     TextStyle (or TextDocument), not a plain number or color.
+    //   - setFillColor()/setStrokeColor() take [r, g, b] (0-1); an
+    //     ADBE Color Control's value is [r, g, b, a], so it is sliced to 3.
+    //   - setFillColor() only shows if TextStyle.applyFill is true, so the
+    //     "Fill" checkbox drives setApplyFill() directly rather than always
+    //     forcing it on; some caption styling is stroke-only, and forcing
+    //     fill on for that text would be exactly the kind of look-changing
+    //     side effect this whole rig now has to avoid. setStrokeColor()/
+    //     setStrokeWidth() likewise need setApplyStroke(true). This is what
+    //     "Fill Colour did nothing" actually was: not just the assignment
+    //     bug, but that even a correct assignment needs applyFill explicitly
+    //     turned on for a document whose applyFill happened to be off.
+    //   - setLeading() has no effect while TextStyle.isAutoLeading is true,
+    //     so leading is only set after setAutoLeading(false); 0 is treated
+    //     as "leave auto-leading on", which is also a new text layer's own
+    //     default, so an untouched slider changes nothing.
+    //   - setAllCaps(boolean) exists and needs no accompanying "apply" flag.
+    // Only methods appearing in at least two of the sources above are used
+    // here; nothing below is guessed.
     var sourceText = layer.property("Source Text");
     sourceText.expression =
-        'var c = thisComp.layer("' + CAPSET_CONTROLLER + '");\r' +
-        'var t = value;\r' +
         'try {\r' +
-        '  t.fontSize = c.effect("Font Size")("Slider");\r' +
-        '  t.fillColor = c.effect("Fill Colour")("Color");\r' +
-        '} catch (err) {}\r' +
-        't;';
+        '  var c = thisComp.layer("' + CAPSET_CONTROLLER + '");\r' +
+        '  var style = text.sourceText.style;\r' +
+        '  style = style.setFontSize(c.effect("Font Size")("Slider"));\r' +
+        '  if (c.effect("Fill")("Checkbox") === 1) {\r' +
+        '    var fill = c.effect("Fill Color")("Color");\r' +
+        '    style = style.setApplyFill(true).setFillColor([fill[0], fill[1], fill[2]]);\r' +
+        '  } else {\r' +
+        '    style = style.setApplyFill(false);\r' +
+        '  }\r' +
+        '  if (c.effect("Stroke")("Checkbox") === 1) {\r' +
+        '    var stroke = c.effect("Stroke Color")("Color");\r' +
+        '    style = style.setApplyStroke(true)\r' +
+        '      .setStrokeColor([stroke[0], stroke[1], stroke[2]])\r' +
+        '      .setStrokeWidth(c.effect("Stroke Width")("Slider"));\r' +
+        '  } else {\r' +
+        '    style = style.setApplyStroke(false);\r' +
+        '  }\r' +
+        '  style = style.setTracking(c.effect("Tracking")("Slider"));\r' +
+        '  var leading = c.effect("Leading")("Slider");\r' +
+        '  style = leading > 0\r' +
+        '    ? style.setAutoLeading(false).setLeading(leading)\r' +
+        '    : style.setAutoLeading(true);\r' +
+        '  style = style.setAllCaps(c.effect("All Caps")("Checkbox") === 1);\r' +
+        '  style;\r' +
+        '} catch (err) { value; }';
     return true;
 }
 
@@ -1118,6 +1533,43 @@ function capsetAllComps() {
 }
 
 /** Snapshot the styling of the selected text layer. */
+/**
+ * Read the styling a TextDocument actually carries, in the shape the rest of
+ * Capset already passes around as `style` (capsetCaptureStyle,
+ * capsetApplyStyleToLayer, capsetSyncStyle). One reader, so a field added for
+ * one caller (the controller rig seeding itself off a fresh caption's
+ * Character-panel look) is available to the others without a second copy of
+ * the same field list drifting out of sync.
+ *
+ * fillColor and strokeColor are guarded: fillColor throws on read when
+ * applyFill is false, and this project has no reason to believe strokeColor
+ * is any different, so both are read defensively rather than assumed safe.
+ */
+function capsetReadStyleFromDoc(doc) {
+    var style = {
+        font: doc.font,
+        fontSize: doc.fontSize,
+        tracking: doc.tracking,
+        justification: doc.justification,
+        applyFill: doc.applyFill,
+        applyStroke: doc.applyStroke,
+        strokeWidth: doc.strokeWidth,
+        strokeOverFill: doc.strokeOverFill,
+        leading: doc.leading
+    };
+    try { style.fillColor = doc.fillColor; } catch (e) {}
+    try { style.strokeColor = doc.strokeColor; } catch (e) {}
+    // Both read-only in classic TextDocument scripting, and both exactly
+    // what the controller rig needs to reproduce a caption's inherited look:
+    // allCaps mirrors the Character panel's All Caps toggle, and autoLeading
+    // says whether `leading` above is a real chosen number or just whatever
+    // AE computed automatically -- seeding a slider with the latter would
+    // silently turn auto-leading off for a layer that never had it off.
+    try { style.allCaps = doc.allCaps; } catch (e) {}
+    try { style.autoLeading = doc.autoLeading; } catch (e) {}
+    return style;
+}
+
 function capsetCaptureStyle() {
     try {
         var comp = capsetActiveComp();
@@ -1129,19 +1581,7 @@ function capsetCaptureStyle() {
         if (!source) throw new Error("Select a styled text layer first.");
 
         var doc = source.property("Source Text").value;
-        var style = {
-            font: doc.font,
-            fontSize: doc.fontSize,
-            tracking: doc.tracking,
-            justification: doc.justification,
-            applyFill: doc.applyFill,
-            applyStroke: doc.applyStroke,
-            strokeWidth: doc.strokeWidth,
-            strokeOverFill: doc.strokeOverFill,
-            leading: doc.leading
-        };
-        try { style.fillColor = doc.fillColor; } catch (e) {}
-        try { style.strokeColor = doc.strokeColor; } catch (e) {}
+        var style = capsetReadStyleFromDoc(doc);
         try { style.position = source.property("Transform").property("Position").value; } catch (e) {}
         try { style.scale = source.property("Transform").property("Scale").value; } catch (e) {}
         // Recorded WITH the style, not looked up at apply time: position is
@@ -1174,6 +1614,64 @@ function capsetCaptureStyle() {
     } catch (e) {
         return capsetErr(e.message);
     }
+}
+
+/**
+ * Route the part of a synced style that the controller rig owns onto the
+ * controller's own effects, for a comp that has one.
+ *
+ * Font Size, Fill (on/off and color), Stroke (on/off, color and width) and
+ * Tracking are driven through Source Text's expression once a caption is
+ * linked to a controller (see
+ * "controller rig" above) -- so capsetApplyStyleToLayer writing them onto a
+ * linked layer's TextDocument is writing to a value the expression
+ * overrides on its very next evaluation, which for a linked layer is
+ * effectively immediately. Before this, Sync Style looked like it silently
+ * did nothing for exactly those fields, on exactly the projects using the
+ * feature the sync exists to make easier.
+ *
+ * capsetApplyStyleToLayer still runs on every layer regardless: a caption
+ * that is not parented to the controller (an older comp, or the legacy
+ * expression engine) has no expression to fight it, so it still needs the
+ * per-layer write, and running both is harmless where the controller wins.
+ *
+ * A legacy controller is brought up to the current names/effects first
+ * (capsetUpgradeControllerEffects), so this always writes to the effect the
+ * rig currently expects, whatever version built the controller.
+ */
+function capsetSyncControllerFromStyle(comp, style) {
+    var controller = capsetFindController(comp);
+    if (!controller) return false;
+
+    capsetUpgradeControllerEffects(controller, capsetControllerEffectSpecs(style));
+    var effects = controller.property("ADBE Effect Parade");
+
+    function set(name, valueProp, value) {
+        var fx = capsetFindEffectByName(effects, name);
+        if (!fx) return;
+        try { fx.property(valueProp).setValue(value); } catch (e) {}
+    }
+
+    if (style.fontSize) set("Font Size", "ADBE Slider Control-0001", style.fontSize);
+    if (style.applyFill !== undefined) {
+        set("Fill", "ADBE Checkbox Control-0001", style.applyFill ? 1 : 0);
+    }
+    if (style.fillColor) {
+        set("Fill Color", "ADBE Color Control-0001", style.fillColor.concat([1]));
+    }
+    if (style.applyStroke !== undefined) {
+        set("Stroke", "ADBE Checkbox Control-0001", style.applyStroke ? 1 : 0);
+    }
+    if (style.strokeColor) {
+        set("Stroke Color", "ADBE Color Control-0001", style.strokeColor.concat([1]));
+    }
+    if (style.strokeWidth !== undefined) {
+        set("Stroke Width", "ADBE Slider Control-0001", style.strokeWidth);
+    }
+    if (style.tracking !== undefined) {
+        set("Tracking", "ADBE Slider Control-0001", style.tracking);
+    }
+    return true;
 }
 
 function capsetApplyStyleToLayer(layer, style, comp) {
@@ -1336,11 +1834,13 @@ function capsetSyncStyle(payloadJson) {
         var updated = 0;
         var compsTouched = 0;
         var effectsCopied = 0;
+        var controllersUpdated = 0;
         for (var c = 0; c < comps.length; c++) {
             var comp = comps[c];
             var layers = capsetTextLayers(comp, true);
             if (!layers.length) continue;
             compsTouched++;
+            if (capsetSyncControllerFromStyle(comp, style)) controllersUpdated++;
             for (var i = 0; i < layers.length; i++) {
                 capsetApplyStyleToLayer(layers[i], style, comp);
                 updated++;
@@ -1369,6 +1869,7 @@ function capsetSyncStyle(payloadJson) {
             comps: compsTouched,
             scope: scope,
             effectsCopied: effectsCopied,
+            controllersUpdated: controllersUpdated,
             // True when the user asked for effects across the project and only
             // the active comp could get them, so the panel can say so instead
             // of letting the user assume it worked everywhere.
@@ -1672,13 +2173,24 @@ function capsetBuildCaptions(payloadJson) {
 
         var controller = null;
         var linkStyle = false;
+        // Whether THIS call is the one that created the controller, as
+        // opposed to reusing a comp's existing one. Only a brand new
+        // controller gets re-seeded from the first caption's actual
+        // TextDocument below -- an existing controller's sliders are the
+        // user's, not something a later Add Captions run gets to overwrite.
+        var controllerIsNew = false;
+        var controllerSeededFromDoc = false;
         if (options.parentToController) {
+            controllerIsNew = !capsetFindController(comp);
             controller = capsetEnsureController(comp, style);
-            // The controller carries Font Size and Fill Colour sliders. Without
-            // the expressions that read them they are decoration: the user
-            // drags a slider and nothing moves. Only the JavaScript engine can
-            // drive a text document, so on the legacy engine the captions are
-            // still parented and still follow the baseline slider.
+            // The controller carries Font Size, Fill Color, Stroke, Tracking,
+            // Leading and All Caps sliders, all driven through Source Text.
+            // Without the expressions that read them they are decoration: the
+            // user drags a slider and nothing moves. Only the JavaScript
+            // engine can restyle a text document from an expression (see
+            // capsetLinkToController), so on the legacy engine the captions
+            // are still parented and still follow Baseline %, Horizontal %,
+            // Opacity and the fades, which are ordinary Transform properties.
             linkStyle = capsetUsesJsEngine();
         }
 
@@ -1727,6 +2239,21 @@ function capsetBuildCaptions(payloadJson) {
             layer.outPoint = outPoint;
 
             capsetStyleText(layer, style, comp);
+
+            // The controller's text-styling sliders exist so far only with
+            // fixed fallback defaults (capsetControllerEffectSpecs); this is
+            // the one point where a document actually exists to read the
+            // Character panel's real settings from, and only the FIRST
+            // caption gets to set them -- doing this again for every caption
+            // would just mean the last one written wins, for no reason.
+            if (controllerIsNew && !controllerSeededFromDoc) {
+                try {
+                    capsetSeedControllerFromDoc(
+                        controller, layer.property("Source Text").value, style
+                    );
+                } catch (e) {}
+                controllerSeededFromDoc = true;
+            }
 
             if (animation && caption.timings) {
                 capsetApplyAnimation(layer, animation, caption.timings);

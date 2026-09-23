@@ -301,7 +301,7 @@ Sync Style borrows and puts back.
 
 **The controller rig works in the parent's coordinate space.** "Parent to
 Controller" parents every caption to a null carrying Font Size, Baseline %
-and Fill Colour, and drives Position by expression. That expression computed
+and Fill Color, and drives Position by expression. That expression computed
 `[thisComp.width / 2, thisComp.height * baseline / 100]` — a point in **comp**
 space — and assigned it to a property that, once the layer is parented, is
 measured in the **parent's** space. `addNull()` leaves the null's anchor at
@@ -321,6 +321,26 @@ value of its last statement, which is what JavaScript's `eval` returns, so
 the shipped text runs in the test with a mocked comp and null. Reading the
 expression for keywords would never have caught a right number in the wrong
 coordinate space.
+
+**Font Size and Fill Color did nothing, for a different reason than
+Position did.** The Source Text expression used to do `t = value; t.fontSize
+= ...; t.fillColor = ...; t;` — assigning to a `TextDocument`'s properties
+inside an expression, which After Effects silently ignores. Wrapped in a
+`try/catch` whose `catch` did nothing, so the assignment's failure raised no
+error either; the sliders simply had no effect, and nothing said why. The
+supported mechanism is the Text Style expression API (AE 17.0+, JavaScript
+engine): `text.sourceText.style.setFontSize(n).setApplyFill(true)
+.setFillColor([r,g,b])`, where every `setXxx()` returns a *new* style to
+chain from, and the expression's last statement must evaluate to that style.
+`capsetLinkToController` cites the exact pages this was verified against.
+The rig now also drives Stroke, Tracking, Leading (0 means auto), All Caps,
+Horizontal %, Opacity, Fade In/Out and an optional Drop Shadow from the same
+null — all seeded to reproduce the caption's existing look exactly (stroke
+off, fades off, tracking/leading untouched) unless a captured style says
+otherwise, the same way Font Size already was. An existing project's
+controller is upgraded in place — a legacy "Fill Colour" effect (UK
+spelling) is renamed rather than duplicated, and any effect added since is
+appended — rather than rebuilt, so a slider the user already moved survives.
 
 **Three pacing modes are offered, not seven.** `segmentation.js` implements
 fixed-count (one/two/three), rhythm (phrase/smart/parts) and sentence modes,
