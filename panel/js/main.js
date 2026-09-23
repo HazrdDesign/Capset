@@ -684,6 +684,14 @@
       .then(function (data) {
         log("Styled " + data.updated + " layer(s) across " +
             data.comps + " comp(s).", "ok");
+        if (data.controllersUpdated) {
+          // Font Size, Fill Color, Stroke and Tracking are driven through the
+          // Capset Controller's own sliders once a caption is parented to it,
+          // so those values were written there instead of onto each layer --
+          // writing them onto a linked layer would have been overridden by
+          // its own expression on the next frame.
+          log("Updated " + data.controllersUpdated + " Capset Controller(s) too.", "ok");
+        }
         if (data.effectsCopied) {
           log("Copied effects onto " + data.effectsCopied + " layer(s).", "ok");
         }

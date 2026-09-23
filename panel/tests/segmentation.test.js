@@ -946,3 +946,96 @@ test("with two commas in reach, the later one is the cut", () => {
   assert.ok(/ second,$/.test(first),
     "cut at the earlier comma, stranding the rest: " + first);
 });
+
+
+// --- the under-measured pause (align.py's reported case, from the panel side)
+//
+// The waveform is flat from ~12.45s to ~13.05s -- a genuine ~0.6s silence --
+// but Parakeet stamps the first word after it early (see
+// backend/app/align.py), so the gap the panel actually receives measures
+// only ~0.28s: comfortably under maxGapS in every mode (0.5 horizontal, 0.45
+// vertical), so reach() reads it as a within-phrase breath. Before this fix,
+// bestCut had no way to prefer that 0.28s outlier over the budget's default
+// position, because every word here is said once (no heldFor baseline) and
+// there is no comma in reach -- so the caption ran on into the next thought,
+// exactly as reported. align.py should widen a gap like this back toward its
+// true ~0.6s at the source; these tests cover the panel's own defence, for
+// whatever gap actually arrives -- a chunk boundary, align.py disabled, or
+// simply a pause align.py's own silence-run threshold does not clear.
+
+test("smart 16:9 cuts on an under-measured pause instead of gluing the next thought on", () => {
+  // 13 fluent words (~0.05s gaps) exactly fill this mode's 14-word budget
+  // once the pause word is added, so the run closes AT that word -- the
+  // shape the reported bug needed: nothing left over to reach() with.
+  const pre = words(
+    "Going into my career I think it's more important for me to find".split(" ")
+  );
+  const last = pre[pre.length - 1];
+  // 0.28s: the early-stamped measurement of a pause that was really ~0.6s.
+  const pause = { text: "the", start: +(last.end + 0.28).toFixed(3), end: +(last.end + 0.58).toFixed(3) };
+  const after = words(["place", "that", "really"], { start: +(pause.end + 0.05).toFixed(3) });
+  const w = pre.concat([pause], after);
+
+  const out = seg.segment(w, { mode: "smart", width: 1920, height: 1080 });
+
+  assert.ok(!/ the$/.test(texts(out)[0]),
+    "glued the post-pause word onto the caption before it: " + JSON.stringify(texts(out)[0]));
+  assert.ok(/^the /.test(texts(out)[1] || ""),
+    "the post-pause word did not start its own caption: " + texts(out).join(" | "));
+});
+
+test("smart 9:16 cuts on an under-measured pause instead of gluing the next thought on", () => {
+  // 3 fluent words exactly fill this mode's 4-word budget once the pause
+  // word is added. No comma anywhere in reach, on purpose -- this isolates
+  // the gap mechanism from the punctuation check, which is covered on its
+  // own terms elsewhere ("a comma outranks a pause when both are in reach").
+  const pre = words(["Going", "into", "my"]);
+  const last = pre[pre.length - 1];
+  const pause = { text: "career", start: +(last.end + 0.28).toFixed(3), end: +(last.end + 0.70).toFixed(3) };
+  const after = words(["I", "think", "it's"], { start: +(pause.end + 0.05).toFixed(3) });
+  const w = pre.concat([pause], after);
+
+  const out = seg.segment(w, { mode: "smart", width: 1080, height: 1920 });
+
+  assert.ok(!/ career$/.test(texts(out)[0]),
+    "glued the post-pause word onto the caption before it: " + JSON.stringify(texts(out)[0]));
+  assert.ok(/^career /.test(texts(out)[1] || ""),
+    "the post-pause word did not start its own caption: " + texts(out).join(" | "));
+});
+
+test("an evenly slow speaker's normal-sized gaps never qualify as a pause", () => {
+  // Guards the failure mode GAP_ABS_FLOOR alone would introduce: a speaker
+  // whose every gap is a little wide (0.30s, well past the 0.25s floor)
+  // still must not be cut early just because each of their ordinary gaps
+  // clears that floor -- only an OUTLIER against their own rhythm may. This
+  // is the same claim as "a gap that does not stand out" above, checked
+  // directly against gapAt/medianGap rather than through a duration-capped
+  // fixture.
+  const w = words(
+    "one two three four five six seven eight nine ten eleven twelve thirteen".split(" "),
+    { gap: 0.30 }
+  );
+  const out = seg.segment(w, { mode: "smart", width: 1920, height: 1080 });
+  // Every gap is 0.3s -- past GAP_ABS_FLOOR on its own, but never 2.5x a
+  // median that is itself 0.3s. The run's own maxDurationS (6.0s) closes it
+  // at "ten" (0.6s per word x 10 = 6.0s to the 11th word's start); if a
+  // uniform gap wrongly qualified, this would come out as nine words instead.
+  assert.strictEqual(texts(out)[0], "one two three four five six seven eight nine ten",
+    "a uniform gap moved the cut off the budget's own position: " +
+    texts(out).join(" | "));
+});
+
+test("rebalance still rescues a stranded word for a slow, even speaker", () => {
+  // Every gap is 0.30s: past the pause floor, but none stands out, so none is
+  // a break the speaker made. Five words against a four-word budget must
+  // still come out 3 + 2, not 4 + 1.
+  const texts = ["I", "really", "enjoyed", "making", "this."];
+  const words = texts.map((text, i) => ({
+    text, start: i * 0.6, end: i * 0.6 + 0.3, confidence: 1
+  }));
+  const out = seg.segment(words, {
+    mode: "phrase", options: { maxWords: 4, minWords: 2, maxGapS: 0.6 }
+  });
+  const shape = out.captions.map((c) => c.text);
+  assert.deepEqual(shape, ["I really enjoyed", "making this."]);
+});

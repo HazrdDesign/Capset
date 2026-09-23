@@ -76,13 +76,19 @@
 
       <div class="opts">
         <label class="check"><input type="checkbox" id="opt-precompose"> Precompose captions</label>
-        <label class="check"><input type="checkbox" id="opt-parent"> Parent to Controller</label>
+        <label class="check">
+          <input type="checkbox" id="opt-parent"
+                 title="Parents every caption to a null named &quot;Capset Controller&quot; carrying sliders for Font Size, Fill Color, Stroke, Tracking, Leading, All Caps, Horizontal %, Baseline %, Opacity, Fade In/Out and an optional Drop Shadow — restyle every caption at once from one null.">
+          Parent to Controller
+        </label>
       </div>
 
       <button class="primary" id="build">Add Captions</button>
       <p class="hint">
         Uses your current Character panel settings — style one layer afterwards,
-        then push it everywhere from the Update tab.
+        then push it everywhere from the Update tab. Tick Parent to Controller
+        for a single null with sliders for font size, color, stroke, tracking,
+        leading, opacity and fades that drive every caption at once.
       </p>
     </section>
 

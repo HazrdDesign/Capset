@@ -32,7 +32,14 @@
     // behaviour: only the Smart Parts preset raises it.
     minWords: 1,
     // A pause longer than this is a natural caption break.
-    maxGapS: 0.6,
+    //
+    // Was 0.6 until the backend started reporting gaps honestly (see
+    // align.py): a real ~0.6s silence sat right on that boundary, and
+    // "greater than", not "at least", meant it did not clear it. 0.5 leaves
+    // the same margin below a genuine pause that 0.6 always had above a
+    // breath -- the 0.35s breaths bestCut's own reasoning below depends on
+    // staying under this are still comfortably under 0.5.
+    maxGapS: 0.5,
     // ...and longer than this is a full stop, which breaks even below
     // minWords. Only the bounded modes set minWords above 1, so this has no
     // effect on the historical ones.
@@ -350,7 +357,7 @@
    * is cut twice in the middle of a phrase, and the speaker had paused in
    * neither spot. They paused after "for me to" and after "as a person," --
    * 0.35s each, real breaths, plainly audible, and both ignored because they
-   * are under the 0.6s that counts as a pause worth CUTTING on.
+   * are under the 0.5s that counts as a pause worth CUTTING on.
    *
    * Those two thresholds are doing different jobs. maxGapS asks "is this
    * break so clear the caption should end here even though it has room
@@ -454,6 +461,62 @@
     return span / normal;
   }
 
+  /**
+   * A second reported case, on material heldFor cannot help with: a real
+   * word IS an ASR token, with a genuine gap either side, but that gap gets
+   * under-measured. Parakeet reports only where a token starts (see
+   * onnx_asr_engine._MAX_TOKEN_S); align.py pulls a word's boundaries onto
+   * the audio's own silence when it can, but it needs a run of silence
+   * clearly separated from the clip's speech level to trust, and a chunk
+   * boundary, a soft consonant, or simply align.py being switched off can
+   * still leave a pause measuring far short of how long it really was. A
+   * ~0.6s silence came through as ~0.28s -- comfortably under maxGapS in
+   * every mode, so reach() read it as a within-phrase breath and glued the
+   * first word of a new thought onto the end of the old one.
+   *
+   * The 0.28s itself is not the evidence. What is, is that it stands out
+   * against how this caption otherwise flows: a run of ~0.05s gaps with one
+   * outlier several times as wide is a real speaker's pause, however small
+   * the number came out; a run where every gap is close to that size is
+   * just an unhurried speaker, and moving the cut there would chop their
+   * line for no reason -- see "a gap that does not stand out" below.
+   *
+   * GAP_ABS_FLOOR keeps a merely-slower-than-usual word from qualifying on
+   * its own: it must be an outlier AND a real amount of time, not just a
+   * ratio, which a window of near-zero gaps would satisfy for almost
+   * anything. GAP_MEDIAN_MULT is deliberately looser than HELD_RATIO's 1.4
+   * -- an actual silence, even a short one, is rarer and more legible than a
+   * stretched word, so it can be trusted further from the ordinary case.
+   */
+  var GAP_ABS_FLOOR = 0.25;
+  var GAP_MEDIAN_MULT = 2.5;
+
+  /** The silence between word `i` and word `i + 1`, floored at zero. */
+  function gapAt(words, i) {
+    return Math.max(0, words[i + 1].start - words[i].end);
+  }
+
+  /**
+   * This caption's own typical gap, so a pause can be judged against how
+   * THIS speaker and THIS window actually sound rather than a fixed number.
+   *
+   * The median, not the mean: one real pause in an otherwise tight run would
+   * drag a mean up toward itself and make the very outlier being searched
+   * for look ordinary by comparison. On the reported clip's music-bed
+   * material every gap is exactly zero, so the median is zero and
+   * GAP_ABS_FLOOR alone decides -- which is what keeps this a no-op there,
+   * matching heldFor's own reasoning for why that clip needs a different
+   * signal entirely.
+   */
+  function medianGap(words, start, limit) {
+    var gaps = [];
+    for (var i = start; i < limit - 1; i++) gaps.push(gapAt(words, i));
+    if (!gaps.length) return 0;
+    gaps.sort(function (a, b) { return a - b; });
+    var mid = Math.floor(gaps.length / 2);
+    return gaps.length % 2 ? gaps[mid] : (gaps[mid - 1] + gaps[mid]) / 2;
+  }
+
   function bestCut(words, start, limit, opts, baselines) {
     var floor = Math.max(1, opts.minWords || 1);
     var earliest = Math.max(start + floor,
@@ -463,10 +526,31 @@
     // Punctuation first, and the LAST of it: both the strongest boundary
     // available and the one that fills the line. The speaker's own comma
     // beats any measurement we could make of the gaps around it, because it
-    // is where the sentence itself breaks.
+    // is where the sentence itself breaks -- see "a comma outranks a pause"
+    // below, which pins this ordering down: even a gap wide enough to
+    // qualify next does not move the cut off a comma already in reach.
     for (var p = limit; p >= earliest; p--) {
       if (CLAUSE_END.test(words[p - 1].text)) return p;
     }
+
+    // A measured pause that stands out from this caption's own rhythm,
+    // next -- see the comment on gapAt/medianGap above. Still confined to
+    // the back half: a pause three words into a fourteen-word window is the
+    // same "throw away line space the caption is entitled to" problem a
+    // stretched word or a comma there would be, not a stronger claim just
+    // because it happened to leave a gap -- see "a breath early in the
+    // window" below.
+    var typical = medianGap(words, start, limit);
+    var gapCut = -1;
+    var bestGap = GAP_ABS_FLOOR;
+    for (var g = earliest; g <= limit; g++) {
+      var gap = gapAt(words, g - 1);
+      if (gap >= GAP_ABS_FLOOR && gap >= GAP_MEDIAN_MULT * typical && gap >= bestGap) {
+        bestGap = gap;
+        gapCut = g;
+      }
+    }
+    if (gapCut !== -1) return gapCut;
 
     var at = limit;
     // Must be beaten, not matched, to move the cut off the budget's position.
@@ -519,6 +603,19 @@
    * Two cuts are never moved, because they are the speaker's rather than the
    * budget's: a pause long enough to break on, and a full stop. A short
    * caption after either of those is correct, and "Right." is a caption.
+   *
+   * A third is added for the same reason bestCut gained one: a gap under
+   * maxGapS can still be the pause bestCut deliberately cut on -- the
+   * reported case measured ~0.28s against a 0.5s maxGapS. Without this,
+   * rebalance would see the caption it starts (often exactly at the floor,
+   * since that pause is usually why the run was short) and pull the word
+   * bestCut just moved away from it right back across the same pause,
+   * quietly undoing the fix for the one shape of caption most likely to
+   * need it. GAP_ABS_FLOOR alone is the check here, not the fuller
+   * relative-to-the-window test bestCut uses: a merge only ever looks at
+   * ONE gap, not a run of them, so there is no window to measure "typical"
+   * against, and the absolute floor is the part of that test which does not
+   * need one.
    */
   function rebalance(groups, opts) {
     var budget = opts.maxCharsPerLine * opts.maxLines;
@@ -536,7 +633,15 @@
 
       var head = groups[i - 1];
       var last = head[head.length - 1];
-      if (tail[0].start - last.end > opts.maxGapS) continue;
+      var gap = tail[0].start - last.end;
+      // A pause bestCut would have cut on -- clear of the floor AND standing
+      // out from how this speaker spaces the caption before it -- is the
+      // speaker's break, so it is not undone here. The floor alone is not
+      // enough: a slow, even speaker leaves 0.3s between every word, and
+      // refusing to move any of those would strand words for nothing.
+      if (gap > opts.maxGapS) continue;
+      if (gap >= GAP_ABS_FLOOR &&
+          gap >= GAP_MEDIAN_MULT * medianGap(head, 0, head.length)) continue;
       if (SENTENCE_END.test(last.text)) continue;
 
       // Never rob the caption before to the point of stranding IT: stop while

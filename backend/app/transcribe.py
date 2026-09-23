@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import config
+from .align import align_to_audio
 from .audio import (
     SILENT_PEAK,
     AudioError,
@@ -123,6 +124,13 @@ class Transcriber:
         # Absolute time first, then the lag comes off: the lag is a property
         # of the model's reporting, not of where a chunk happened to start.
         words: list[Word] = unlag_words(merge_chunks(results), config.WORD_LAG_S)
+        if config.ALIGN_TO_AUDIO and words:
+            # After the lag, not before: unlag_words is a flat calibration
+            # against the model's average behaviour, and this is a per-word
+            # correction against what the audio actually did. Doing it last
+            # means it refines the model's best current guess rather than
+            # being partly undone by the shift that follows it.
+            words = align_to_audio(words, audio, sample_rate)
         if not words:
             # Audible, but nothing recognised. Say what was measured: at this
             # point the difference between "too quiet" and "no speech in it"

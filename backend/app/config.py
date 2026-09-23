@@ -110,3 +110,14 @@ WORD_LAG_S = float(os.environ.get("CAPSET_WORD_LAG_S", "0.146"))
 # Finished jobs are held this long so the panel can collect results, then
 # dropped to bound memory.
 JOB_RETENTION_S = float(os.environ.get("CAPSET_JOB_RETENTION_S", "3600"))
+
+# Whether to refine word boundaries against the audio's own energy envelope
+# after unlag_words (see align.py). The reported case -- a real ~0.6s silence
+# measured as ~0.25s because the model stamps the word after a pause early --
+# is exactly the kind of error a flat per-word calibration like WORD_LAG_S
+# cannot fix, because it is not a constant offset: it only shows up across a
+# real pause. On by default; the escape hatch exists for the same reason
+# WORD_LAG_S is a variable and not a literal -- so a clip where it guesses
+# wrong can be worked around without a code change while it is investigated.
+CAPSET_ALIGN_TO_AUDIO = os.environ.get("CAPSET_ALIGN_TO_AUDIO", "1").strip().lower()
+ALIGN_TO_AUDIO = CAPSET_ALIGN_TO_AUDIO not in ("0", "false", "no", "off", "")

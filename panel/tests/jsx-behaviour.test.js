@@ -180,12 +180,20 @@ function evaluateExpression(expression, scope) {
   )(scope.thisComp, scope.hasParent, scope.parent, scope.value);
 }
 
-/** A null as addNull() makes one: anchor at its top-left, sitting at centre. */
-function centredNull(comp, baselinePercent) {
+/**
+ * A null as addNull() makes one: anchor at its top-left, sitting at centre.
+ *
+ * horizontalPercent defaults to 50 -- dead centre, the one horizontal
+ * position Capset has ever built captions at -- so every existing call site
+ * that only cares about the baseline keeps asserting the same centred X it
+ * always has.
+ */
+function centredNull(comp, baselinePercent, horizontalPercent) {
   const position = [comp.width / 2, comp.height / 2];
+  const horizontal = horizontalPercent === undefined ? 50 : horizontalPercent;
   return {
     position: position,
-    effect: () => () => baselinePercent,
+    effect: (name) => () => (name === "Horizontal %" ? horizontal : baselinePercent),
     // Comp space to this layer's space. With the anchor at [0,0] that is a
     // straight subtraction of where the null sits.
     fromComp: (p) => [p[0] - position[0], p[1] - position[1]]
@@ -622,7 +630,7 @@ test("captions are parented to the controller", () => {
 });
 
 test("the controller's sliders actually drive the captions", () => {
-  // The controller was created with Font Size and Fill Colour sliders but the
+  // The controller was created with Font Size and Fill Color sliders but the
   // expressions reading them were only ever written by a separate entry point
   // nothing called. The sliders sat there doing nothing.
   const h = load();
@@ -641,6 +649,615 @@ test("no controller is created when the option is off", () => {
   h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
   assert.ok(!h.comp.layers._layers.some((l) => l.name === "Capset Controller"));
   captionLayers(h.comp).forEach((l) => assert.strictEqual(l.parent, null));
+});
+
+// --- controller rig: the effect list and upgrading a legacy controller -----
+
+const CONTROLLER_EFFECT_NAMES = [
+  "Font Size", "Fill", "Fill Color", "Stroke", "Stroke Color", "Stroke Width",
+  "Tracking", "Leading", "All Caps",
+  "Horizontal %", "Baseline %",
+  "Opacity", "Fade In (frames)", "Fade Out (frames)",
+  "Drop Shadow", "Shadow Color", "Shadow Opacity", "Shadow Distance", "Shadow Softness"
+];
+
+function controllerEffects(h) {
+  const controller = h.comp.layers._layers.find((l) => l.name === "Capset Controller");
+  assert.ok(controller, "no controller was created");
+  return controller.property("ADBE Effect Parade");
+}
+
+/**
+ * Every controller effect carries exactly one value property. Array-valued
+ * ones (colors) come back as arrays of the VM sandbox's own realm, and
+ * `Array.isArray` sees through that (it checks the exotic Array slot, not
+ * prototype identity) even though `deepStrictEqual` does not -- so those are
+ * copied into a plain array here, the same way the file-level `plain()`
+ * helper does for everything else that crosses the sandbox boundary.
+ */
+function effectValue(effects, name) {
+  const value = effects.property(name).property(1).value;
+  return Array.isArray(value) ? Array.prototype.slice.call(value) : value;
+}
+
+function effectNames(effects) {
+  const names = [];
+  for (let i = 1; i <= effects.numProperties; i++) names.push(effects.property(i).name);
+  return names;
+}
+
+test("a brand new controller carries every effect, in the documented order", () => {
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+  assert.deepStrictEqual(effectNames(controllerEffects(h)), CONTROLLER_EFFECT_NAMES);
+});
+
+test("a brand new controller's defaults reproduce the look captions already had", () => {
+  // Stroke, fades and the shadow must default OFF, tracking/leading must
+  // default to "do nothing", and horizontal position must default to dead
+  // centre -- the one position Capset has ever built a caption at. Getting
+  // any of these wrong means ticking "Parent to Controller" silently changes
+  // how an existing project's captions look.
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+  const effects = controllerEffects(h);
+  assert.strictEqual(effectValue(effects, "Font Size"), 72);
+  assert.strictEqual(effectValue(effects, "Fill"), 1);
+  assert.deepStrictEqual(effectValue(effects, "Fill Color"), [1, 1, 1, 1]);
+  assert.strictEqual(effectValue(effects, "Stroke"), 0);
+  assert.strictEqual(effectValue(effects, "Tracking"), 0);
+  assert.strictEqual(effectValue(effects, "Leading"), 0, "0 must mean auto-leading");
+  assert.strictEqual(effectValue(effects, "All Caps"), 0);
+  assert.strictEqual(effectValue(effects, "Horizontal %"), 50);
+  assert.strictEqual(effectValue(effects, "Opacity"), 100);
+  assert.strictEqual(effectValue(effects, "Fade In (frames)"), 0);
+  assert.strictEqual(effectValue(effects, "Fade Out (frames)"), 0);
+  assert.strictEqual(effectValue(effects, "Drop Shadow"), 0);
+});
+
+test("a captured stroke seeds the controller's stroke sliders on", () => {
+  // Stroke is a boolean the document ALWAYS answers (it is never merely
+  // absent the way fillColor/strokeColor can be), so a brand new controller
+  // reads it from the caption's own document -- simulated here through
+  // characterPanelDefaults, exactly like the Character panel would produce
+  // it -- rather than from the build's own (normally empty) `style` payload.
+  const h = load({ characterPanelDefaults: {
+    applyStroke: true, strokeColor: [0.1, 0.1, 0.1], strokeWidth: 3
+  } });
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+  const effects = controllerEffects(h);
+  assert.strictEqual(effectValue(effects, "Stroke"), 1);
+  assert.deepStrictEqual(effectValue(effects, "Stroke Color"), [0.1, 0.1, 0.1, 1]);
+  assert.strictEqual(effectValue(effects, "Stroke Width"), 3);
+});
+
+// --- a NEW controller must not change how captions already look ------------
+//
+// capsetStyleText deliberately never sets font/size/colour: addText()
+// inherits whatever the user's Character panel is already set to, which is
+// the whole point ("style one layer, then push it everywhere"). Seeding a
+// brand new controller with fixed defaults (72pt, white, no stroke...)
+// instead of THAT meant fixing the Source Text expression made "Parent to
+// Controller" silently overwrite a user's own styling the instant it started
+// actually working -- 110pt yellow text with a black stroke became 72pt
+// white with no stroke. These prove the controller is seeded from the real
+// document instead, and that an EXISTING controller's sliders are left alone.
+
+const CUSTOM_CHARACTER_PANEL = {
+  fontSize: 110, fillColor: [1, 0.9, 0], applyStroke: true,
+  strokeColor: [0, 0, 0], strokeWidth: 6, tracking: 50, allCaps: true,
+  autoLeading: false, leading: 132
+};
+
+test("a brand new controller is seeded from the Character panel's actual settings", () => {
+  const h = load({ characterPanelDefaults: CUSTOM_CHARACTER_PANEL });
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+  const effects = controllerEffects(h);
+  assert.strictEqual(effectValue(effects, "Font Size"), 110);
+  assert.strictEqual(effectValue(effects, "Fill"), 1);
+  assert.deepStrictEqual(effectValue(effects, "Fill Color"), [1, 0.9, 0, 1]);
+  assert.strictEqual(effectValue(effects, "Stroke"), 1);
+  assert.deepStrictEqual(effectValue(effects, "Stroke Color"), [0, 0, 0, 1]);
+  assert.strictEqual(effectValue(effects, "Stroke Width"), 6);
+  assert.strictEqual(effectValue(effects, "Tracking"), 50);
+  assert.strictEqual(effectValue(effects, "All Caps"), 1);
+  // autoLeading is false and leading is a real number, so the slider must
+  // carry that number rather than 0 ("auto") -- 0 here would be a different
+  // regression in the opposite direction, quietly turning auto-leading ON.
+  assert.strictEqual(effectValue(effects, "Leading"), 132);
+});
+
+test("a stroke-only caption (fill off) does not get fill silently turned on", () => {
+  const h = load({ characterPanelDefaults: Object.assign({}, CUSTOM_CHARACTER_PANEL, {
+    applyFill: false
+  }) });
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+  assert.strictEqual(effectValue(controllerEffects(h), "Fill"), 0);
+});
+
+test("seeding from the Character panel reproduces the same style the expression would have applied anyway", () => {
+  // Not just "the sliders hold the right numbers" -- run the ACTUAL generated
+  // Source Text expression against those sliders and check the TextStyle it
+  // produces matches the document that was already there, so parenting is
+  // provably a no-op on how the caption looks.
+  const h = load({ characterPanelDefaults: CUSTOM_CHARACTER_PANEL });
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+  const effects = controllerEffects(h);
+  const controller = mockController({
+    "Font Size": effectValue(effects, "Font Size"),
+    "Fill": effectValue(effects, "Fill"),
+    "Fill Color": effectValue(effects, "Fill Color"),
+    "Stroke": effectValue(effects, "Stroke"),
+    "Stroke Color": effectValue(effects, "Stroke Color"),
+    "Stroke Width": effectValue(effects, "Stroke Width"),
+    "Tracking": effectValue(effects, "Tracking"),
+    "Leading": effectValue(effects, "Leading"),
+    "All Caps": effectValue(effects, "All Caps")
+  });
+  const expression = captionLayers(h.comp)[0].property("Source Text").expression;
+  const result = evalExpr(expression, {
+    thisComp: { layer: () => controller },
+    text: { sourceText: { style: mockTextStyle() } },
+    value: "unchanged"
+  });
+
+  assert.strictEqual(result.fontSize, CUSTOM_CHARACTER_PANEL.fontSize);
+  assert.deepStrictEqual(result.fillColor, CUSTOM_CHARACTER_PANEL.fillColor);
+  assert.strictEqual(result.applyFill, true);
+  assert.strictEqual(result.applyStroke, true);
+  assert.deepStrictEqual(result.strokeColor, CUSTOM_CHARACTER_PANEL.strokeColor);
+  assert.strictEqual(result.strokeWidth, CUSTOM_CHARACTER_PANEL.strokeWidth);
+  assert.strictEqual(result.tracking, CUSTOM_CHARACTER_PANEL.tracking);
+  assert.strictEqual(result.autoLeading, false);
+  assert.strictEqual(result.leading, CUSTOM_CHARACTER_PANEL.leading);
+  assert.strictEqual(result.allCaps, true);
+});
+
+test("an existing controller is not re-seeded by a later run with different Character settings", () => {
+  const h = load({ characterPanelDefaults: { fontSize: 72, fillColor: [1, 1, 1] } });
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+  assert.strictEqual(effectValue(controllerEffects(h), "Font Size"), 72);
+
+  // The user's Character panel has moved on since -- this must not touch a
+  // controller that already exists.
+  h.fake.setCharacterPanelDefaults({ fontSize: 200, fillColor: [0.5, 0, 0.5] });
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+
+  const effects = controllerEffects(h);
+  assert.strictEqual(effectValue(effects, "Font Size"), 72);
+  assert.deepStrictEqual(effectValue(effects, "Fill Color"), [1, 1, 1, 1]);
+});
+
+test("rebuilding an up-to-date controller does not reset sliders the user already moved", () => {
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+  const effects = controllerEffects(h);
+  effects.property("Font Size").property("ADBE Slider Control-0001").setValue(140);
+  effects.property("Opacity").property("ADBE Slider Control-0001").setValue(40);
+
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+
+  assert.strictEqual(effectValue(controllerEffects(h), "Font Size"), 140);
+  assert.strictEqual(effectValue(controllerEffects(h), "Opacity"), 40);
+});
+
+test("a legacy controller is upgraded in place, not rebuilt", () => {
+  // What every project made before this fix actually has: three effects,
+  // Fill Color spelled the old (UK) way. Reduced to that shape by hand,
+  // since nothing in the current code builds a controller this old anymore.
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+  const controller = h.comp.layers._layers.find((l) => l.name === "Capset Controller");
+  const effects = controller.property("ADBE Effect Parade");
+  for (let i = effects.numProperties; i >= 1; i--) {
+    const fx = effects.property(i);
+    if (fx.name === "Fill Color") { fx.name = "Fill Colour"; continue; }
+    if (fx.name === "Font Size" || fx.name === "Baseline %") continue;
+    fx.remove();
+  }
+  effects.property("Fill Colour").property("ADBE Color Control-0001").setValue([0.2, 0.4, 0.6, 1]);
+  effects.property("Font Size").property("ADBE Slider Control-0001").setValue(96);
+  const beforeId = controller.id;
+
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+
+  const after = h.comp.layers._layers.find((l) => l.name === "Capset Controller");
+  assert.strictEqual(after.id, beforeId, "a new controller was built instead of upgrading");
+
+  const names = effectNames(effects);
+  assert.deepStrictEqual([...names].sort(), [...CONTROLLER_EFFECT_NAMES].sort());
+  assert.ok(!names.includes("Fill Colour"), "the legacy name was not renamed");
+
+  // Values the user had already set survive the upgrade...
+  assert.deepStrictEqual(effectValue(effects, "Fill Color"), [0.2, 0.4, 0.6, 1]);
+  assert.strictEqual(effectValue(effects, "Font Size"), 96);
+  // ...and effects that did not exist yet get the documented defaults.
+  assert.strictEqual(effectValue(effects, "Opacity"), 100);
+  assert.strictEqual(effectValue(effects, "Stroke"), 0);
+});
+
+// --- controller rig: evaluating the generated expressions -------------------
+//
+// The assertions above this line, and the pre-existing "the controller's
+// sliders actually drive the captions" test, only check that the right
+// WORDS appear in the expression string. That is exactly how the original
+// bug shipped: `t.fontSize = c.effect("Font Size")("Slider")` contains the
+// string "Font Size" and reads as though it works, while silently doing
+// nothing at all, because a TextDocument's properties cannot be assigned
+// inside an expression. Only running the expression -- as AE's own
+// expression engine would -- can catch that. These tests do, with `eval` in
+// a sandboxed Function exactly like evaluateExpression() above does for
+// Position, and mocks for the pieces AE would otherwise supply: a controller
+// whose effect() reads back a plain value map, and a TextStyle stand-in
+// whose setXxx() methods are chainable and immutable, exactly as the real
+// ones documented at https://ae-expressions.docsforadobe.dev/text/style/ are.
+
+/** Evaluate an expression against an arbitrary named scope, via a real eval. */
+function evalExpr(expression, scope) {
+  const names = Object.keys(scope);
+  const values = names.map((n) => scope[n]);
+  return Function.apply(
+    null, names.concat("return eval(" + JSON.stringify(expression) + ");")
+  ).apply(null, values);
+}
+
+/**
+ * A controller whose effect() answers from a plain {name: value} map, and
+ * throws for anything not listed -- exactly like a real host asked for an
+ * effect that is not on the layer. Without this, the try/catch around every
+ * expression here would never actually be exercised.
+ */
+function mockController(values) {
+  return {
+    effect(name) {
+      if (!Object.prototype.hasOwnProperty.call(values, name)) {
+        throw new Error("no effect named " + name + " on this layer");
+      }
+      return () => values[name];
+    }
+  };
+}
+
+/**
+ * A minimal stand-in for text.sourceText.style. Real TextStyle objects are
+ * immutable -- every setXxx() call returns a NEW style rather than mutating
+ * the one it was called on, which is exactly why the expression has to
+ * reassign `style = style.setX(...)` for every call rather than firing them
+ * off one after another. This mirrors that: each call folds the new value
+ * into a fresh object carrying every previous call's result, so the value
+ * finally returned by the expression is inspectable field-by-field
+ * (result.fontSize, result.fillColor, ...) after the fact. The recorded
+ * fields are named after what they hold, not after the setter that set them
+ * (fontSize, not setFontSize) -- spreading `state` back into the returned
+ * object would otherwise collide with, and be shadowed by, the setter of the
+ * SAME name being added right below it.
+ */
+function mockTextStyle(state) {
+  state = state || {};
+  function chain(field) {
+    return function (value) {
+      const next = Object.assign({}, state);
+      next[field] = value;
+      return mockTextStyle(next);
+    };
+  }
+  return Object.assign({}, state, {
+    setFontSize: chain("fontSize"),
+    setApplyFill: chain("applyFill"),
+    setFillColor: chain("fillColor"),
+    setApplyStroke: chain("applyStroke"),
+    setStrokeColor: chain("strokeColor"),
+    setStrokeWidth: chain("strokeWidth"),
+    setTracking: chain("tracking"),
+    setAutoLeading: chain("autoLeading"),
+    setLeading: chain("leading"),
+    setAllCaps: chain("allCaps")
+  });
+}
+
+function sourceTextExpression(h) {
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+  return captionLayers(h.comp)[0].property("Source Text").expression;
+}
+
+const NEUTRAL_CONTROLLER_VALUES = {
+  "Font Size": 72, "Fill": 1, "Fill Color": [1, 1, 1, 1],
+  "Stroke": 0, "Stroke Color": [0, 0, 0, 1], "Stroke Width": 2,
+  "Tracking": 0, "Leading": 0, "All Caps": 0
+};
+
+test("the Source Text expression restyles text through the Text Style API", () => {
+  const h = load();
+  const expression = sourceTextExpression(h);
+  const controller = mockController({
+    "Font Size": 96, "Fill": 1, "Fill Color": [0.2, 0.4, 0.6, 1],
+    "Stroke": 0, "Stroke Color": [0, 0, 0, 1], "Stroke Width": 2,
+    "Tracking": 15, "Leading": 0, "All Caps": 1
+  });
+
+  const result = evalExpr(expression, {
+    thisComp: { layer: () => controller },
+    text: { sourceText: { style: mockTextStyle() } },
+    value: "unchanged"
+  });
+
+  assert.notStrictEqual(result, "unchanged", "the expression fell back instead of restyling");
+  assert.strictEqual(result.fontSize, 96);
+  assert.deepStrictEqual(result.fillColor, [0.2, 0.4, 0.6], "Color Control's alpha must be sliced off");
+  assert.strictEqual(result.applyFill, true, "fill must be explicitly turned on");
+  assert.strictEqual(result.applyStroke, false, "the stroke checkbox is off");
+  assert.strictEqual(result.tracking, 15);
+  assert.strictEqual(result.autoLeading, true, "Leading 0 must mean auto-leading");
+  assert.strictEqual(result.allCaps, true);
+});
+
+test("moving the controller's Font Size and Fill Color changes what the expression returns", () => {
+  // The bug this whole feature exists to fix: dragging these sliders used to
+  // do nothing. Proven by evaluating the SAME expression string twice, against
+  // two different controller readings, and checking the results differ.
+  const h = load();
+  const expression = sourceTextExpression(h);
+  const run = (fontSize, fillColor) => evalExpr(expression, {
+    thisComp: { layer: () => mockController(Object.assign(
+      {}, NEUTRAL_CONTROLLER_VALUES, { "Font Size": fontSize, "Fill Color": fillColor }
+    )) },
+    text: { sourceText: { style: mockTextStyle() } },
+    value: "unchanged"
+  });
+
+  const small = run(48, [1, 1, 1, 1]);
+  const big = run(140, [0.9, 0.1, 0.1, 1]);
+  assert.notStrictEqual(small.fontSize, big.fontSize);
+  assert.notDeepStrictEqual(small.fillColor, big.fillColor);
+});
+
+test("the Fill checkbox turns fill off without forcing a color onto it", () => {
+  // Stroke-only caption styling exists (the whole regression this was written
+  // to fix), so the expression must be able to leave fill off rather than
+  // always forcing setApplyFill(true).
+  const h = load();
+  const expression = sourceTextExpression(h);
+  const controller = mockController(Object.assign({}, NEUTRAL_CONTROLLER_VALUES, {
+    "Fill": 0, "Stroke": 1, "Stroke Color": [0, 0, 0, 1], "Stroke Width": 3
+  }));
+  const result = evalExpr(expression, {
+    thisComp: { layer: () => controller },
+    text: { sourceText: { style: mockTextStyle() } },
+    value: "unchanged"
+  });
+  assert.strictEqual(result.applyFill, false);
+  assert.strictEqual(result.fillColor, undefined, "setFillColor must not run while Fill is off");
+});
+
+test("the stroke checkbox turns the stroke on and feeds it color and width", () => {
+  const h = load();
+  const expression = sourceTextExpression(h);
+  const controller = mockController(Object.assign({}, NEUTRAL_CONTROLLER_VALUES, {
+    "Stroke": 1, "Stroke Color": [0.05, 0.05, 0.05, 1], "Stroke Width": 4
+  }));
+  const result = evalExpr(expression, {
+    thisComp: { layer: () => controller },
+    text: { sourceText: { style: mockTextStyle() } },
+    value: "unchanged"
+  });
+  assert.strictEqual(result.applyStroke, true);
+  assert.deepStrictEqual(result.strokeColor, [0.05, 0.05, 0.05]);
+  assert.strictEqual(result.strokeWidth, 4);
+});
+
+test("a non-zero Leading turns auto-leading off and sets it explicitly", () => {
+  const h = load();
+  const expression = sourceTextExpression(h);
+  const controller = mockController(Object.assign({}, NEUTRAL_CONTROLLER_VALUES, { "Leading": 90 }));
+  const result = evalExpr(expression, {
+    thisComp: { layer: () => controller },
+    text: { sourceText: { style: mockTextStyle() } },
+    value: "unchanged"
+  });
+  assert.strictEqual(result.autoLeading, false);
+  assert.strictEqual(result.leading, 90);
+});
+
+test("a setter that throws falls back to value, not a red layer", () => {
+  const h = load();
+  const expression = sourceTextExpression(h);
+  const throwingStyle = {
+    setFontSize() { throw new Error("simulated host rejection"); }
+  };
+  const result = evalExpr(expression, {
+    thisComp: { layer: () => mockController(NEUTRAL_CONTROLLER_VALUES) },
+    text: { sourceText: { style: throwingStyle } },
+    value: "unchanged"
+  });
+  assert.strictEqual(result, "unchanged");
+});
+
+test("a missing controller effect falls back to value instead of erroring", () => {
+  // e.g. an expression left over from a comp whose controller was deleted by
+  // hand, or a project this fix has not been re-run on yet.
+  const h = load();
+  const expression = sourceTextExpression(h);
+  const result = evalExpr(expression, {
+    thisComp: { layer: () => mockController({}) },   // no effects at all
+    text: { sourceText: { style: mockTextStyle() } },
+    value: "unchanged"
+  });
+  assert.strictEqual(result, "unchanged");
+});
+
+// --- controller rig: Horizontal %, Opacity and fades ------------------------
+
+test("Horizontal % moves a parented caption off centre", () => {
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+  const expression = captionLayers(h.comp)[0]
+    .property("Transform").property("Position").expression;
+
+  const comp = { width: h.comp.width, height: h.comp.height, layer: () => null };
+  const controller = centredNull(h.comp, 85, 20);   // 20% in from the left
+  comp.layer = () => controller;
+
+  const local = evaluateExpression(expression, {
+    thisComp: comp, hasParent: true, parent: controller, value: [0, 0]
+  });
+  const world = [local[0] + controller.position[0], local[1] + controller.position[1]];
+  assert.deepStrictEqual(world, [comp.width * 0.2, comp.height * 0.85]);
+});
+
+function linearFn(t, tMin, tMax, v1, v2) {
+  if (t <= tMin) return v1;
+  if (t >= tMax) return v2;
+  return v1 + (v2 - v1) * (t - tMin) / (tMax - tMin);
+}
+
+function opacityExpression(h) {
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+  return captionLayers(h.comp)[0].property("Transform").property("Opacity").expression;
+}
+
+test("Opacity 100 with no fades leaves a caption's own opacity untouched", () => {
+  const h = load();
+  const expression = opacityExpression(h);
+  const controller = mockController({ "Opacity": 100, "Fade In (frames)": 0, "Fade Out (frames)": 0 });
+  const result = evalExpr(expression, {
+    thisComp: { frameDuration: 1 / 30, layer: () => controller },
+    value: 100, time: 0.5, inPoint: 0, outPoint: 2, linear: linearFn
+  });
+  assert.strictEqual(result, 100);
+});
+
+test("the Opacity slider scales every caption's opacity together", () => {
+  const h = load();
+  const expression = opacityExpression(h);
+  const controller = mockController({ "Opacity": 50, "Fade In (frames)": 0, "Fade Out (frames)": 0 });
+  const result = evalExpr(expression, {
+    thisComp: { frameDuration: 1 / 30, layer: () => controller },
+    value: 100, time: 0.5, inPoint: 0, outPoint: 2, linear: linearFn
+  });
+  assert.strictEqual(result, 50);
+});
+
+test("fade in ramps up from the caption's OWN in point, not the timeline start", () => {
+  const h = load();
+  const expression = opacityExpression(h);
+  const controller = mockController({ "Opacity": 100, "Fade In (frames)": 6, "Fade Out (frames)": 0 });
+  const fps = 30;
+  const at = (time) => evalExpr(expression, {
+    thisComp: { frameDuration: 1 / fps, layer: () => controller },
+    value: 100, time, inPoint: 1, outPoint: 5, linear: linearFn
+  });
+  assert.strictEqual(at(1), 0, "opacity must start at 0 right at the in point");
+  assert.strictEqual(at(1 + 6 / fps), 100, "the fade must finish after its own frame count");
+  assert.strictEqual(at(3), 100, "well after the fade, opacity must be full");
+});
+
+test("fade out ramps down to the caption's OWN out point", () => {
+  const h = load();
+  const expression = opacityExpression(h);
+  const controller = mockController({ "Opacity": 100, "Fade In (frames)": 0, "Fade Out (frames)": 6 });
+  const fps = 30;
+  const at = (time) => evalExpr(expression, {
+    thisComp: { frameDuration: 1 / fps, layer: () => controller },
+    value: 100, time, inPoint: 1, outPoint: 5, linear: linearFn
+  });
+  assert.strictEqual(at(5), 0, "opacity must reach 0 right at the out point");
+  assert.strictEqual(at(5 - 6 / fps), 100);
+});
+
+test("Opacity falls back to value when the controller cannot be read", () => {
+  const h = load();
+  const expression = opacityExpression(h);
+  const result = evalExpr(expression, {
+    thisComp: { frameDuration: 1 / 30, layer: () => { throw new Error("no such layer"); } },
+    value: 77, time: 0, inPoint: 0, outPoint: 1, linear: linearFn
+  });
+  assert.strictEqual(result, 77);
+});
+
+// --- controller rig: Drop Shadow --------------------------------------------
+
+function shadowExpressions(h) {
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+  const shadow = captionLayers(h.comp)[0].property("ADBE Effect Parade").property("Capset Shadow");
+  return {
+    color: shadow.property("Shadow Color").expression,
+    opacity: shadow.property("Opacity").expression,
+    distance: shadow.property("Distance").expression,
+    softness: shadow.property("Softness").expression
+  };
+}
+
+test("every caption gets a Drop Shadow effect linked to the controller", () => {
+  const h = load();
+  const exprs = shadowExpressions(h);
+  ["color", "opacity", "distance", "softness"].forEach((key) => {
+    assert.match(exprs[key], /Capset Controller/, key + " does not reference the controller");
+  });
+});
+
+test("the shadow is invisible until Drop Shadow is switched on", () => {
+  const h = load();
+  const exprs = shadowExpressions(h);
+  const controller = mockController({
+    "Drop Shadow": 0, "Shadow Opacity": 50, "Shadow Distance": 5,
+    "Shadow Softness": 10, "Shadow Color": [0, 0, 0, 1]
+  });
+  const opacity = evalExpr(exprs.opacity, { thisComp: { layer: () => controller }, value: 50 });
+  assert.strictEqual(opacity, 0, "the shadow must be invisible while its checkbox is off");
+});
+
+test("switching Drop Shadow on reveals it at the controller's own settings", () => {
+  const h = load();
+  const exprs = shadowExpressions(h);
+  const controller = mockController({
+    "Drop Shadow": 1, "Shadow Opacity": 65, "Shadow Distance": 8,
+    "Shadow Softness": 12, "Shadow Color": [0.1, 0.2, 0.3, 1]
+  });
+  const at = (expr, fallback) => evalExpr(expr, { thisComp: { layer: () => controller }, value: fallback });
+  assert.strictEqual(at(exprs.opacity, 0), 65);
+  assert.strictEqual(at(exprs.distance, 0), 8);
+  assert.strictEqual(at(exprs.softness, 0), 12);
+  assert.deepStrictEqual(at(exprs.color, [0, 0, 0, 1]), [0.1, 0.2, 0.3, 1]);
+});
+
+test("shadow expressions fall back to value when the controller cannot be read", () => {
+  const h = load();
+  const exprs = shadowExpressions(h);
+  const brokenComp = { layer: () => { throw new Error("no controller"); } };
+  assert.strictEqual(evalExpr(exprs.opacity, { thisComp: brokenComp, value: 42 }), 42);
+  assert.strictEqual(evalExpr(exprs.distance, { thisComp: brokenComp, value: 9 }), 9);
 });
 
 // --- style capture and sync -------------------------------------------------
@@ -757,6 +1374,69 @@ test("sync without a captured style refuses", () => {
   const h = load();
   h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
   assert.throws(() => h.call("capsetSyncStyle", { scope: "comp" }), /No captured style/);
+});
+
+// --- sync writes controller-driven fields to the controller, not the doc ---
+//
+// Once a caption is parented to the controller, its Font Size / Fill Color /
+// Stroke / Tracking come from the controller's own effects through the
+// Source Text expression (see "controller rig" above) -- so writing them
+// onto the layer's TextDocument the way the rest of a sync does is writing
+// to a value that expression overrides on its very next evaluation. Before
+// this, Sync Style looked like it silently did nothing for exactly those
+// fields on exactly the projects using the feature it exists to make easier.
+
+test("syncing a style with a controller present writes the controller's sliders", () => {
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+  const captured = captureFrom(h);
+  captured.style.fontSize = 130;
+  captured.style.applyFill = true;
+  captured.style.fillColor = [0.1, 0.2, 0.3];
+  captured.style.applyStroke = true;
+  captured.style.strokeColor = [0, 0, 0];
+  captured.style.strokeWidth = 5;
+  captured.style.tracking = 25;
+
+  const result = h.call("capsetSyncStyle", { style: captured.style, scope: "comp" });
+  assert.strictEqual(result.controllersUpdated, 1);
+
+  const effects = controllerEffects(h);
+  assert.strictEqual(effectValue(effects, "Font Size"), 130);
+  assert.strictEqual(effectValue(effects, "Fill"), 1);
+  assert.deepStrictEqual(effectValue(effects, "Fill Color"), [0.1, 0.2, 0.3, 1]);
+  assert.strictEqual(effectValue(effects, "Stroke"), 1);
+  assert.deepStrictEqual(effectValue(effects, "Stroke Color"), [0, 0, 0, 1]);
+  assert.strictEqual(effectValue(effects, "Stroke Width"), 5);
+  assert.strictEqual(effectValue(effects, "Tracking"), 25);
+});
+
+test("syncing without a controller in the comp reports none updated", () => {
+  const h = load();
+  h.call("capsetBuildCaptions", { captions: CAPTIONS, style: {}, options: {} });
+  const captured = captureFrom(h);
+  const result = h.call("capsetSyncStyle", { style: captured.style, scope: "comp" });
+  assert.strictEqual(result.controllersUpdated, 0);
+});
+
+test("syncing upgrades a legacy controller's Fill Colour before writing to it", () => {
+  const h = load();
+  h.call("capsetBuildCaptions", {
+    captions: CAPTIONS, style: {}, options: { parentToController: true }
+  });
+  const effects = controllerEffects(h);
+  effects.property("Fill Color").name = "Fill Colour";   // simulate a pre-upgrade project
+
+  const captured = captureFrom(h);
+  captured.style.fillColor = [0.5, 0.5, 0.5];
+  h.call("capsetSyncStyle", { style: captured.style, scope: "comp" });
+
+  const names = effectNames(effects);
+  assert.ok(names.includes("Fill Color"), "sync did not rename the legacy effect");
+  assert.ok(!names.includes("Fill Colour"), "the legacy name is still there");
+  assert.deepStrictEqual(effectValue(effects, "Fill Color"), [0.5, 0.5, 0.5, 1]);
 });
 
 // --- clearing ---------------------------------------------------------------

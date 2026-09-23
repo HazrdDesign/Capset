@@ -126,20 +126,41 @@ class PropertyGroup {
 // --- text ---------------------------------------------------------------
 
 /** Mirrors the parts of TextDocument the host script touches. */
+/**
+ * What addText() would inherit from AE's Character panel, on a fresh
+ * reset(). Overridable via setCharacterPanelDefaults() so a test can pretend
+ * the user's Character panel was already set to something -- e.g. 110pt
+ * yellow with a stroke -- BEFORE calling capsetBuildCaptions, which is
+ * exactly the situation a controller must not silently override.
+ */
+let characterPanelDefaults = null;
+
+function setCharacterPanelDefaults(defaults) {
+  characterPanelDefaults = defaults || null;
+}
+
 class TextDocument {
   constructor(text) {
+    const d = characterPanelDefaults || {};
     this.text = text;
-    this.font = "Arial";
-    this.fontSize = 72;
-    this.tracking = 0;
-    this.leading = 86.4;
-    this.justification = ParagraphJustification.LEFT_JUSTIFY;
-    this.applyFill = true;
-    this.applyStroke = false;
-    this.strokeWidth = 0;
-    this.strokeOverFill = false;
-    this.fillColor = [1, 1, 1];
-    this.strokeColor = [0, 0, 0];
+    this.font = d.font !== undefined ? d.font : "Arial";
+    this.fontSize = d.fontSize !== undefined ? d.fontSize : 72;
+    this.tracking = d.tracking !== undefined ? d.tracking : 0;
+    this.leading = d.leading !== undefined ? d.leading : 86.4;
+    this.justification = d.justification !== undefined
+      ? d.justification : ParagraphJustification.LEFT_JUSTIFY;
+    this.applyFill = d.applyFill !== undefined ? d.applyFill : true;
+    this.applyStroke = d.applyStroke !== undefined ? d.applyStroke : false;
+    this.strokeWidth = d.strokeWidth !== undefined ? d.strokeWidth : 0;
+    this.strokeOverFill = d.strokeOverFill !== undefined ? d.strokeOverFill : false;
+    this.fillColor = d.fillColor !== undefined ? d.fillColor : [1, 1, 1];
+    this.strokeColor = d.strokeColor !== undefined ? d.strokeColor : [0, 0, 0];
+    // Real, scriptable TextDocument properties (allCaps is read-only via the
+    // classic API as of the AE version this targets; autoLeading always is)
+    // -- both read by capsetReadStyleFromDoc to seed the controller rig
+    // without changing how a caption already looks.
+    this.allCaps = d.allCaps !== undefined ? d.allCaps : false;
+    this.autoLeading = d.autoLeading !== undefined ? d.autoLeading : true;
   }
 }
 
@@ -216,6 +237,18 @@ class Layer {
           effect._add(new Property("Slider", "ADBE Slider Control-0001", 0));
         } else if (matchName === "ADBE Color Control") {
           effect._add(new Property("Color", "ADBE Color Control-0001", [1, 1, 1]));
+        } else if (matchName === "ADBE Checkbox Control") {
+          effect._add(new Property("Checkbox", "ADBE Checkbox Control-0001", 0));
+        } else if (matchName === "ADBE Drop Shadow") {
+          // Standard, long-documented property names for the built-in Drop
+          // Shadow effect -- see the note above capsetLinkShadowToController
+          // in capset.jsx for how confidently these are held.
+          effect._add(new Property("Shadow Color", "ADBE Drop Shadow-0001", [0, 0, 0, 1]));
+          effect._add(new Property("Opacity", "ADBE Drop Shadow-0002", 50));
+          effect._add(new Property("Direction", "ADBE Drop Shadow-0003", 135));
+          effect._add(new Property("Distance", "ADBE Drop Shadow-0004", 5));
+          effect._add(new Property("Softness", "ADBE Drop Shadow-0005", 10));
+          effect._add(new Property("Shadow Only", "ADBE Drop Shadow-0006", 0));
         }
         return effect;
       }
@@ -472,6 +505,10 @@ function reset(options = {}) {
   nextId = 1;
   commandLog.length = 0;
   app._undoStack.length = 0;
+  // Cleared on every reset so one test's fake Character panel never leaks
+  // into the next; a test that needs it set calls setCharacterPanelDefaults
+  // itself, after reset (see jsx-host.js's `load`).
+  characterPanelDefaults = null;
   const comp = new CompItem(
     options.name || "Comp 1",
     options.width || 1920, options.height || 1080,
@@ -508,6 +545,6 @@ module.exports = {
   RenderQueue, RenderQueueItem, OutputModule, DEFAULT_TEMPLATES,
   get project() { return project; },
   CompItem, TextLayer, AVLayer, ShapeLayer, Layer,
-  Property, PropertyGroup, TextDocument,
+  Property, PropertyGroup, TextDocument, setCharacterPanelDefaults,
   KeyframeEase, ParagraphJustification
 };
