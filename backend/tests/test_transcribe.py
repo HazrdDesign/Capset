@@ -310,3 +310,65 @@ def test_the_lag_never_pushes_a_word_before_the_file(monkeypatch, audio_30s):
 
     assert all(w.start >= 0.0 for w in result.words)
     assert all(w.end >= w.start for w in result.words)
+
+
+# --- audio alignment, wired in ------------------------------------------------
+#
+# The unit is covered in test_align.py; this is the wiring, in the same spirit
+# as the WORD_LAG_S tests above -- a correction that runs in a function
+# nothing calls is a correction still on screen.
+
+
+def test_align_to_audio_runs_after_the_lag_is_removed(monkeypatch, audio_30s):
+    _patch_audio(monkeypatch, audio_30s, [(0.0, 30.0)])
+    engine = FakeEngine()
+    engine.load()
+    seen = {}
+
+    def spy(words, audio, sample_rate):
+        seen["words"] = list(words)
+        seen["sample_rate"] = sample_rate
+        return words
+
+    monkeypatch.setattr(transcribe_mod, "align_to_audio", spy)
+
+    result = Transcriber(engine).transcribe("ignored.wav")
+
+    assert "words" in seen, "align_to_audio was never called"
+    assert seen["sample_rate"] == config.SAMPLE_RATE
+    # What it was handed is the already-unlagged transcript, not raw tokens.
+    assert seen["words"] == result.words
+
+
+def test_align_to_audio_is_skipped_when_disabled(monkeypatch, audio_30s):
+    _patch_audio(monkeypatch, audio_30s, [(0.0, 30.0)])
+    engine = FakeEngine()
+    engine.load()
+    monkeypatch.setattr(config, "ALIGN_TO_AUDIO", False)
+    calls = []
+    monkeypatch.setattr(
+        transcribe_mod, "align_to_audio",
+        lambda words, audio, sample_rate: calls.append(1) or words,
+    )
+
+    Transcriber(engine).transcribe("ignored.wav")
+
+    assert not calls, "align_to_audio ran despite CAPSET_ALIGN_TO_AUDIO being off"
+
+
+def test_align_to_audio_is_skipped_for_an_empty_result(monkeypatch, audio_30s):
+    """No words means nothing to align -- and no audio-shaped work to do
+    for a result that is already empty."""
+    _patch_audio(monkeypatch, audio_30s, [])
+    engine = FakeEngine()
+    engine.load()
+    calls = []
+    monkeypatch.setattr(
+        transcribe_mod, "align_to_audio",
+        lambda words, audio, sample_rate: calls.append(1) or words,
+    )
+
+    result = Transcriber(engine).transcribe("ignored.wav")
+
+    assert result.words == []
+    assert not calls
