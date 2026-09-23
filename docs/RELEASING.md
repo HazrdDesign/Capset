@@ -4,24 +4,19 @@
 
 | | |
 |---|---|
-| **Shipped** | **v0.6.3** — tag `v0.6.3`, published 2026-09-16 |
-| **Next** | **v0.6.4** — READY TO TAG at the head of `main` |
-| | Notes written at `docs/RELEASE-NOTES-v0.6.4.md`. |
+| **Shipped** | **v0.6.4** — tag `v0.6.4`, published 2026-09-22 |
+| **Next** | **v0.6.5** — READY TO TAG once merged to `main` and CI is green |
+| | Notes written at `docs/RELEASE-NOTES-v0.6.5.md`. |
 
-Nothing is outstanding for v0.6.4 but the commands below, once CI is green on
+Nothing is outstanding for v0.6.5 but the commands below, once CI is green on
 whatever `main` currently points at.
 
-**v0.6.3 shipped, and then four more changes were written into its notes.**
-It was published on 2026-09-16 from `a1d8435`, and its notes were accurate
-for that build. The next day the token requirement, the memory fix, the
-out-point clamp and its follow-up merged to `main` -- and each added a section
-to `RELEASE-NOTES-v0.6.3.md`, because the table above still called v0.6.3
-"next, ready to tag" when it had already gone out. So the file grew four
-claims the installers on that release page do not contain.
-
-That file has been trimmed back to what shipped and the four items moved to
-v0.6.4. The release body on GitHub cannot be corrected from here: it is a copy
-taken when the release was published.
+**v0.6.4 shipped on 2026-09-22** with the token requirement, the memory fix,
+the out-point clamp and the section-rebuild guard. v0.6.5 carries the working
+controller rig and its new controls, and the Smart pause fix. The release body
+on GitHub is a copy of the notes file taken at tag time and cannot be
+corrected from here -- which is why v0.6.3's notes once drifted from what it
+shipped (see its file's history).
 
 **The check that catches this is the `git ls-remote --tags` one below, and it
 is not optional.** Nothing in the pipeline notices a version being written up
@@ -85,8 +80,8 @@ To tag by hand instead:
 
 ```bash
 git fetch origin main
-git tag -a v0.6.4 origin/main -m "Capset v0.6.4"
-git push origin v0.6.4
+git tag -a v0.6.5 origin/main -m "Capset v0.6.5"
+git push origin v0.6.5
 ```
 
 The Windows installer is built by `.github/workflows/release.yml` on a
