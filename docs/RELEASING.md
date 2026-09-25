@@ -4,19 +4,23 @@
 
 | | |
 |---|---|
-| **Shipped** | **v0.6.4** — tag `v0.6.4`, published 2026-09-22 |
-| **Next** | **v0.6.5** — READY TO TAG once merged to `main` and CI is green |
-| | Notes written at `docs/RELEASE-NOTES-v0.6.5.md`. |
+| **Shipped** | **v0.7.0** — tag `v0.7.0`, published 2026-09-25 (same code as v0.6.5) |
+| **Next** | **v0.7.1** — READY TO TAG once merged to `main` and CI is green |
+| | Notes written at `docs/RELEASE-NOTES-v0.7.1.md`. |
 
-Nothing is outstanding for v0.6.5 but the commands below, once CI is green on
-whatever `main` currently points at.
+Nothing is outstanding for v0.7.1 but the commands below, once CI is green on
+whatever `main` currently points at -- and once `main` actually contains the
+Proofread tab, which is what went wrong with v0.7.0.
 
-**v0.6.4 shipped on 2026-09-22** with the token requirement, the memory fix,
-the out-point clamp and the section-rebuild guard. v0.6.5 carries the working
-controller rig and its new controls, and the Smart pause fix. The release body
-on GitHub is a copy of the notes file taken at tag time and cannot be
-corrected from here -- which is why v0.6.3's notes once drifted from what it
-shipped (see its file's history).
+**v0.6.5 shipped on 2026-09-23** with the working controller rig and the
+Smart pause fix. **v0.7.0 was dispatched on 2026-09-25 while the Proofread
+tab was still on its branch,** so it tagged the v0.6.5 merge again and
+published it under a new number with stub notes: the dispatch-before-merge
+failure described below, happening for real. Its tag stays where it is;
+v0.7.1 is the build it was meant to be. The release body on GitHub is a copy
+of the notes file taken at tag time and cannot be corrected from here --
+which is why v0.6.3's notes once drifted from what it shipped (see its file's
+history), and why v0.7.0's page has to be relabelled by hand.
 
 **The check that catches this is the `git ls-remote --tags` one below, and it
 is not optional.** Nothing in the pipeline notices a version being written up
@@ -74,14 +78,19 @@ dispatching:
 ```bash
 git fetch origin main
 git log --oneline -1 origin/main
+ls docs/RELEASE-NOTES-v<version>.md   # on origin/main, not on a branch
 ```
+
+If the notes file for the version is not on `main`, the work it describes is
+not either. v0.7.0 is what happens when that goes unchecked: a green run, a
+published release, and none of the feature it was for.
 
 To tag by hand instead:
 
 ```bash
 git fetch origin main
-git tag -a v0.6.5 origin/main -m "Capset v0.6.5"
-git push origin v0.6.5
+git tag -a v0.7.1 origin/main -m "Capset v0.7.1"
+git push origin v0.7.1
 ```
 
 The Windows installer is built by `.github/workflows/release.yml` on a

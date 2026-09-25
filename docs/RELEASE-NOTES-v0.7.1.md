@@ -1,5 +1,5 @@
 <!--
-  The body of the GitHub Release for v0.7.0.
+  The body of the GitHub Release for v0.7.1.
 
   release.yml resolves this path from the tag. If the next release is numbered
   differently, rename this file to match (RELEASE-NOTES-v<version>.md, or
@@ -7,13 +7,20 @@
   publishes a stub instead.
 -->
 
-# Capset v0.7.0
+# Capset v0.7.1
 
 Local auto-captioning for After Effects: transcribes with NVIDIA Parakeet on
 your machine and generates timed text layers on the timeline.
 
 A third tab, **Proofread**: every caption in the composition in one list,
 with its text and timing editable in place.
+
+> **v0.7.0 went out without the Proofread tab.** It was published from
+> `main` before this work was merged, so it is the same code as v0.6.5 under
+> a new number. This is the build v0.7.0 was meant to be, which is why it
+> takes a patch number rather than v0.8.0. It is still under test -- see the
+> note on numbering in `docs/RELEASING.md`. If you installed v0.7.0, take
+> this one.
 
 ## What's new in this build
 
@@ -93,10 +100,10 @@ panel.
 
 ## Install
 
-**Windows**: run `Capset-Setup-0.7.0.exe`, restart After Effects, then open
+**Windows**: run `Capset-Setup-0.7.1.exe`, restart After Effects, then open
 **Window → Extensions → Capset**.
 
-**macOS**: open `Capset-0.7.0.pkg` (right-click → Open if Gatekeeper
+**macOS**: open `Capset-0.7.1.pkg` (right-click → Open if Gatekeeper
 objects), restart After Effects, then open **Window → Extensions → Capset**.
 The installer needs an administrator password, because it writes to
 `/Library/Application Support`.
