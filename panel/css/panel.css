@@ -296,9 +296,9 @@ button.danger:hover:not(:disabled) {
 #update-dismiss { padding: 6px 8px; }
 
 /* --- proofread ------------------------------------------------------------ */
-/* A column of captions in a docked panel a few hundred pixels wide: every row
-   is two lines -- timecodes on top, text under -- so nothing has to scroll
-   sideways, and the tools above it stay put while the list scrolls. */
+/* Reads like the transcript: the captions close-stacked, times to the right,
+   and no boxes on anything until it is pointed at or being edited. The tools
+   above the list stay compact, and the rarely used ones stay folded away. */
 .pr-tools { padding: 8px; }
 .pr-head, .pr-line {
   display: flex;
@@ -306,7 +306,9 @@ button.danger:hover:not(:disabled) {
   gap: 5px;
   margin-bottom: 6px;
 }
-.pr-line[hidden] { display: none; }
+.pr-tools > :last-child { margin-bottom: 0; }
+.pr-replace[hidden] { display: none; }
+.pr-replace .check { margin: -1px 0 7px; }
 .pr-comp {
   flex: 1 1 auto;
   min-width: 0;
@@ -319,7 +321,6 @@ button.danger:hover:not(:disabled) {
 .pr-line button { flex: 0 0 auto; }
 .pr-icon { padding: 4px 8px; }
 .pr-icon[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
-.pr-case { margin: -2px 0 8px; }
 #pr-shift-frames { width: 52px; flex: 0 0 auto; }
 .pr-unit { color: var(--text-dim); flex: 0 0 auto; }
 #pr-earlier, #pr-later { flex: 1 1 0; padding: 6px 4px; }
@@ -338,10 +339,11 @@ button.danger:hover:not(:disabled) {
 .pr-empty[hidden] { display: none; }
 
 .pr-list {
-  max-height: calc(100vh - 340px);
+  max-height: calc(100vh - 290px);
   min-height: 160px;
   overflow-y: auto;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
+  padding: 3px 0;
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -352,64 +354,123 @@ button.danger:hover:not(:disabled) {
 .pr-list.locked { opacity: .5; pointer-events: none; }
 
 .pr-row {
-  padding: 6px 8px 7px;
-  border-bottom: 1px solid var(--border);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 4px;
+  align-items: start;
+  padding: 1px 4px 1px 3px;
   border-left: 2px solid transparent;
 }
-.pr-row:last-child { border-bottom: none; }
+/* A hair between rows, so two flagged captions in a row read as two marks
+   rather than one long bar. */
+.pr-row + .pr-row { margin-top: 2px; }
+.pr-row:hover { background: rgba(255, 255, 255, .025); }
 .pr-row.selected { background: var(--accent-wash); border-left-color: var(--accent); }
+.pr-row.flagged { border-left-color: var(--warn); }
+.pr-row.flagged.selected { border-left-color: var(--accent); }
 
-.pr-meta {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 4px;
-  font: 10px Menlo, Consolas, monospace;
-  color: var(--text-dim);
-}
-/* Fixed widths, so the timecodes line up down the list whether or not a row
-   carries a flag. */
-.pr-meta > * { flex: 0 0 auto; }
-.pr-num { min-width: 20px; text-align: right; }
-.pr-arrow { opacity: .6; }
-.pr-dur { margin-left: auto; }
-.pr-flag { color: var(--warn); font-size: 12px; cursor: help; }
-
-/* Qualified so it outranks the panel-wide input[type="text"] rule, whose
-   width: 100% the row would otherwise squeeze down unevenly. */
-.pr-meta input.pr-tc {
-  width: 78px;
-  padding: 2px 4px;
-  background: var(--bg-input);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  font: inherit;
-  user-select: text;
-}
-.pr-tc:focus, .pr-text:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-wash);
-}
-
+/* Text and timecodes are fields, but they only look like it when they are
+   being used: at rest the list is just the words and their times. */
 .pr-text {
   display: block;
   width: 100%;
-  padding: 4px 6px;
+  margin: 0;
+  padding: 3px 5px;
   resize: none;
   overflow: hidden;
-  background: var(--bg-input);
+  background: transparent;
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: 3px;
   font: 12px/1.35 -apple-system, "Segoe UI", Tahoma, sans-serif;
   user-select: text;
 }
-.pr-row.flagged .pr-text { border-left: 2px solid var(--warn); }
+.pr-times {
+  display: flex;
+  flex-direction: column;
+  padding-top: 1px;
+}
+/* Qualified so it outranks the panel-wide input[type="text"] rule and its
+   width: 100%. */
+.pr-times input.pr-tc {
+  /* Sized in characters: eleven of them, in whatever monospace face the
+     machine substitutes for Menlo or Consolas. */
+  width: calc(11ch + 8px);
+  padding: 0 3px;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font: 10px/15px Menlo, Consolas, monospace;
+  text-align: right;
+  user-select: text;
+}
+.pr-times input.pr-tc + input.pr-tc { opacity: .7; }
+.pr-text:hover, .pr-times input.pr-tc:hover { border-color: var(--border); }
+.pr-text:focus, .pr-times input.pr-tc:focus {
+  outline: none;
+  background: var(--bg-input);
+  color: var(--text);
+  opacity: 1;
+  border-color: var(--accent);
+  box-shadow: none;
+}
 
-/* Only the selected row carries its buttons: fifty rows of Go / Split /
-   Merge would bury the text they act on. */
-.pr-actions { display: none; gap: 4px; margin-top: 5px; }
+/* Only the selected caption carries its buttons, as one slim line under it. */
+.pr-actions {
+  display: none;
+  grid-column: 1 / -1;
+  gap: 4px;
+  padding: 1px 0 4px 5px;
+}
 .pr-row.selected .pr-actions { display: flex; }
-.pr-actions button { flex: 1 1 0; padding: 3px 4px; font-size: 10px; }
+.pr-actions button {
+  padding: 1px 8px;
+  font-size: 10px;
+  color: var(--text-dim);
+  background: transparent;
+}
+.pr-actions button:hover:not(:disabled) { color: var(--text); }
+
+.pr-hint { margin: 0 0 8px; }
+
+/* --- log ------------------------------------------------------------------ */
+.log-section { padding: 0; }
+.log-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  text-align: left;
+}
+.log-toggle:hover:not(:disabled) { background: rgba(255, 255, 255, .04); border: none; }
+.log-caret { display: inline-block; transition: transform .15s ease; }
+.log-toggle[aria-expanded="true"] .log-caret { transform: rotate(90deg); }
+/* The latest warning or error, while the log is closed: one line, coloured,
+   gone once the log is opened. */
+.log-badge {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: 10px;
+}
+.log-badge[hidden] { display: none; }
+.log-badge::before { content: "● "; }
+.log-badge.warn { color: var(--warn); }
+.log-badge.err { color: var(--err); }
+#log[hidden] { display: none; }
+#log { padding: 0 10px 8px; }

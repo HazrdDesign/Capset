@@ -458,3 +458,15 @@ test("a refused proofreading edit re-reads the list", () => {
   assert.match(functionBody("proofFailed"), /readProofList\(\)/);
   assert.match(functionBody("applyProof"), /proofFailed\(/);
 });
+
+test("the log starts closed, and still shows when something goes wrong", () => {
+  // Closed by default so it costs one line, not a box of scrollback. But a
+  // refused edit or a failed build is reported only there, so a closed log
+  // that swallowed an error would look like the panel doing nothing.
+  assert.match(html, /<div id="log"[^>]*\bhidden\b/, "the log is open in the markup");
+  const src = functionBody("log");
+  assert.match(src, /log-badge/, "log() never marks the toggle while the log is closed");
+  assert.match(src, /"err"/, "errors do not mark the closed log");
+  assert.match(functionBody("setLogOpen"), /log-badge/,
+    "opening the log does not clear the mark");
+});

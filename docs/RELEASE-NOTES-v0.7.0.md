@@ -18,10 +18,11 @@ with its text and timing editable in place.
 ## What's new in this build
 
 **Proofread every caption from one list.** Open the Proofread tab and every
-Capset caption in the active composition is listed in time order: its in and
-out timecode, how long it is on screen, and its text underneath. This
-includes captions inside a Capset precomp, shown at their time on the
-timeline you are looking at.
+Capset caption in the active composition is listed in time order, close
+together so it reads like the transcript: the text on the left, its in and
+out timecodes stacked to the right. Hover over the times to see how long the
+caption is on screen. The list includes captions inside a Capset precomp,
+shown at their time on the timeline you are looking at.
 
 - **Fix a typo:** click into the text and type. Enter saves and moves to the
   next caption; Shift+Enter adds a line break; Esc throws the typing away.
@@ -34,11 +35,11 @@ timeline you are looking at.
 - **Go to:** moves the playhead to the caption and selects its layer.
 
 **Find & replace.** The find box filters the list as you type. **⇄** opens
-Replace: fix a name the transcriber got wrong in every caption at once. It
-matches plain text, not patterns. **Match case** is off unless you tick it.
+Replace, and its **Match case** option: fix a name the transcriber got wrong
+in every caption at once. It matches plain text, not patterns.
 
-**Problem flags.** Captions worth a second look get a ⚠, and hovering it says
-why:
+**Problem flags.** Captions worth a second look get an amber edge, and
+hovering over the caption says why:
 
 - **Overlap:** it is still on screen when the next caption starts.
 - **Blink:** a one or two frame gap before the next caption, so the screen
@@ -63,6 +64,10 @@ anything keyframed on them moves too.
   effects and controller link. The split time is placed in proportion to the
   text on either side; adjust it from the timecode fields.
 - **Merge ↓:** folds the next caption into this one.
+
+**The log is folded away.** It is one line at the bottom of the panel until
+you open it. A warning or error that arrives while it is closed shows on that
+line in colour, so nothing important is hidden.
 
 **Safe to use alongside the timeline.** Every change is one **Undo** in After
 Effects. If a caption changed in After Effects since the list was read, by

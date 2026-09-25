@@ -152,11 +152,13 @@
         <button id="pr-replace-toggle" class="pr-icon" title="Replace"
                 aria-expanded="false">⇄</button>
       </div>
-      <div id="pr-replace-row" class="pr-line" hidden>
-        <input type="text" id="pr-replace" placeholder="Replace with…" spellcheck="false">
-        <button id="pr-replace-all">Replace All</button>
+      <div id="pr-replace-row" class="pr-replace" hidden>
+        <div class="pr-line">
+          <input type="text" id="pr-replace" placeholder="Replace with…" spellcheck="false">
+          <button id="pr-replace-all">Replace All</button>
+        </div>
+        <label class="check"><input type="checkbox" id="pr-match-case"> Match case</label>
       </div>
-      <label class="check pr-case"><input type="checkbox" id="pr-match-case"> Match case</label>
 
       <div class="pr-line">
         <button id="pr-issues" class="pr-chip" aria-pressed="false"
@@ -177,10 +179,9 @@
 
     <p id="pr-empty" class="hint pr-empty" hidden></p>
     <div id="pr-list" class="pr-list"></div>
-    <p class="hint">
-      Enter saves and moves on; Shift+Enter adds a line break; Esc undoes the
-      typing. In a timecode, ↑ ↓ nudge a frame (Shift for ten), and +3 or −3
-      nudges by typing. Each change is one Undo in After Effects.
+    <p class="hint pr-hint"
+       title="Esc throws typing away. In a timecode, Shift+↑ ↓ nudge ten frames, and +3 or -3 nudges by typing. Each change is one Undo in After Effects.">
+      Enter saves · Shift+Enter new line · ↑ ↓ nudge a timecode
     </p>
   </div>
 
@@ -189,9 +190,14 @@
     <div class="hint" id="progress-text">Working…</div>
   </section>
 
-  <section>
-    <h2>Log</h2>
-    <div id="log"></div>
+  <!-- Closed until wanted. A warning or error that arrives while it is closed
+       marks the toggle, so a message worth reading is never silently hidden. -->
+  <section id="log-section" class="log-section">
+    <button id="log-toggle" class="log-toggle" aria-expanded="false"
+            title="Show the log">
+      <span class="log-caret">▸</span> Log <span id="log-badge" class="log-badge" hidden></span>
+    </button>
+    <div id="log" hidden></div>
   </section>
 
   <script src="js/vendor/CSInterface.js"></script>

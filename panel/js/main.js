@@ -49,6 +49,36 @@
     // the least useful ones to keep.
     while (box.children.length > LOG_MAX_LINES) box.removeChild(box.firstChild);
     box.scrollTop = box.scrollHeight;
+
+    // The log is closed until wanted, but a warning or an error still has to
+    // be seen: it marks the toggle, and the latest one is shown on it, until
+    // the log is opened.
+    if (box.hidden && (kind === "err" || kind === "warn")) {
+      var badge = $("log-badge");
+      if (kind === "err" || !badge.classList.contains("err")) {
+        badge.className = "log-badge " + kind;
+      }
+      badge.textContent = message;
+      badge.title = message;
+      badge.hidden = false;
+    }
+  }
+
+  var LOG_OPEN_KEY = "capset.logOpen";
+
+  function setLogOpen(open) {
+    var box = $("log");
+    box.hidden = !open;
+    $("log-toggle").setAttribute("aria-expanded", open ? "true" : "false");
+    $("log-toggle").title = open ? "Hide the log" : "Show the log";
+    if (open) {
+      $("log-badge").hidden = true;
+      $("log-badge").className = "log-badge";
+      box.scrollTop = box.scrollHeight;
+    }
+    // Remembered per machine for convenience; if storage is unavailable the
+    // log simply starts closed.
+    try { window.localStorage.setItem(LOG_OPEN_KEY, open ? "1" : "0"); } catch (e) {}
   }
 
   /**
@@ -901,29 +931,27 @@
     input.dataset.field = which;
     input.value = proofread.formatTimecode(row[which], proof.comp);
     input.dataset.orig = input.value;
-    input.title = (which === "start" ? "In" : "Out") + " point. Enter to set; " +
-                  "↑ ↓ nudge a frame, Shift for ten; +3 or -3 nudges by typing.";
+    input.title = (which === "start" ? "In" : "Out") + " point. Type a timecode " +
+                  "and press Enter; ↑ ↓ nudge a frame, Shift for ten.";
     return input;
   }
 
-  function buildProofRow(row, index, issues) {
+  /**
+   * One caption: its text, with its in and out times stacked to the right.
+   *
+   * Deliberately quiet. A list of captions should read like the transcript,
+   * so the fields carry no boxes until they are pointed at, and a problem is
+   * a coloured edge with the reason on hover rather than another line of
+   * furniture per row.
+   */
+  function buildProofRow(row, issues) {
     var node = make("div", "pr-row");
     node.dataset.key = rowKey(row.ref);
     if (node.dataset.key === proof.selected) node.classList.add("selected");
-    if (issues.length) node.classList.add("flagged");
-
-    var meta = make("div", "pr-meta");
-    meta.appendChild(make("span", "pr-num", String(index + 1)));
-    meta.appendChild(timecodeField(row, "start"));
-    meta.appendChild(make("span", "pr-arrow", "→"));
-    meta.appendChild(timecodeField(row, "end"));
-    meta.appendChild(make("span", "pr-dur", proofread.formatDuration(row.end - row.start)));
     if (issues.length) {
-      var flag = make("span", "pr-flag", "⚠");
-      flag.title = issues.map(function (issue) { return issue.message; }).join("\n");
-      meta.appendChild(flag);
+      node.classList.add("flagged");
+      node.title = issues.map(function (issue) { return issue.message; }).join("\n");
     }
-    node.appendChild(meta);
 
     var text = make("textarea", "pr-text");
     text.rows = 1;
@@ -933,8 +961,14 @@
     text.dataset.orig = row.text;
     node.appendChild(text);
 
+    var times = make("div", "pr-times");
+    times.title = proofread.formatDuration(row.end - row.start) + " on screen";
+    times.appendChild(timecodeField(row, "start"));
+    times.appendChild(timecodeField(row, "end"));
+    node.appendChild(times);
+
     var actions = make("div", "pr-actions");
-    [["go", "▶ Go to", "Move the playhead here and select the layer"],
+    [["go", "Go to", "Move the playhead here and select the layer"],
      ["split", "Split", "Split into two captions where the text cursor is"],
      ["merge", "Merge ↓", "Merge with the caption after this one"]
     ].forEach(function (spec) {
@@ -977,7 +1011,7 @@
     for (var i = 0; i < proof.rows.length; i++) {
       if (matching && !matching[i]) continue;
       if (proof.issuesOnly && !proof.issues[i].length) continue;
-      fragment.appendChild(buildProofRow(proof.rows[i], i, proof.issues[i]));
+      fragment.appendChild(buildProofRow(proof.rows[i], proof.issues[i]));
       shown++;
     }
     list.innerHTML = "";
@@ -1157,7 +1191,8 @@
         end: merged.end
       }) + ")")
         .then(function () {
-          log("Merged captions " + (i + 1) + " and " + (i + 2) + ".", "ok");
+          log("Merged the captions at " + proofread.formatTimecode(a.start, proof.comp) +
+              " and " + proofread.formatTimecode(b.start, proof.comp) + ".", "ok");
           return readProofList();
         })
         .catch(proofFailed);
@@ -1193,7 +1228,9 @@
         if (!out.unfixed.length) return;
         log(out.unfixed.length + " caption" + (out.unfixed.length === 1 ? " starts" : "s start") +
             " at the same moment as the next one (" +
-            out.unfixed.map(function (i) { return "#" + (i + 1); }).join(", ") +
+            out.unfixed.map(function (i) {
+              return proofread.formatTimecode(proof.rows[i].start, proof.comp);
+            }).join(", ") +
             "). Retime or merge those by hand.", "warn");
       };
       if (!out.edits.length) {
@@ -1386,6 +1423,15 @@
     };
     $("mode-hint").textContent = hints[$("mode").value] || "";
   });
+
+  $("log-toggle").addEventListener("click", function () {
+    setLogOpen($("log").hidden);
+  });
+  (function () {
+    var open = false;
+    try { open = window.localStorage.getItem(LOG_OPEN_KEY) === "1"; } catch (e) {}
+    setLogOpen(open);
+  })();
 
   $("update-dismiss").addEventListener("click", function () {
     $("update-banner").hidden = true;
