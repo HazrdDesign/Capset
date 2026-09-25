@@ -10,7 +10,7 @@ CEP rather than UXP because After Effects has no UXP panel API — see
 
 ```
 CSXS/manifest.xml      Extension manifest (AEFT, 2020-2026).
-index.html             Panel UI: two tabs, Insert and Update.
+index.html             Panel UI: three tabs, Insert, Update and Proofread.
 css/panel.css          Styling, tuned to AE's dark theme.
 js/lib/segmentation.js Word / phrase / smart grouping.       [pure, tested]
 js/lib/backend.js      Transcription service client.         [pure, tested]
@@ -18,9 +18,11 @@ js/lib/launcher.js     Starts the backend on demand.         [pure, tested]
 js/lib/cepfile.js      Reads the rendered audio as bytes.    [pure, tested]
 js/lib/srt.js          SRT / VTT import, SRT export.         [pure, tested]
 js/lib/updates.js      Update manifest checking.             [pure, tested]
+js/lib/proofread.js    Proofread tab: timecode, flags, edits. [pure, tested]
 js/main.js             DOM glue and ExtendScript calls.
 js/vendor/             CSInterface.js from Adobe.
-jsx/capset.jsx         Host script: render, layers, style sync, SRT export.
+jsx/capset.jsx         Host script: render, layers, style sync, SRT export,
+                       proofreading edits.
 jsx/json2.jsx          JSON for ES3 (public domain).
 dormant/               Not loaded, not shipped. See dormant/README.md.
 ```
@@ -71,12 +73,15 @@ time, so a single arrow function breaks the whole file.
 cd panel && npm test
 ```
 
-No After Effects required. Alongside the pure modules, two suites are worth
+No After Effects required. Alongside the pure modules, three suites are worth
 knowing about:
 
 - `tests/wiring.test.js` runs `index.html` against `js/main.js` and fails on a
   library that is never loaded, an element that does not exist, a control
   nothing reads, or a setting read live after a run has started.
+- `tests/jsx-proofread.test.js` does the same for the Proofread tab's host
+  functions: an edit to a caption that changed since the list was read must
+  be refused, and a batch must land whole or not at all.
 - `tests/jsx-behaviour.test.js` executes `jsx/capset.jsx` against the fake
   host in `tests/fake-ae.js`, whose text-animator model
   (`tests/ae-text-animator.js`) evaluates range selectors properly — because

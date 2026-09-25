@@ -52,6 +52,22 @@ class Property {
     this.parentGroup = null;
   }
   get value() { return this._value; }
+  /**
+   * The value with or without the expression applied. The fake does not
+   * evaluate expressions, so the two differ only where a test has said what
+   * an expression produces (Source Text's `_expressionResult`) -- which is
+   * enough to tell code that reads the layer's own value from code that
+   * reads the expression's output and writes it back.
+   */
+  valueAtTime(time, preExpression) {
+    if (!preExpression) return this.value;
+    const v = this._value;
+    return v instanceof TextDocument ? Object.assign(new TextDocument(""), v) : v;
+  }
+  // After Effects enables an expression when one is set; a test can switch it
+  // off again to model a disabled (or errored) expression.
+  get expressionEnabled() { return this._expressionEnabled !== false && this.expression !== ""; }
+  set expressionEnabled(on) { this._expressionEnabled = !!on; }
   setValue(v) { this._value = v; this.keys = []; }
   setValueAtTime(time, v) {
     this.keys.push({ time, value: v, easeIn: null, easeOut: null });
@@ -200,6 +216,29 @@ function makeTextAnimators() {
   });
 }
 
+/** A deep copy of a property tree, for Layer.duplicate. */
+function cloneTree(node) {
+  if (node instanceof PropertyGroup) {
+    const group = new PropertyGroup(node.name, node.matchName, {
+      addable: node._addable, makeChild: node._makeChild
+    });
+    node._children.forEach((child) => group._add(cloneTree(child)));
+    return group;
+  }
+  const copyValue = (v) => v instanceof TextDocument
+    ? Object.assign(new TextDocument(""), v)
+    : Array.isArray(v) ? v.slice() : v;
+  const prop = new Property(node.name, node.matchName, copyValue(node._value));
+  prop.keys = node.keys.map((k) => Object.assign({}, k, { value: copyValue(k.value) }));
+  prop.expression = node.expression;
+  prop._expressionEnabled = node._expressionEnabled;
+  prop._expressionResult = node._expressionResult;
+  // Source Text's copy-on-read getter lives on the instance.
+  const getter = Object.getOwnPropertyDescriptor(node, "value");
+  if (getter) Object.defineProperty(prop, "value", getter);
+  return prop;
+}
+
 // --- layers -----------------------------------------------------------------
 
 class Layer {
@@ -207,8 +246,8 @@ class Layer {
     this.id = nextId++;
     this.containingComp = comp;
     this.name = name;
-    this.inPoint = 0;
-    this.outPoint = comp ? comp.duration : 0;
+    this._inPoint = 0;
+    this._outPoint = comp ? comp.duration : 0;
     // Real layers carry a comment, and Capset uses it to mark its own
     // captions -- so a fake without one would make every capsetIsCapsetLayer
     // test pass through the legacy name check instead of the live path.
@@ -216,7 +255,7 @@ class Layer {
     // Where the layer's source time zero sits in this comp. Only a precomp
     // layer normally moves it, and it is what shifts precomposed captions
     // into the timeline the user is looking at.
-    this.startTime = 0;
+    this._startTime = 0;
     this.enabled = true;
     this.solo = false;
     this.selected = false;
@@ -261,6 +300,65 @@ class Layer {
     if (!found) throw new Error("no property named " + key + " on layer " + this.name);
     return found;
   }
+  // After Effects refuses an in point at or after the out point, and an out
+  // point at or before the in point, so the order two trims are made in
+  // matters. The fake refuses too, or code that gets the order wrong would
+  // pass here and fail in the host.
+  get inPoint() { return this._inPoint; }
+  set inPoint(t) {
+    if (!(t < this._outPoint)) {
+      throw new Error("inPoint " + t + " is not before outPoint " + this._outPoint);
+    }
+    this._inPoint = t;
+  }
+  get outPoint() { return this._outPoint; }
+  set outPoint(t) {
+    if (!(t > this._inPoint)) {
+      throw new Error("outPoint " + t + " is not after inPoint " + this._inPoint);
+    }
+    this._outPoint = t;
+  }
+  // Moving a layer's start time moves the whole layer: in and out points go
+  // with it, as they do in After Effects.
+  get startTime() { return this._startTime; }
+  set startTime(t) {
+    const by = t - this._startTime;
+    this._startTime = t;
+    this._inPoint += by;
+    this._outPoint += by;
+  }
+  /**
+   * A copy of the layer, placed directly above it, as After Effects does.
+   *
+   * Properties, effects, expressions, the parent and the comment all come
+   * along. What After Effects NAMES the copy is not something this project
+   * has verified, so the fake deliberately names it differently from the
+   * original: code that needs a particular name has to set it.
+   */
+  duplicate() {
+    const copy = this instanceof TextLayer
+      ? new TextLayer(this.containingComp, "")
+      : new this.constructor(this.containingComp, this.name);
+    const cloned = new Map();
+    const tree = (node) => {
+      if (!cloned.has(node)) cloned.set(node, cloneTree(node));
+      return cloned.get(node);
+    };
+    copy._groups = {};
+    Object.keys(this._groups).forEach((key) => { copy._groups[key] = tree(this._groups[key]); });
+    copy.name = this.name + " 2";
+    copy.comment = this.comment;
+    copy.enabled = this.enabled;
+    copy.parent = this.parent;
+    copy.hasAudio = this.hasAudio;
+    copy.source = this.source;
+    copy._startTime = this._startTime;
+    copy._inPoint = this._inPoint;
+    copy._outPoint = this._outPoint;
+    const layers = this.containingComp.layers._layers;
+    layers.splice(layers.indexOf(this), 0, copy);
+    return copy;
+  }
   get index() {
     const i = this.containingComp.layers._layers.indexOf(this);
     if (i === -1) throw new Error(this.name + " is no longer in the comp");
@@ -283,8 +381,14 @@ class TextLayer extends Layer {
     const sourceText = new Property("Source Text", "ADBE Text Document",
                                     new TextDocument(text));
     // Real AE hands back a COPY; mutating it does nothing until setValue.
+    // With an expression on, what comes back is the expression's output; a
+    // test models that by setting `_expressionResult`.
     Object.defineProperty(sourceText, "value", {
-      get() { return Object.assign(new TextDocument(""), this._value); },
+      get() {
+        const v = this.expressionEnabled && this._expressionResult
+          ? this._expressionResult : this._value;
+        return Object.assign(new TextDocument(""), v);
+      },
       configurable: true
     });
     props._add(sourceText);
@@ -472,6 +576,12 @@ class CompItem {
     this.frameDuration = 1 / frameRate;
     this.workAreaStart = 0;
     this.workAreaDuration = duration;
+    // The playhead, and how the timeline labels time. displayStartTime is a
+    // comp that starts at, say, 01:00:00:00; dropFrame only means anything at
+    // 29.97 and 59.94.
+    this.time = 0;
+    this.displayStartTime = 0;
+    this.dropFrame = false;
     this.layers = new LayerCollection(this);
   }
   get numLayers() { return this.layers._layers.length; }

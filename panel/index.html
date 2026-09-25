@@ -10,6 +10,7 @@
   <nav id="tabs">
     <button class="tab active" data-tab="insert">Insert</button>
     <button class="tab" data-tab="update">Update</button>
+    <button class="tab" data-tab="proofread">Proofread</button>
     <!-- The service indicator lives in the tab row so a healthy backend costs
          no vertical space at all. It only grows into the #status row below
          when something actually needs saying. -->
@@ -138,14 +139,65 @@
     </section>
   </div>
 
+  <!-- =========================== PROOFREAD ========================== -->
+  <div class="panel" data-panel="proofread">
+    <section class="pr-tools">
+      <div class="pr-head">
+        <span id="pr-comp" class="pr-comp">Open this tab with a composition active.</span>
+        <button id="pr-refresh" class="pr-icon" title="Read the captions again">↻</button>
+      </div>
+
+      <div class="pr-line">
+        <input type="text" id="pr-find" placeholder="Find…" spellcheck="false">
+        <button id="pr-replace-toggle" class="pr-icon" title="Replace"
+                aria-expanded="false">⇄</button>
+      </div>
+      <div id="pr-replace-row" class="pr-replace" hidden>
+        <div class="pr-line">
+          <input type="text" id="pr-replace" placeholder="Replace with…" spellcheck="false">
+          <button id="pr-replace-all">Replace All</button>
+        </div>
+        <label class="check"><input type="checkbox" id="pr-match-case"> Match case</label>
+      </div>
+
+      <div class="pr-line">
+        <button id="pr-issues" class="pr-chip" aria-pressed="false"
+                title="Show only the captions with a problem">No problems</button>
+        <button id="pr-fix" title="Pull back each caption that runs into the next, and close gaps of a frame or two">Fix overlaps</button>
+      </div>
+
+      <div class="pr-line">
+        <input type="number" id="pr-shift-frames" value="1" min="1" step="1"
+               title="How many frames to shift by">
+        <span class="pr-unit">frames</span>
+        <button id="pr-earlier" title="Move captions earlier">◀ Earlier</button>
+        <button id="pr-later" title="Move captions later">Later ▶</button>
+      </div>
+      <label class="check"><input type="checkbox" id="pr-shift-from">
+        Only from the selected caption on</label>
+    </section>
+
+    <p id="pr-empty" class="hint pr-empty" hidden></p>
+    <div id="pr-list" class="pr-list"></div>
+    <p class="hint pr-hint"
+       title="Esc throws typing away. In a timecode, Shift+↑ ↓ nudge ten frames, and +3 or -3 nudges by typing. Each change is one Undo in After Effects.">
+      Enter saves · Shift+Enter new line · ↑ ↓ nudge a timecode
+    </p>
+  </div>
+
   <section id="progress">
     <div class="bar"><div id="bar-fill"></div></div>
     <div class="hint" id="progress-text">Working…</div>
   </section>
 
-  <section>
-    <h2>Log</h2>
-    <div id="log"></div>
+  <!-- Closed until wanted. A warning or error that arrives while it is closed
+       marks the toggle, so a message worth reading is never silently hidden. -->
+  <section id="log-section" class="log-section">
+    <button id="log-toggle" class="log-toggle" aria-expanded="false"
+            title="Show the log">
+      <span class="log-caret">▸</span> Log <span id="log-badge" class="log-badge" hidden></span>
+    </button>
+    <div id="log" hidden></div>
   </section>
 
   <script src="js/vendor/CSInterface.js"></script>
@@ -155,6 +207,7 @@
   <script src="js/lib/backend.js"></script>
   <script src="js/lib/updates.js"></script>
   <script src="js/lib/launcher.js"></script>
+  <script src="js/lib/proofread.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>

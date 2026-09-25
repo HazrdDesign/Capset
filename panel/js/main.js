@@ -1,9 +1,9 @@
 /**
- * Panel wiring: two tabs (Insert / Update), the backend calls, and the
- * ExtendScript bridge.
+ * Panel wiring: three tabs (Insert / Update / Proofread), the backend calls,
+ * and the ExtendScript bridge.
  *
- * Segmentation and SRT parsing live in js/lib/ and are unit-tested under
- * node. This file is glue and DOM.
+ * Segmentation, SRT parsing and the Proofread tab's edits live in js/lib/ and
+ * are unit-tested under node. This file is glue and DOM.
  */
 (function () {
   "use strict";
@@ -13,6 +13,7 @@
   var config = { updateManifestUrl: null, backendUrl: null };
   var segmentation = CapsetSegmentation;
   var srt = CapsetSrt;
+  var proofread = CapsetProofread;
 
   var state = {
     srtPath: null,
@@ -48,6 +49,36 @@
     // the least useful ones to keep.
     while (box.children.length > LOG_MAX_LINES) box.removeChild(box.firstChild);
     box.scrollTop = box.scrollHeight;
+
+    // The log is closed until wanted, but a warning or an error still has to
+    // be seen: it marks the toggle, and the latest one is shown on it, until
+    // the log is opened.
+    if (box.hidden && (kind === "err" || kind === "warn")) {
+      var badge = $("log-badge");
+      if (kind === "err" || !badge.classList.contains("err")) {
+        badge.className = "log-badge " + kind;
+      }
+      badge.textContent = message;
+      badge.title = message;
+      badge.hidden = false;
+    }
+  }
+
+  var LOG_OPEN_KEY = "capset.logOpen";
+
+  function setLogOpen(open) {
+    var box = $("log");
+    box.hidden = !open;
+    $("log-toggle").setAttribute("aria-expanded", open ? "true" : "false");
+    $("log-toggle").title = open ? "Hide the log" : "Show the log";
+    if (open) {
+      $("log-badge").hidden = true;
+      $("log-badge").className = "log-badge";
+      box.scrollTop = box.scrollHeight;
+    }
+    // Remembered per machine for convenience; if storage is unavailable the
+    // log simply starts closed.
+    try { window.localStorage.setItem(LOG_OPEN_KEY, open ? "1" : "0"); } catch (e) {}
   }
 
   /**
@@ -76,12 +107,16 @@
 
   function setBusy(busy) {
     state.busy = busy;
-    var ids = ["build", "pick", "capture", "sync", "clear", "export-srt"];
+    var ids = ["build", "pick", "capture", "sync", "clear", "export-srt",
+               "pr-refresh", "pr-replace-all", "pr-fix", "pr-earlier", "pr-later"];
     for (var i = 0; i < ids.length; i++) {
       var el = $(ids[i]);
       if (el) el.disabled = busy;
     }
     if (!busy && !state.capturedStyle) $("sync").disabled = true;
+    // A build replaces the very layers the Proofread list points at, so the
+    // list is read-only until it is done and then read again.
+    $("pr-list").classList.toggle("locked", busy);
     $("progress").className = busy ? "active" : "";
   }
 
@@ -722,6 +757,621 @@
       .then(function () { setBusy(false); });
   }
 
+  // --- proofread tab -------------------------------------------------------
+  //
+  // Every caption in the comp, stacked in time order, with its text and its
+  // in and out timecodes editable in place. What an edit IS lives in
+  // js/lib/proofread.js; this is the list, the keys, and the host calls.
+  //
+  // Edits run one at a time through a queue. Nudging a timecode three times
+  // in quick succession is three edits, and each one has to be built from
+  // what the one before it left -- or the host would rightly refuse the
+  // second as stale.
+
+  var proof = {
+    comp: null,        // capsetProofreadList's comp: rate, drop-frame, start
+    rows: [],          // the captions, in time order
+    issues: [],        // findIssues(rows), row for row
+    selected: null,    // key of the selected row, for Shift from here
+    issuesOnly: false,
+    rendering: false,
+    queue: Promise.resolve()
+  };
+
+  /** Run proofreading work in order, after whatever is already queued. */
+  function enqueue(fn) {
+    var next = proof.queue.then(function () { return fn(); });
+    proof.queue = next.then(null, function () {});
+    return next;
+  }
+
+  function rowKey(ref) {
+    return ref.compId + ":" + (ref.layerId !== null && ref.layerId !== undefined
+      ? "id" + ref.layerId
+      : "ix" + ref.index);
+  }
+
+  function rowIndex(key) {
+    for (var i = 0; i < proof.rows.length; i++) {
+      if (rowKey(proof.rows[i].ref) === key) return i;
+    }
+    return -1;
+  }
+
+  function rowByKey(key) {
+    var i = rowIndex(key);
+    return i === -1 ? null : proof.rows[i];
+  }
+
+  function sortRows() {
+    proof.rows.sort(function (a, b) { return (a.start - b.start) || (a.end - b.end); });
+  }
+
+  /** Read the captions off the timeline. Not queued: callers queue it. */
+  function readProofList() {
+    return host("capsetProofreadList()")
+      .then(function (data) {
+        proof.comp = data.comp;
+        proof.rows = data.captions;
+        sortRows();
+        renderProofread();
+      })
+      .catch(function (err) {
+        // Usually "Select a composition first." -- worth showing in the
+        // tab, where it explains the empty list, rather than in the log
+        // every time the panel regains focus.
+        proof.comp = null;
+        proof.rows = [];
+        renderProofread(err.message);
+      });
+  }
+
+  function loadProofread() {
+    return enqueue(readProofList);
+  }
+
+  function proofTabActive() {
+    var tab = document.querySelector('.tab[data-tab="proofread"]');
+    return !!tab && tab.classList.contains("active");
+  }
+
+  /**
+   * A refused or failed edit: say why, and read the list again, because the
+   * usual reason is that the timeline no longer matches it.
+   */
+  function proofFailed(err) {
+    log(err.message, "err");
+    return readProofList();
+  }
+
+  function proofReady() {
+    if (state.busy) {
+      log("Wait for the current run to finish before editing captions.", "warn");
+      return false;
+    }
+    if (!proof.comp) {
+      log("No captions have been read yet. Open a composition and press ↻.", "warn");
+      return false;
+    }
+    return true;
+  }
+
+  /** Send edits to the host, then put what it reports back into the list. */
+  function applyProof(edits, label) {
+    return host("capsetProofreadApply(" + arg({ label: label, edits: edits }) + ")")
+      .then(function (data) {
+        for (var i = 0; i < data.rows.length; i++) {
+          var at = rowIndex(rowKey(data.rows[i].ref));
+          if (at !== -1) proof.rows[at] = data.rows[i];
+        }
+        sortRows();
+        renderProofread();
+        return data;
+      })
+      .catch(function (err) {
+        return proofFailed(err).then(function () { return null; });
+      });
+  }
+
+  // --- rendering the list ---------------------------------------------------
+
+  /**
+   * Where the cursor is, so rebuilding the list does not throw it away. A
+   * field with typing in it that has not been saved keeps the typing.
+   */
+  function captureProofFocus() {
+    var el = document.activeElement;
+    if (!el || !$("pr-list").contains(el) || !el.dataset.field) return null;
+    var row = el.closest(".pr-row");
+    return row && {
+      key: row.dataset.key,
+      field: el.dataset.field,
+      dirty: el.value !== el.dataset.orig,
+      value: el.value,
+      start: el.selectionStart,
+      end: el.selectionEnd
+    };
+  }
+
+  function restoreProofFocus(saved) {
+    if (!saved) return;
+    var rows = $("pr-list").children;
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].dataset.key !== saved.key) continue;
+      var el = rows[i].querySelector('[data-field="' + saved.field + '"]');
+      if (!el) return;
+      if (saved.dirty) el.value = saved.value;
+      el.focus();
+      try { el.setSelectionRange(saved.start, saved.end); } catch (e) {}
+      return;
+    }
+  }
+
+  /** Size every caption box to its text, reading layout once, not per box. */
+  function fitProofText() {
+    var boxes = $("pr-list").querySelectorAll("textarea");
+    var i;
+    for (i = 0; i < boxes.length; i++) boxes[i].style.height = "auto";
+    var heights = [];
+    for (i = 0; i < boxes.length; i++) heights.push(boxes[i].scrollHeight);
+    for (i = 0; i < boxes.length; i++) boxes[i].style.height = (heights[i] + 2) + "px";
+  }
+
+  function make(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function timecodeField(row, which) {
+    var input = make("input", "pr-tc");
+    input.type = "text";
+    input.spellcheck = false;
+    input.dataset.field = which;
+    input.value = proofread.formatTimecode(row[which], proof.comp);
+    input.dataset.orig = input.value;
+    input.title = (which === "start" ? "In" : "Out") + " point. Type a timecode " +
+                  "and press Enter; ↑ ↓ nudge a frame, Shift for ten.";
+    return input;
+  }
+
+  /**
+   * One caption: its text, with its in and out times stacked to the right.
+   *
+   * Deliberately quiet. A list of captions should read like the transcript,
+   * so the fields carry no boxes until they are pointed at, and a problem is
+   * a coloured edge with the reason on hover rather than another line of
+   * furniture per row.
+   */
+  function buildProofRow(row, issues) {
+    var node = make("div", "pr-row");
+    node.dataset.key = rowKey(row.ref);
+    if (node.dataset.key === proof.selected) node.classList.add("selected");
+    if (issues.length) {
+      node.classList.add("flagged");
+      node.title = issues.map(function (issue) { return issue.message; }).join("\n");
+    }
+
+    var text = make("textarea", "pr-text");
+    text.rows = 1;
+    text.spellcheck = true;
+    text.dataset.field = "text";
+    text.value = row.text;
+    text.dataset.orig = row.text;
+    node.appendChild(text);
+
+    var times = make("div", "pr-times");
+    times.title = proofread.formatDuration(row.end - row.start) + " on screen";
+    times.appendChild(timecodeField(row, "start"));
+    times.appendChild(timecodeField(row, "end"));
+    node.appendChild(times);
+
+    var actions = make("div", "pr-actions");
+    [["go", "Go to", "Move the playhead here and select the layer"],
+     ["split", "Split", "Split into two captions where the text cursor is"],
+     ["merge", "Merge ↓", "Merge with the caption after this one"]
+    ].forEach(function (spec) {
+      var button = make("button", "", spec[1]);
+      button.dataset.action = spec[0];
+      button.title = spec[2];
+      actions.appendChild(button);
+    });
+    node.appendChild(actions);
+    return node;
+  }
+
+  function renderProofread(message) {
+    var list = $("pr-list");
+    var saved = captureProofFocus();
+    var comp = proof.comp;
+
+    proof.issues = comp ? proofread.findIssues(proof.rows, comp) : [];
+    var flagged = 0;
+    for (var f = 0; f < proof.issues.length; f++) if (proof.issues[f].length) flagged++;
+    if (!flagged) proof.issuesOnly = false;
+
+    var chip = $("pr-issues");
+    chip.textContent = flagged ? "⚠ " + flagged + " to check" : "No problems";
+    chip.classList.toggle("has-issues", flagged > 0);
+    chip.setAttribute("aria-pressed", proof.issuesOnly ? "true" : "false");
+    chip.disabled = !flagged;
+
+    var query = $("pr-find").value;
+    var matching = null;
+    if (query) {
+      matching = {};
+      var hits = proofread.find(proof.rows, query, $("pr-match-case").checked);
+      for (var h = 0; h < hits.length; h++) matching[hits[h]] = true;
+    }
+
+    proof.rendering = true;
+    var fragment = document.createDocumentFragment();
+    var shown = 0;
+    for (var i = 0; i < proof.rows.length; i++) {
+      if (matching && !matching[i]) continue;
+      if (proof.issuesOnly && !proof.issues[i].length) continue;
+      fragment.appendChild(buildProofRow(proof.rows[i], proof.issues[i]));
+      shown++;
+    }
+    list.innerHTML = "";
+    list.appendChild(fragment);
+    proof.rendering = false;
+
+    var head = comp
+      ? comp.name + " · " + proof.rows.length + " caption" + (proof.rows.length === 1 ? "" : "s")
+      : (message || "Open this tab with a composition active.");
+    if (comp && shown !== proof.rows.length) head += " · " + shown + " shown";
+    $("pr-comp").textContent = head;
+
+    var empty = $("pr-empty");
+    empty.hidden = shown > 0;
+    empty.textContent = !comp
+      ? (message || "")
+      : !proof.rows.length
+        ? "No Capset captions in “" + comp.name + "” yet."
+        : proof.issuesOnly
+          ? "No caption with a problem matches. Press “⚠ to check” to search them all."
+          : "No captions match.";
+
+    fitProofText();
+    restoreProofFocus(saved);
+  }
+
+  function selectProofRow(key) {
+    proof.selected = key;
+    var rows = $("pr-list").children;
+    for (var i = 0; i < rows.length; i++) {
+      rows[i].classList.toggle("selected", rows[i].dataset.key === key);
+    }
+  }
+
+  // --- editing a row --------------------------------------------------------
+
+  function commitProofText(box) {
+    var key = box.closest(".pr-row").dataset.key;
+    var typed = box.value;
+    if (typed === box.dataset.orig) return;
+    if (!proofReady()) {
+      box.value = box.dataset.orig;
+      return;
+    }
+    // Clean from here on: whatever happens next, this typing has been dealt
+    // with, and a rebuild of the list must not carry it over again.
+    box.dataset.orig = typed;
+    enqueue(function () {
+      var row = rowByKey(key);
+      if (!row) return;
+      var result = proofread.retext(row, typed);
+      if (!result) return;
+      if (result.error) {
+        log(result.error, "err");
+        renderProofread();
+        return;
+      }
+      return applyProof([result.edit], "text");
+    });
+  }
+
+  /** Commit a timecode field: what was typed, or a nudge of `frames`. */
+  function commitProofTime(input, frames) {
+    var key = input.closest(".pr-row").dataset.key;
+    var which = input.dataset.field;
+    var typed = input.value;
+    if (!frames && typed === input.dataset.orig) return;
+    if (!proofReady()) {
+      input.value = input.dataset.orig;
+      return;
+    }
+    input.dataset.orig = typed;
+    enqueue(function () {
+      var row = rowByKey(key);
+      if (!row) return;
+      var seconds;
+      if (frames) {
+        seconds = row[which] + frames * proof.comp.frameDuration;
+      } else {
+        var parsed = proofread.parseTimecode(typed, proof.comp, row[which]);
+        if (parsed.error) {
+          log(parsed.error, "err");
+          renderProofread();
+          return;
+        }
+        seconds = parsed.seconds;
+      }
+      var result = proofread.retime(row, which, seconds, proof.comp);
+      if (!result || result.error) {
+        if (result) log(result.error, "err");
+        renderProofread();
+        return;
+      }
+      return applyProof([result.edit], "time");
+    });
+  }
+
+  function focusNextText(row) {
+    var next = row.nextElementSibling;
+    var box = next && next.querySelector("textarea");
+    if (box) {
+      box.focus();
+      box.setSelectionRange(box.value.length, box.value.length);
+      box.scrollIntoView({ block: "nearest" });
+    } else {
+      document.activeElement.blur();
+    }
+  }
+
+  function revealProofRow(key) {
+    enqueue(function () {
+      var row = rowByKey(key);
+      if (!row) return;
+      return host("capsetProofreadReveal(" + arg({ ref: row.ref, time: row.start }) + ")")
+        .then(function (data) {
+          if (!data.selected) {
+            log("That caption is no longer in this composition.", "warn");
+            return readProofList();
+          }
+        })
+        .catch(proofFailed);
+    });
+  }
+
+  function splitProofRow(key, box) {
+    if (!proofReady()) return;
+    if (document.activeElement !== box) {
+      log("Click in the caption's text where it should split, then press Split.", "warn");
+      return;
+    }
+    // Split what is in the box, typing and all: both halves are written, so
+    // anything not yet saved goes in with them.
+    var typed = box.value;
+    var at = box.selectionStart;
+    box.dataset.orig = typed;
+    enqueue(function () {
+      var row = rowByKey(key);
+      if (!row) return;
+      var parts = proofread.splitAt(
+        { ref: row.ref, text: typed, start: row.start, end: row.end }, at, proof.comp
+      );
+      if (parts.error) { log(parts.error, "err"); return; }
+      return host("capsetProofreadSplit(" + arg({
+        ref: row.ref,
+        expect: proofread.expectOf(row),
+        first: parts.first,
+        second: parts.second
+      }) + ")")
+        .then(function () {
+          log("Split at " + proofread.formatTimecode(parts.second.start, proof.comp) + ".", "ok");
+          return readProofList();
+        })
+        .catch(proofFailed);
+    });
+  }
+
+  function mergeProofRow(key, box) {
+    if (!proofReady()) return;
+    // Save any typing first, so the merge joins what is on screen.
+    if (box.value !== box.dataset.orig) commitProofText(box);
+    enqueue(function () {
+      var i = rowIndex(key);
+      if (i === -1) return;
+      var a = proof.rows[i];
+      var b = proof.rows[i + 1];
+      if (!b) {
+        log("That is the last caption; there is nothing after it to merge.", "warn");
+        return;
+      }
+      var merged = proofread.merge(a, b);
+      return host("capsetProofreadMerge(" + arg({
+        ref: a.ref,
+        expect: proofread.expectOf(a),
+        next: { ref: b.ref, expect: proofread.expectOf(b) },
+        text: merged.text,
+        start: merged.start,
+        end: merged.end
+      }) + ")")
+        .then(function () {
+          log("Merged the captions at " + proofread.formatTimecode(a.start, proof.comp) +
+              " and " + proofread.formatTimecode(b.start, proof.comp) + ".", "ok");
+          return readProofList();
+        })
+        .catch(proofFailed);
+    });
+  }
+
+  // --- the tools above the list ---------------------------------------------
+
+  function replaceAllProof() {
+    if (!proofReady()) return;
+    // Read at the click, like every other run setting.
+    var query = $("pr-find").value;
+    var replacement = $("pr-replace").value;
+    var matchCase = $("pr-match-case").checked;
+    enqueue(function () {
+      var out = proofread.replaceAll(proof.rows, query, replacement, matchCase);
+      if (out.error) { log(out.error, "err"); return; }
+      if (!out.edits.length) { log("Nothing to replace.", "warn"); return; }
+      return applyProof(out.edits, "replace").then(function (data) {
+        if (!data) return;
+        log("Replaced " + out.count + " occurrence" + (out.count === 1 ? "" : "s") +
+            " in " + out.edits.length + " caption" + (out.edits.length === 1 ? "" : "s") +
+            ".", "ok");
+      });
+    });
+  }
+
+  function fixProofOverlaps() {
+    if (!proofReady()) return;
+    enqueue(function () {
+      var out = proofread.fixOverlaps(proof.rows, proof.comp);
+      var unfixed = function () {
+        if (!out.unfixed.length) return;
+        log(out.unfixed.length + " caption" + (out.unfixed.length === 1 ? " starts" : "s start") +
+            " at the same moment as the next one (" +
+            out.unfixed.map(function (i) {
+              return proofread.formatTimecode(proof.rows[i].start, proof.comp);
+            }).join(", ") +
+            "). Retime or merge those by hand.", "warn");
+      };
+      if (!out.edits.length) {
+        if (!out.unfixed.length) log("Nothing overlaps.", "ok");
+        unfixed();
+        return;
+      }
+      return applyProof(out.edits, "fix").then(function (data) {
+        if (!data) return;
+        log("Fixed " + out.edits.length + " caption" + (out.edits.length === 1 ? "" : "s") + ".", "ok");
+        unfixed();
+      });
+    });
+  }
+
+  function shiftProof(direction) {
+    if (!proofReady()) return;
+    var frames = Math.abs(parseInt($("pr-shift-frames").value, 10)) || 0;
+    var fromSelected = $("pr-shift-from").checked;
+    var selected = proof.selected;
+    enqueue(function () {
+      var from = 0;
+      if (fromSelected) {
+        from = selected ? rowIndex(selected) : -1;
+        if (from === -1) {
+          log("Click a caption first; the shift starts from the selected one.", "warn");
+          return;
+        }
+      }
+      var out = proofread.shift(proof.rows, from, direction * frames, proof.comp);
+      if (out.error) { log(out.error, "err"); return; }
+      return applyProof(out.edits, "shift").then(function (data) {
+        if (!data) return;
+        log("Moved " + out.edits.length + " caption" + (out.edits.length === 1 ? "" : "s") +
+            " " + frames + " frame" + (frames === 1 ? "" : "s") +
+            (direction < 0 ? " earlier." : " later."), "ok");
+      });
+    });
+  }
+
+  function wireProofread() {
+    var list = $("pr-list");
+
+    list.addEventListener("focusin", function (event) {
+      var row = event.target.closest(".pr-row");
+      if (row) selectProofRow(row.dataset.key);
+      if (event.target.classList.contains("pr-tc")) event.target.select();
+    });
+
+    list.addEventListener("focusout", function (event) {
+      if (proof.rendering) return;
+      var field = event.target.dataset.field;
+      if (field === "text") commitProofText(event.target);
+      else if (field === "start" || field === "end") commitProofTime(event.target, 0);
+    });
+
+    list.addEventListener("keydown", function (event) {
+      var target = event.target;
+      var field = target.dataset.field;
+      if (!field) return;
+      if (event.key === "Escape") {
+        target.value = target.dataset.orig;
+        target.blur();
+        event.preventDefault();
+        return;
+      }
+      if (field === "text") {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          commitProofText(target);
+          focusNextText(target.closest(".pr-row"));
+        }
+        return;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        commitProofTime(target, 0);
+      } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+        event.preventDefault();
+        var step = event.shiftKey ? 10 : 1;
+        commitProofTime(target, event.key === "ArrowUp" ? step : -step);
+      }
+    });
+
+    list.addEventListener("input", function (event) {
+      if (event.target.dataset.field !== "text") return;
+      event.target.style.height = "auto";
+      event.target.style.height = (event.target.scrollHeight + 2) + "px";
+    });
+
+    // The row buttons act on the caption being typed in, so pressing one
+    // must not take the cursor out of it: that would save the text on the
+    // way past, and lose the split point.
+    list.addEventListener("mousedown", function (event) {
+      if (event.target.dataset.action) event.preventDefault();
+    });
+
+    list.addEventListener("click", function (event) {
+      var row = event.target.closest(".pr-row");
+      if (!row) return;
+      selectProofRow(row.dataset.key);
+      var action = event.target.dataset.action;
+      var box = row.querySelector("textarea");
+      if (action === "go") revealProofRow(row.dataset.key);
+      else if (action === "split") splitProofRow(row.dataset.key, box);
+      else if (action === "merge") mergeProofRow(row.dataset.key, box);
+    });
+
+    $("pr-refresh").addEventListener("click", loadProofread);
+    $("pr-find").addEventListener("input", function () { renderProofread(); });
+    $("pr-match-case").addEventListener("change", function () { renderProofread(); });
+    $("pr-replace-toggle").addEventListener("click", function () {
+      var row = $("pr-replace-row");
+      row.hidden = !row.hidden;
+      $("pr-replace-toggle").setAttribute("aria-expanded", row.hidden ? "false" : "true");
+      if (!row.hidden) $("pr-replace").focus();
+    });
+    $("pr-replace-all").addEventListener("click", replaceAllProof);
+    $("pr-issues").addEventListener("click", function () {
+      proof.issuesOnly = !proof.issuesOnly;
+      renderProofread();
+    });
+    $("pr-fix").addEventListener("click", fixProofOverlaps);
+    $("pr-earlier").addEventListener("click", function () { shiftProof(-1); });
+    $("pr-later").addEventListener("click", function () { shiftProof(1); });
+
+    // Captions change behind the panel's back -- an undo, a layer dragged in
+    // the timeline, another comp opened -- and there is no event for any of
+    // it. Coming back to the panel is the moment someone is about to read
+    // the list, so that is when it is read again.
+    window.addEventListener("focus", function () {
+      if (proofTabActive() && !state.busy) loadProofread();
+    });
+
+    var resizeTimer = null;
+    window.addEventListener("resize", function () {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function () { if (proofTabActive()) fitProofText(); }, 100);
+    });
+  }
+
   // --- wiring --------------------------------------------------------------
 
   Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (tab) {
@@ -732,6 +1382,9 @@
       Array.prototype.forEach.call(document.querySelectorAll(".panel"), function (p) {
         p.classList.toggle("active", p.dataset.panel === tab.dataset.tab);
       });
+      // Read afresh every time the tab opens: the captions may have been
+      // rebuilt, retimed or undone since it was last looked at.
+      if (tab.dataset.tab === "proofread") loadProofread();
     });
   });
 
@@ -752,6 +1405,7 @@
   $("sync").addEventListener("click", sync);
   $("clear").addEventListener("click", clearCaptions);
   $("export-srt").addEventListener("click", exportSrt);
+  wireProofread();
   $("mode").addEventListener("change", function () {
     // Three are offered. The rest still resolve in js/lib/segmentation.js,
     // because they are real modes and a project saved by an earlier version
@@ -769,6 +1423,15 @@
     };
     $("mode-hint").textContent = hints[$("mode").value] || "";
   });
+
+  $("log-toggle").addEventListener("click", function () {
+    setLogOpen($("log").hidden);
+  });
+  (function () {
+    var open = false;
+    try { open = window.localStorage.getItem(LOG_OPEN_KEY) === "1"; } catch (e) {}
+    setLogOpen(open);
+  })();
 
   $("update-dismiss").addEventListener("click", function () {
     $("update-banner").hidden = true;
