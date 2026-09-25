@@ -294,3 +294,122 @@ button.danger:hover:not(:disabled) {
 .update-text span { color: var(--text-dim); font-size: 10px; }
 #update-banner .row { flex: 0 0 auto; display: flex; gap: 4px; }
 #update-dismiss { padding: 6px 8px; }
+
+/* --- proofread ------------------------------------------------------------ */
+/* A column of captions in a docked panel a few hundred pixels wide: every row
+   is two lines -- timecodes on top, text under -- so nothing has to scroll
+   sideways, and the tools above it stay put while the list scrolls. */
+.pr-tools { padding: 8px; }
+.pr-head, .pr-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 6px;
+}
+.pr-line[hidden] { display: none; }
+.pr-comp {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-dim);
+}
+.pr-line input[type="text"] { flex: 1 1 auto; min-width: 0; }
+.pr-line button { flex: 0 0 auto; }
+.pr-icon { padding: 4px 8px; }
+.pr-icon[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+.pr-case { margin: -2px 0 8px; }
+#pr-shift-frames { width: 52px; flex: 0 0 auto; }
+.pr-unit { color: var(--text-dim); flex: 0 0 auto; }
+#pr-earlier, #pr-later { flex: 1 1 0; padding: 6px 4px; }
+
+.pr-chip { flex: 1 1 auto; text-align: left; color: var(--text-dim); }
+.pr-chip.has-issues { color: var(--warn); border-color: var(--warn); }
+.pr-chip[aria-pressed="true"],
+.pr-chip[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--warn);
+  border-color: var(--warn);
+  color: #1b1a19;
+}
+#pr-fix { flex: 1 1 auto; }
+
+.pr-empty { margin: 0 0 8px; }
+.pr-empty[hidden] { display: none; }
+
+.pr-list {
+  max-height: calc(100vh - 340px);
+  min-height: 160px;
+  overflow-y: auto;
+  margin-bottom: 6px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.pr-list:empty { display: none; }
+/* A build is replacing these layers; nothing here can be trusted until the
+   list is read again. */
+.pr-list.locked { opacity: .5; pointer-events: none; }
+
+.pr-row {
+  padding: 6px 8px 7px;
+  border-bottom: 1px solid var(--border);
+  border-left: 2px solid transparent;
+}
+.pr-row:last-child { border-bottom: none; }
+.pr-row.selected { background: var(--accent-wash); border-left-color: var(--accent); }
+
+.pr-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+  font: 10px Menlo, Consolas, monospace;
+  color: var(--text-dim);
+}
+/* Fixed widths, so the timecodes line up down the list whether or not a row
+   carries a flag. */
+.pr-meta > * { flex: 0 0 auto; }
+.pr-num { min-width: 20px; text-align: right; }
+.pr-arrow { opacity: .6; }
+.pr-dur { margin-left: auto; }
+.pr-flag { color: var(--warn); font-size: 12px; cursor: help; }
+
+/* Qualified so it outranks the panel-wide input[type="text"] rule, whose
+   width: 100% the row would otherwise squeeze down unevenly. */
+.pr-meta input.pr-tc {
+  width: 78px;
+  padding: 2px 4px;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font: inherit;
+  user-select: text;
+}
+.pr-tc:focus, .pr-text:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-wash);
+}
+
+.pr-text {
+  display: block;
+  width: 100%;
+  padding: 4px 6px;
+  resize: none;
+  overflow: hidden;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font: 12px/1.35 -apple-system, "Segoe UI", Tahoma, sans-serif;
+  user-select: text;
+}
+.pr-row.flagged .pr-text { border-left: 2px solid var(--warn); }
+
+/* Only the selected row carries its buttons: fifty rows of Go / Split /
+   Merge would bury the text they act on. */
+.pr-actions { display: none; gap: 4px; margin-top: 5px; }
+.pr-row.selected .pr-actions { display: flex; }
+.pr-actions button { flex: 1 1 0; padding: 3px 4px; font-size: 10px; }

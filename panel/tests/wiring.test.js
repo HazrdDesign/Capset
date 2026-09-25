@@ -411,3 +411,50 @@ test("the scoped claim comes from the payload, not the Duration radio", () => {
     "the transcription path never sets scoped, so no work-area run is " +
     "checked against its range");
 });
+
+// --- the Proofread tab --------------------------------------------------------
+
+test("the Proofread tab builds every edit with the tested module", () => {
+  // What an edit is -- a retype, a retime, a replace, a shift, a split -- is
+  // decided in js/lib/proofread.js, where tests/proofread.test.js reaches it.
+  // main.js cannot be executed under node, so this is a source check.
+  const uses = {
+    commitProofText: /proofread\.retext\(/,
+    commitProofTime: /proofread\.(parseTimecode|retime)\(/,
+    replaceAllProof: /proofread\.replaceAll\(/,
+    fixProofOverlaps: /proofread\.fixOverlaps\(/,
+    shiftProof: /proofread\.shift\(/,
+    splitProofRow: /proofread\.splitAt\(/,
+    mergeProofRow: /proofread\.merge\(/
+  };
+  Object.keys(uses).forEach((name) => {
+    assert.match(functionBody(name), uses[name],
+      name + "() no longer goes through js/lib/proofread.js");
+  });
+});
+
+test("proofreading edits run one at a time", () => {
+  // Three quick nudges are three edits, each built from what the last one
+  // left. Sent side by side, the second would carry a stale `expect` and the
+  // host would rightly refuse it.
+  ["commitProofText", "commitProofTime", "replaceAllProof", "fixProofOverlaps",
+   "shiftProof", "splitProofRow", "mergeProofRow", "revealProofRow"].forEach((name) => {
+    assert.match(functionBody(name), /\benqueue\(/, name + "() is not queued");
+  });
+});
+
+test("the Proofread list is read again when the tab opens and on focus", () => {
+  // There is no After Effects event for a caption changed in the timeline,
+  // so these are the moments the list gets a chance to catch up.
+  assert.match(main, /tab\.dataset\.tab === "proofread"\) loadProofread\(\)/,
+    "opening the tab does not read the captions");
+  assert.match(functionBody("wireProofread"), /addEventListener\("focus"/,
+    "returning to the panel does not read the captions");
+});
+
+test("a refused proofreading edit re-reads the list", () => {
+  // The usual reason for a refusal is that the list is stale; showing the
+  // same stale list again would invite the same refusal.
+  assert.match(functionBody("proofFailed"), /readProofList\(\)/);
+  assert.match(functionBody("applyProof"), /proofFailed\(/);
+});
