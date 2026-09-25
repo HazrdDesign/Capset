@@ -1936,7 +1936,12 @@ function capsetCollectCaptions(comp, offset, out) {
             text: capsetTrim(text.replace(/[\r\n]+/g, " ")),
             lines: text.split(/[\r\n]+/),
             start: layer.inPoint + offset,
-            end: layer.outPoint + offset
+            end: layer.outPoint + offset,
+            // What the Proofread tab edits: the text exactly as the layer
+            // holds it, line breaks and all, and where to find the layer
+            // again. The SRT export reads none of these.
+            body: capsetProofBody(text),
+            ref: { compId: comp.id, index: i, layerId: capsetLayerId(layer) }
         });
     }
     return out;
@@ -2501,5 +2506,453 @@ function capsetClearAnimations(scopeJson) {
         return capsetErr(e.message);
     } finally {
         if (undoOpen) app.endUndoGroup();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// proofread
+//
+// The Proofread tab lists every caption with its text and timecodes, and lets
+// them be retyped and retimed by hand. What each edit IS -- a new text, a new
+// in point, a shift -- is decided in js/lib/proofread.js, where it is tested;
+// this only finds the layers again and applies what it is handed.
+//
+// Every edit carries `expect`: the caption as the list last read it. A layer
+// that no longer matches has been changed since -- by hand, by an undo, by
+// another tool -- and the edit is refused rather than written over the top.
+// A batch is checked in full before anything is written, so it never lands
+// half-applied.
+// ---------------------------------------------------------------------------
+
+var CAPSET_STALE =
+    "That caption has changed since the list was read, so nothing was " +
+    "changed. The list has been refreshed -- try again.";
+
+// Undo menu names for capsetProofreadApply. A fixed set rather than whatever
+// the panel sends, so Edit > Undo always reads as something Capset did.
+var CAPSET_PROOF_LABELS = {
+    text: "edit caption",
+    time: "retime caption",
+    replace: "replace text",
+    fix: "fix overlaps",
+    shift: "shift captions"
+};
+
+/** A caption's text with one kind of line break, as the Proofread tab holds it. */
+function capsetProofBody(text) {
+    return capsetTrim(String(text === undefined || text === null ? "" : text)
+        .replace(/\r\n?/g, "\n"));
+}
+
+/**
+ * Layer.id where After Effects has it (22.0 and later), otherwise null.
+ *
+ * An id survives layers being added, removed and reordered; an index does
+ * not. The index is still the fallback on older versions, and the `expect`
+ * check is what makes relying on it safe: a different layer at that index
+ * will not have the same text and times.
+ */
+function capsetLayerId(layer) {
+    try {
+        var id = layer.id;
+        if (typeof id === "number") return id;
+    } catch (e) {}
+    return null;
+}
+
+function capsetCompById(id) {
+    for (var i = 1; i <= app.project.numItems; i++) {
+        var item = app.project.item(i);
+        if (item instanceof CompItem && item.id === id) return item;
+    }
+    return null;
+}
+
+/**
+ * Where `target` sits inside `within`, following Capset precomps down.
+ *
+ * @returns {offset, holder} -- `offset` puts target's times on within's
+ *          timeline, `holder` is the layer in `within` that leads to it (null
+ *          when target IS within) -- or null when target is not in there.
+ *
+ * Worked out afresh on every call rather than trusted from the list, so a
+ * precomp moved since the list was read still has its captions written in
+ * the right place.
+ */
+function capsetLocateComp(target, within, depth) {
+    if (target.id === within.id) return { offset: 0, holder: null };
+    if (depth > 8) return null;
+    for (var i = 1; i <= within.numLayers; i++) {
+        var layer = within.layer(i);
+        if (!capsetIsCapsetLayer(layer)) continue;
+        var source = null;
+        try {
+            if (layer.source && layer.source instanceof CompItem) source = layer.source;
+        } catch (e) {}
+        if (!source) continue;
+        var inner = capsetLocateComp(target, source, depth + 1);
+        if (inner) return { offset: layer.startTime + inner.offset, holder: layer };
+    }
+    return null;
+}
+
+/** The caption layer a ref points at, or null. Checks nothing else. */
+function capsetFindCaption(ref) {
+    if (!ref) return null;
+    var comp = capsetCompById(ref.compId);
+    if (!comp) return null;
+    var layer = null;
+    var i;
+    if (ref.layerId !== null && ref.layerId !== undefined) {
+        for (i = 1; i <= comp.numLayers; i++) {
+            if (capsetLayerId(comp.layer(i)) === ref.layerId) {
+                layer = comp.layer(i);
+                break;
+            }
+        }
+    } else if (ref.index >= 1 && ref.index <= comp.numLayers) {
+        layer = comp.layer(ref.index);
+    }
+    if (!layer || !(layer instanceof TextLayer) || !capsetIsCapsetLayer(layer)) return null;
+    return { comp: comp, layer: layer };
+}
+
+/**
+ * The caption a ref points at, provided it still says and spans exactly what
+ * `expect` says it did. Throws CAPSET_STALE otherwise.
+ */
+function capsetResolveCaption(ref, expect, active) {
+    var found = capsetFindCaption(ref);
+    if (!found || !expect) throw new Error(CAPSET_STALE);
+    var located = capsetLocateComp(found.comp, active, 0);
+    if (!located) throw new Error(CAPSET_STALE);
+    var half = (found.comp.frameDuration || 0.002) / 2;
+    if (capsetProofBody(capsetLayerText(found.layer)) !== expect.text ||
+        Math.abs(found.layer.inPoint + located.offset - Number(expect.start)) > half ||
+        Math.abs(found.layer.outPoint + located.offset - Number(expect.end)) > half) {
+        throw new Error(CAPSET_STALE);
+    }
+    found.offset = located.offset;
+    return found;
+}
+
+/** A caption as the Proofread tab lists it. */
+function capsetProofRow(found) {
+    return {
+        ref: {
+            compId: found.comp.id,
+            index: found.layer.index,
+            layerId: capsetLayerId(found.layer)
+        },
+        text: capsetProofBody(capsetLayerText(found.layer)),
+        start: found.layer.inPoint + found.offset,
+        end: found.layer.outPoint + found.offset
+    };
+}
+
+/** Refuse to retype a caption whose text is keyframed. */
+function capsetCheckTextEditable(layer) {
+    if (layer.property("Source Text").numKeys > 0) {
+        throw new Error(
+            "\"" + layer.name + "\" has Source Text keyframes, so its text " +
+            "changes over time. Edit that one in the timeline."
+        );
+    }
+}
+
+/**
+ * Retype a caption, keeping its look.
+ *
+ * The document is read, changed and written back rather than replaced, so
+ * font, size, colour and everything else the Character panel set stays put.
+ * Its PRE-expression value is the one read: with Parent to Controller on the
+ * JavaScript engine, Source Text carries an expression, and .value is what
+ * that expression produced -- the controller's size and colours, not the
+ * layer's. Writing that back would bake the controller's current look into
+ * the layer.
+ *
+ * The layer is renamed to match only if its name still matches its old
+ * text. A caption someone renamed on purpose keeps the name they gave it,
+ * and so does a legacy Capset__cap_N layer, which is recognised by that name.
+ */
+function capsetWriteCaptionText(layer, text) {
+    var prop = layer.property("Source Text");
+    var oldText = capsetLayerText(layer);
+    var hasExpression = false;
+    try {
+        hasExpression = !!prop.expressionEnabled && prop.expression !== "";
+    } catch (e) {}
+    var doc = hasExpression ? prop.valueAtTime(0, true) : prop.value;
+    doc.text = String(text).replace(/\n/g, "\r");
+    prop.setValue(doc);
+    if (layer.name === capsetLayerName(oldText)) layer.name = capsetLayerName(text);
+}
+
+/**
+ * Where an edit puts a caption, in its own comp's time, checked but not yet
+ * applied. `start` and `end` trim; `shiftBy` moves the whole layer.
+ */
+function capsetPlanTimes(found, edit) {
+    var comp = found.comp;
+    var layer = found.layer;
+    var fd = comp.frameDuration || 0;
+    var shiftBy = edit.shiftBy ? capsetSnap(comp, Number(edit.shiftBy)) : 0;
+    var hasStart = edit.start !== undefined && edit.start !== null;
+    var hasEnd = edit.end !== undefined && edit.end !== null;
+    var inPoint = hasStart
+        ? capsetSnap(comp, Number(edit.start) - found.offset)
+        : layer.inPoint + shiftBy;
+    var outPoint = hasEnd
+        ? capsetSnap(comp, Number(edit.end) - found.offset)
+        : layer.outPoint + shiftBy;
+
+    if (isNaN(inPoint) || isNaN(outPoint) || isNaN(shiftBy)) {
+        throw new Error("A caption time arrived as something other than a number.");
+    }
+    if (outPoint - inPoint < fd / 2) {
+        throw new Error("\"" + layer.name + "\" would end before it starts.");
+    }
+    if (inPoint + found.offset < -fd / 2) {
+        throw new Error("\"" + layer.name + "\" would start before the composition.");
+    }
+    return {
+        shiftBy: shiftBy,
+        trim: hasStart || hasEnd,
+        inPoint: inPoint,
+        outPoint: outPoint
+    };
+}
+
+function capsetApplyTimes(layer, plan) {
+    if (plan.shiftBy) {
+        // Moving the layer rather than trimming both ends, so anything
+        // keyframed on the caption travels with it.
+        layer.startTime = layer.startTime + plan.shiftBy;
+        return;
+    }
+    if (!plan.trim) return;
+    // A text layer has no source to run out of, but its in point is still
+    // measured from its start time; move the start back first if the caption
+    // is being extended earlier than it. Not verified against a host that
+    // refuses otherwise -- harmless on one that does not.
+    if (plan.inPoint < layer.startTime) layer.startTime = plan.inPoint;
+    // After Effects refuses an in point at or after the out point, so which
+    // end goes first depends on which way the caption is moving.
+    if (plan.inPoint >= layer.outPoint) {
+        layer.outPoint = plan.outPoint;
+        layer.inPoint = plan.inPoint;
+    } else {
+        layer.inPoint = plan.inPoint;
+        layer.outPoint = plan.outPoint;
+    }
+}
+
+function capsetSameLayer(a, b) {
+    return a.comp.id === b.comp.id && a.layer.index === b.layer.index;
+}
+
+/** Every caption in the active comp, in time order. */
+function capsetProofreadList() {
+    try {
+        var comp = capsetActiveComp();
+        var found = capsetCollectCaptions(comp, 0, []);
+        var rows = [];
+        for (var i = 0; i < found.length; i++) {
+            rows.push({
+                ref: found[i].ref,
+                text: found[i].body,
+                start: found[i].start,
+                end: found[i].end
+            });
+        }
+        // Layer order is not caption order: a work-area rebuild adds new
+        // captions on top of the old ones.
+        rows.sort(function (a, b) { return (a.start - b.start) || (a.end - b.end); });
+
+        var dropFrame = false;
+        var displayStartTime = 0;
+        try { dropFrame = !!comp.dropFrame; } catch (e) {}
+        try { displayStartTime = comp.displayStartTime || 0; } catch (e) {}
+        return capsetOk({
+            comp: {
+                id: comp.id,
+                name: comp.name,
+                frameRate: comp.frameRate,
+                frameDuration: comp.frameDuration,
+                dropFrame: dropFrame,
+                displayStartTime: displayStartTime,
+                duration: comp.duration
+            },
+            captions: rows
+        });
+    } catch (e) {
+        return capsetErr(e.message);
+    }
+}
+
+/**
+ * Apply edits from the Proofread tab: {label, edits: [{ref, expect, text?,
+ * start?, end?, shiftBy?}]}. One undo step, whatever the number of edits.
+ */
+function capsetProofreadApply(payloadJson) {
+    var undoOpen = false;
+    try {
+        var payload = JSON.parse(payloadJson || "{}");
+        var edits = payload.edits || [];
+        if (!edits.length) throw new Error("Nothing to change.");
+        var active = capsetActiveComp();
+
+        var plans = [];
+        var i;
+        for (i = 0; i < edits.length; i++) {
+            var edit = edits[i];
+            var found = capsetResolveCaption(edit.ref, edit.expect, active);
+            for (var k = 0; k < plans.length; k++) {
+                if (capsetSameLayer(plans[k].found, found)) {
+                    throw new Error("The same caption was changed twice in one step.");
+                }
+            }
+            var text = null;
+            if (edit.text !== undefined && edit.text !== null) {
+                text = capsetProofBody(edit.text);
+                if (!text.length) throw new Error("A caption cannot be empty.");
+                capsetCheckTextEditable(found.layer);
+            }
+            plans.push({ found: found, text: text, times: capsetPlanTimes(found, edit) });
+        }
+
+        var label = CAPSET_PROOF_LABELS[payload.label] || "edit captions";
+        app.beginUndoGroup("Capset: " + label);
+        undoOpen = true;
+
+        var rows = [];
+        for (i = 0; i < plans.length; i++) {
+            if (plans[i].text !== null) capsetWriteCaptionText(plans[i].found.layer, plans[i].text);
+            capsetApplyTimes(plans[i].found.layer, plans[i].times);
+            rows.push(capsetProofRow(plans[i].found));
+        }
+        return capsetOk({ rows: rows });
+    } catch (e) {
+        return capsetErr(e.message);
+    } finally {
+        if (undoOpen) app.endUndoGroup();
+    }
+}
+
+/**
+ * Split one caption into two: {ref, expect, first, second}, each half
+ * {text, start, end}.
+ *
+ * The second half is a duplicate of the layer, so it keeps everything the
+ * first has -- style, effects, the controller parent and its expressions, the
+ * Capset tag -- without this having to know what those are.
+ */
+function capsetProofreadSplit(payloadJson) {
+    var undoOpen = false;
+    try {
+        var payload = JSON.parse(payloadJson || "{}");
+        var active = capsetActiveComp();
+        var found = capsetResolveCaption(payload.ref, payload.expect, active);
+        var first = payload.first;
+        var second = payload.second;
+        if (!first || !second) throw new Error("Nothing to split.");
+        var firstText = capsetProofBody(first.text);
+        var secondText = capsetProofBody(second.text);
+        if (!firstText.length || !secondText.length) {
+            throw new Error("Both halves of a split need some text.");
+        }
+        capsetCheckTextEditable(found.layer);
+        var firstTimes = capsetPlanTimes(found, { start: first.start, end: first.end });
+        var secondTimes = capsetPlanTimes(found, { start: second.start, end: second.end });
+
+        app.beginUndoGroup("Capset: split caption");
+        undoOpen = true;
+
+        var layer = found.layer;
+        var copy = layer.duplicate();
+        // Named like the original, so the rename in capsetWriteCaptionText
+        // treats both halves the same way whatever the host called the copy.
+        copy.name = layer.name;
+        try { if (layer.comment === CAPSET_TAG) copy.comment = CAPSET_TAG; } catch (e) {}
+
+        capsetWriteCaptionText(layer, firstText);
+        capsetApplyTimes(layer, firstTimes);
+        capsetWriteCaptionText(copy, secondText);
+        capsetApplyTimes(copy, secondTimes);
+        return capsetOk({ created: 1 });
+    } catch (e) {
+        return capsetErr(e.message);
+    } finally {
+        if (undoOpen) app.endUndoGroup();
+    }
+}
+
+/**
+ * Merge a caption with the next: {ref, expect, next: {ref, expect}, text,
+ * start, end}. The first layer takes the merged text and times, so it is the
+ * first caption's look that survives; the second layer is removed.
+ */
+function capsetProofreadMerge(payloadJson) {
+    var undoOpen = false;
+    try {
+        var payload = JSON.parse(payloadJson || "{}");
+        var active = capsetActiveComp();
+        if (!payload.next) throw new Error("Nothing to merge with.");
+        var a = capsetResolveCaption(payload.ref, payload.expect, active);
+        var b = capsetResolveCaption(payload.next.ref, payload.next.expect, active);
+        if (a.comp.id !== b.comp.id) {
+            throw new Error(
+                "Those two captions are in different compositions, so they " +
+                "cannot be merged into one layer."
+            );
+        }
+        if (capsetSameLayer(a, b)) throw new Error("A caption cannot be merged with itself.");
+        var text = capsetProofBody(payload.text);
+        if (!text.length) throw new Error("A caption cannot be empty.");
+        capsetCheckTextEditable(a.layer);
+        var times = capsetPlanTimes(a, { start: payload.start, end: payload.end });
+
+        app.beginUndoGroup("Capset: merge captions");
+        undoOpen = true;
+
+        capsetWriteCaptionText(a.layer, text);
+        capsetApplyTimes(a.layer, times);
+        b.layer.remove();
+        return capsetOk({ removed: 1 });
+    } catch (e) {
+        return capsetErr(e.message);
+    } finally {
+        if (undoOpen) app.endUndoGroup();
+    }
+}
+
+/**
+ * Move the playhead to a caption and select it: {ref, time}.
+ *
+ * A precomposed caption cannot be selected from the timeline the user is
+ * looking at, so the precomp layer holding it is selected instead. Selection
+ * and the playhead are not undoable in After Effects, so there is no undo
+ * group to open.
+ */
+function capsetProofreadReveal(payloadJson) {
+    try {
+        var payload = JSON.parse(payloadJson || "{}");
+        var active = capsetActiveComp();
+        var time = Number(payload.time);
+        if (!isNaN(time)) active.time = time;
+
+        var selected = false;
+        var found = capsetFindCaption(payload.ref);
+        if (found) {
+            var located = capsetLocateComp(found.comp, active, 0);
+            if (located) {
+                capsetDeselectAll(active);
+                var target = located.holder || found.layer;
+                try { target.selected = true; selected = true; } catch (e) {}
+            }
+        }
+        return capsetOk({ selected: selected });
+    } catch (e) {
+        return capsetErr(e.message);
     }
 }
