@@ -452,3 +452,30 @@ test("the SRT export still reads the same captions", () => {
   assert.deepStrictEqual(exported.map((c) => c.text).sort(),
                          ["first caption", "second caption", "third caption"]);
 });
+
+// --- cost ----------------------------------------------------------------------
+
+test("a batch edit reads each layer a bounded number of times", () => {
+  // Every ExtendScript call into the After Effects object model is slow. A
+  // batch that searched the comp afresh for every caption made Shift all on
+  // 800 word captions read layers 321,200 times -- long enough to look like
+  // After Effects had hung. Finding captions has to stay linear.
+  const n = 400;
+  const captions = [];
+  for (let i = 0; i < n; i++) captions.push({ text: "w" + i, start: i * 0.5, end: i * 0.5 + 0.4 });
+  const h = built({ duration: 1000, captions });
+  const data = h.list();
+  assert.strictEqual(data.captions.length, n);
+
+  let reads = 0;
+  const layer = h.comp.layer.bind(h.comp);
+  h.comp.layer = (i) => { reads++; return layer(i); };
+  const item = h.fake.project.item;
+  h.fake.project.item = (i) => { reads++; return item(i); };
+
+  h.call("capsetProofreadApply", {
+    label: "shift", edits: pr.shift(data.captions, 0, 3, data.comp).edits
+  });
+  assert.ok(reads <= 6 * n, reads + " object-model reads for " + n + " captions");
+  close(h.list().captions[n - 1].start, (n - 1) * 0.5 + 0.1);
+});

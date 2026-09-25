@@ -2560,12 +2560,50 @@ function capsetLayerId(layer) {
     return null;
 }
 
-function capsetCompById(id) {
-    for (var i = 1; i <= app.project.numItems; i++) {
-        var item = app.project.item(i);
-        if (item instanceof CompItem && item.id === id) return item;
+/**
+ * Lookups shared across one host call.
+ *
+ * Every call into the After Effects object model is slow, and a batch -- a
+ * Shift all, a Replace All -- finds hundreds of captions in one go. Searching
+ * the project and the comp afresh for each one made the cost grow with the
+ * square of the caption count: 321,200 layer reads to shift 800 word
+ * captions. With this, each comp's layers are read once per call.
+ *
+ * Never kept between calls. The `expect` check exists because the timeline
+ * changes behind the panel's back; a cache that outlived the call would
+ * reintroduce exactly that staleness. Keys are prefixed because ids are
+ * numbers and these are plain objects.
+ */
+function capsetCaptionCache() {
+    return { comps: null, layers: {}, located: {} };
+}
+
+function capsetCompById(id, cache) {
+    cache = cache || capsetCaptionCache();
+    if (!cache.comps) {
+        cache.comps = {};
+        for (var i = 1; i <= app.project.numItems; i++) {
+            var item = app.project.item(i);
+            if (item instanceof CompItem) cache.comps["c" + item.id] = item;
+        }
     }
-    return null;
+    return cache.comps["c" + id] || null;
+}
+
+/** A comp's layers by Layer.id, read once per call. */
+function capsetLayersById(comp, cache) {
+    var key = "c" + comp.id;
+    var byId = cache.layers[key];
+    if (!byId) {
+        byId = {};
+        for (var i = 1; i <= comp.numLayers; i++) {
+            var layer = comp.layer(i);
+            var id = capsetLayerId(layer);
+            if (id !== null) byId["l" + id] = layer;
+        }
+        cache.layers[key] = byId;
+    }
+    return byId;
 }
 
 /**
@@ -2597,19 +2635,14 @@ function capsetLocateComp(target, within, depth) {
 }
 
 /** The caption layer a ref points at, or null. Checks nothing else. */
-function capsetFindCaption(ref) {
+function capsetFindCaption(ref, cache) {
     if (!ref) return null;
-    var comp = capsetCompById(ref.compId);
+    cache = cache || capsetCaptionCache();
+    var comp = capsetCompById(ref.compId, cache);
     if (!comp) return null;
     var layer = null;
-    var i;
     if (ref.layerId !== null && ref.layerId !== undefined) {
-        for (i = 1; i <= comp.numLayers; i++) {
-            if (capsetLayerId(comp.layer(i)) === ref.layerId) {
-                layer = comp.layer(i);
-                break;
-            }
-        }
+        layer = capsetLayersById(comp, cache)["l" + ref.layerId] || null;
     } else if (ref.index >= 1 && ref.index <= comp.numLayers) {
         layer = comp.layer(ref.index);
     }
@@ -2621,10 +2654,15 @@ function capsetFindCaption(ref) {
  * The caption a ref points at, provided it still says and spans exactly what
  * `expect` says it did. Throws CAPSET_STALE otherwise.
  */
-function capsetResolveCaption(ref, expect, active) {
-    var found = capsetFindCaption(ref);
+function capsetResolveCaption(ref, expect, active, cache) {
+    cache = cache || capsetCaptionCache();
+    var found = capsetFindCaption(ref, cache);
     if (!found || !expect) throw new Error(CAPSET_STALE);
-    var located = capsetLocateComp(found.comp, active, 0);
+    var key = "c" + found.comp.id;
+    if (!cache.located.hasOwnProperty(key)) {
+        cache.located[key] = capsetLocateComp(found.comp, active, 0);
+    }
+    var located = cache.located[key];
     if (!located) throw new Error(CAPSET_STALE);
     var half = (found.comp.frameDuration || 0.002) / 2;
     if (capsetProofBody(capsetLayerText(found.layer)) !== expect.text ||
@@ -2801,12 +2839,13 @@ function capsetProofreadApply(payloadJson) {
         var edits = payload.edits || [];
         if (!edits.length) throw new Error("Nothing to change.");
         var active = capsetActiveComp();
+        var cache = capsetCaptionCache();
 
         var plans = [];
         var i;
         for (i = 0; i < edits.length; i++) {
             var edit = edits[i];
-            var found = capsetResolveCaption(edit.ref, edit.expect, active);
+            var found = capsetResolveCaption(edit.ref, edit.expect, active, cache);
             for (var k = 0; k < plans.length; k++) {
                 if (capsetSameLayer(plans[k].found, found)) {
                     throw new Error("The same caption was changed twice in one step.");
@@ -2898,8 +2937,9 @@ function capsetProofreadMerge(payloadJson) {
         var payload = JSON.parse(payloadJson || "{}");
         var active = capsetActiveComp();
         if (!payload.next) throw new Error("Nothing to merge with.");
-        var a = capsetResolveCaption(payload.ref, payload.expect, active);
-        var b = capsetResolveCaption(payload.next.ref, payload.next.expect, active);
+        var cache = capsetCaptionCache();
+        var a = capsetResolveCaption(payload.ref, payload.expect, active, cache);
+        var b = capsetResolveCaption(payload.next.ref, payload.next.expect, active, cache);
         if (a.comp.id !== b.comp.id) {
             throw new Error(
                 "Those two captions are in different compositions, so they " +
